@@ -29,7 +29,7 @@
 <tr>
 <td>
   
-**Caffeinix** is a **Unix-like system**. As the name suggests, **Caffeinix (Caffeine + Unix)**, this is an operating system that pursues efficiency like caffeine. **Of course, the efficiency may not be very high. I also said it is just a pursuit.**
+**Caffeinix** is a **Unix-like system**. As the name suggests, **Caffeinix (Caffeine + Unix)**, this was written by me while drinking American coffee. I hope that it can improve the efficiency of you and me like caffeine. **Of course, the efficiency may not be very high. I also said this is just a hope. **
 
 </td>
 </tr>
