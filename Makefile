@@ -72,12 +72,12 @@ clean:
 	rm -f $(shell find -name "*.o")
 	rm -f $(shell find -name "*.asm")
 	rm -f $(shell find -name "*.sym")
+	rm -f $(shell find -name "*.d")
 	rm -f $(TARGET)
 	rm -f test
 
 distclean:
 	rm -f $(shell find -name "*.o")
-	rm -f $(shell find -name "*.d")
 	
 	rm -f $(TARGET)
 	rm -f test

@@ -1,5 +1,6 @@
 ./output
-*.o
-*.asm
-*.sym
-*.d
+**/*.o
+**/*.asm
+**/*.sym
+**/*.o.d
+
