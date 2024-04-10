@@ -1,0 +1,79 @@
+PHONY := __build
+__build:
+
+obj-y :=
+subdir-y :=
+EXTRA_CFLAGS :=
+EXTRA_LDFLAGS :=
+
+# include the Makefile in the current directory. 
+# Note that when executing the command, the working directory will be switched through 
+# the make -C command.
+# In other words, Makefile refers to different files under different make command execution paths.
+include Makefile
+
+#Define immediate variables
+# $(filter %/, $(obj-y)) Filter out directory names ending with "/" from variable obj-y
+# $(patsubst %/,%,$(filter %/, $(obj-y))) Remove "/" from the directory name ending with "/" in obj-y
+__subdir-y	:= $(patsubst %/,%,$(filter %/, $(obj-y)))
+
+# Append assignment, subdir-y means subdirectory is required
+subdir-y	+= $(__subdir-y)
+
+# foreach(var,list,text), means foreach var in list, change it to text
+# Modify each item (each file name) f in the subdirectory list subdir-y to f/built-in.o
+# In other words, for each subdirectory, a file named "subdirectory name/built-in.o" 
+# will be generated (the .o file is a link file)
+subdir_objs := $(foreach f,$(subdir-y),$(f)/built-in.o)
+
+# a.o b.o
+
+# Define immediate variables, filter out directory names (names ending with "/") 
+# from obj-y, leaving only ordinary files (.o files)
+cur_objs := $(filter-out %/, $(obj-y))
+
+# Replace each file name f in cur_objs with f.d, that is, add the ".d" suffix 
+# to represent the dependent files of the source code file
+dep_files := $(foreach f,$(cur_objs),.$(f).d)
+
+# If the dependent files exist, list them and reassign them to dep_files
+dep_files := $(wildcard $(dep_files))
+
+# If the dependent file list is not empty, directly include the dependent file list
+ifneq ($(dep_files),)
+  include $(dep_files)
+endif
+
+# Append each subdirectory name (excluding "/") to the pseudo target
+PHONY += $(subdir-y)
+
+# Define rules (target: dependencies)
+__build : $(subdir-y) built-in.o
+
+    # Target each item in the subdirectory, and each item is a directory name
+    $(subdir-y):
+	@echo subdir-y = $@
+
+    # Enter each subdirectory ($@ represents the target name), 
+    # find and execute the Makefile.build of the top directory
+	make -C $@ -f $(TOPDIR)/Makefile.build
+
+# Define built-in.o dependency rules
+# cur_objs Ordinary files (.o files) filtered from obj-y
+# built-in.o in subdir_objs subdirectory
+built-in.o : $(cur_objs) $(subdir_objs)
+    # LD represents the cross-compiler linker; the -r option represents relocatable output, 
+    # and an output file can be input again as ld
+    # -o Set output file; $@ target name; $^ all non-duplicate dependent files
+	$(LD) $(LDFLAGS) $(EXTRA_LDFLAGS) -r -o $@ $^
+
+dep_file = .$@.d
+
+%.o : %.c
+	$(CC) $(CFLAGS) $(EXTRA_CFLAGS) $(CFLAGS_$@) -Wp,-MD,$(dep_file) -c -o $@ $<
+
+%.o : %.S
+	$(CC) $(CFLAGS) $(EXTRA_CFLAGS) $(CFLAGS_$@) -Wp,-MD,$(dep_file) -c -o $@ $<
+
+# Define pseudo target
+.PHONY : $(PHONY)
