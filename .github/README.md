@@ -35,9 +35,7 @@
 </tr>
 </table>
 
-## Building and usage
-
-### Operating environment
+## Operating environment
 
 This is not **absolute**, just what we **recommend**.
 
@@ -48,17 +46,46 @@ Release:        22.04
 Codename:       jammy
 ```
 
-### Getting the sources
+## Prerequisites
+
+### Method1: Using Docker
 
 ```bash
-git clone https://github.com/TroyMitchell911/caffeinix.git
+$ docker run -itd -p 10008:10008 -v /dev/caffeinix:/dev/caffeinix -w /root --name caffeinix --restart=always troymitchell/caffeinix:1.0 /bin/bash
+$ docker restart caffeinix
+$ docker exec -it caffeinix bash
 ```
 
-### Prerequisites
+### Method 2: Manual Installation 
+
+#### Step 1
+
+```bash
+$ sudo apt update
+$ sudo apt install build-essential gcc make perl dkms git gdb-multiarch qemu-system-misc bear
+```
+
+#### Step 2
+
+You need a RISC-V "newlib" tool chain from https://github.com/riscv/riscv-gnu-toolchain
 
 > [!IMPORTANT]  
 
 > [!NOTE]  
+
+## Getting the sources
+
+You don't need this step if you are using [Docker](###Method1: Using Docker) because we have put the sources into the directory `~/caffeinix`
+
+```bash
+$ git clone https://github.com/TroyMitchell911/caffeinix.git
+```
+
+## Building and usage
+
+- `make`：Compile and build
+- `make qemu`：Start qemu running after compiling and building
+- `make qemu-gdb`：Start debugging
 
 ## Updating
 
