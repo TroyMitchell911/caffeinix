@@ -68,6 +68,29 @@ $(TARGET) : built-in.o
 	$(OBJDUMP) -S $(TARGET) > $(TARGET).asm
 	$(OBJDUMP) -t $(TARGET) | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $(TARGET).sym
 
+QEMU = qemu-system-riscv64
+QEMUOPTS = -machine virt -bios none -kernel $(TARGET) -m 128M -smp $(CPUS) -nographic
+QEMUOPTS += -global virtio-mmio.force-legacy=false
+ifndef CPUS
+CPUS := 1
+endif
+# try to generate a unique GDB port
+GDBPORT = $(shell expr `id -u` % 5000 + 25000)
+# QEMU's gdb stub command line changed in 0.11
+QEMUGDB = $(shell if $(QEMU) -help | grep -q '^-gdb'; \
+	then echo "-gdb tcp::$(GDBPORT)"; \
+	else echo "-s -p $(GDBPORT)"; fi)
+
+qemu: $(TARGET)
+	$(QEMU) $(QEMUOPTS)
+
+.gdbinit: .gdbinit.tmpl-riscv
+	@sed "s/:1234/:$(GDBPORT)/" < $^ > $@
+
+qemu-gdb: $(TARGET) .gdbinit
+	$(QEMU) $(QEMUOPTS) -S $(QEMUGDB)
+	@echo "*** Now run 'gdb' in another window." 1>&2
+
 clean:
 	rm -f $(shell find -name "*.o")
 	rm -f $(shell find -name "*.asm")
