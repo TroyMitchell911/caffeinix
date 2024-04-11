@@ -44,6 +44,7 @@ CFLAGS += -fno-pie -nopie
 endif
 
 LDFLAGS = -z max-page-size=4096
+export CFLAGS LDFLAGS
 
 TOPDIR := $(shell pwd)
 export TOPDIR
@@ -51,8 +52,12 @@ export TOPDIR
 # Define the subdirectory to be searched for 
 # variable records (the subdirectory must contain a makefile)
 obj-y += arch/riscv/boot/
+obj-y += kernel/
 
 TARGET := $(OUTPUT)/kernel
+
+build:
+	bear -- make all
 
 all : start_recursive_build $(TARGET)
 	@echo $(TARGET) has been built!
@@ -67,6 +72,7 @@ $(TARGET) : built-in.o
 	$(LD) $(LDFLAGS) -T kernel/kernel.ld -o $(TARGET) built-in.o
 	$(OBJDUMP) -S $(TARGET) > $(TARGET).asm
 	$(OBJDUMP) -t $(TARGET) | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $(TARGET).sym
+	rm -f $(shell find -name "*.o")
 
 QEMU = qemu-system-riscv64
 QEMUOPTS = -machine virt -bios none -kernel $(TARGET) -m 128M -smp $(CPUS) -nographic
@@ -96,11 +102,8 @@ clean:
 	rm -f $(shell find -name "*.asm")
 	rm -f $(shell find -name "*.sym")
 	rm -f $(shell find -name "*.d")
+	rm compile_commands.json
 	rm -f $(TARGET)
-	rm -f test
-
 distclean:
 	rm -f $(shell find -name "*.o")
-	
 	rm -f $(TARGET)
-	rm -f test

@@ -28,14 +28,33 @@
 <table>
 <tr>
 <td>
-  
+
 **Caffeinix** is a **Unix-like system**. As the name suggests, **Caffeinix (Caffeine + Unix)**, this was written by me while drinking Americano. I hope that it can improve the efficiency of you and me like caffeine. **Of course, the efficiency may not be very high. I also said this is just a hope.**
 
 </td>
 </tr>
 </table>
 
-## Installation
+## Building and usage
+
+### Operating environment
+
+This is not **absolute**, just what we **recommend**.
+
+```bash
+Distributor ID: Ubuntu
+Description:    Ubuntu 22.04.4 LTS
+Release:        22.04
+Codename:       jammy
+```
+
+### Getting the sources
+
+```bash
+git clone https://github.com/TroyMitchell911/caffeinix.git
+```
+
+### Prerequisites
 
 > [!IMPORTANT]  
 
