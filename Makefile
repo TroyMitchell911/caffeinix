@@ -81,13 +81,13 @@ QEMUGDB = $(shell if $(QEMU) -help | grep -q '^-gdb'; \
 	then echo "-gdb tcp::$(GDBPORT)"; \
 	else echo "-s -p $(GDBPORT)"; fi)
 
-qemu: $(TARGET)
+qemu: all
 	$(QEMU) $(QEMUOPTS)
 
 .gdbinit: .gdbinit.tmpl-riscv
 	@sed "s/:1234/:$(GDBPORT)/" < $^ > $@
 
-qemu-gdb: $(TARGET) .gdbinit
+qemu-gdb: all .gdbinit
 	$(QEMU) $(QEMUOPTS) -S $(QEMUGDB)
 	@echo "*** Now run 'gdb' in another window." 1>&2
 
