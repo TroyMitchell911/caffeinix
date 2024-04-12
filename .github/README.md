@@ -48,7 +48,7 @@ Codename:       jammy
 
 ## Prerequisites
 
-### Method1: Using Docker
+### Method 1: Using Docker
 
 ```bash
 $ docker run -itd -p 10008:10008 -v /dev/caffeinix:/dev/caffeinix -w /root --name caffeinix --restart=always troymitchell/caffeinix:1.0 /bin/bash
