@@ -1,0 +1,62 @@
+[
+  {
+    "arguments": [
+      "/usr/bin/riscv64-unknown-elf-gcc",
+      "-Wall",
+      "-Werror",
+      "-O",
+      "-fno-omit-frame-pointer",
+      "-ggdb",
+      "-gdwarf-2",
+      "-mcmodel=medany",
+      "-ffreestanding",
+      "-fno-common",
+      "-mno-relax",
+      "-I.",
+      "-fno-stack-protector",
+      "-fno-pie",
+      "-I",
+      "./include",
+      "-I",
+      "../arch/riscv/include",
+      "-Wp,-MD,.palloc.o.d",
+      "-c",
+      "-o",
+      "palloc.o",
+      "palloc.c"
+    ],
+    "directory": "/home/devcontainers/caffeinix/kernel",
+    "file": "/home/devcontainers/caffeinix/kernel/palloc.c",
+    "output": "/home/devcontainers/caffeinix/kernel/palloc.o"
+  },
+  {
+    "arguments": [
+      "/usr/bin/riscv64-unknown-elf-gcc",
+      "-Wall",
+      "-Werror",
+      "-O",
+      "-fno-omit-frame-pointer",
+      "-ggdb",
+      "-gdwarf-2",
+      "-mcmodel=medany",
+      "-ffreestanding",
+      "-fno-common",
+      "-mno-relax",
+      "-I.",
+      "-fno-stack-protector",
+      "-fno-pie",
+      "-I",
+      "./include",
+      "-I",
+      "../arch/riscv/include",
+      "-Wp,-MD,.main.o.d",
+      "-c",
+      "-o",
+      "main.o",
+      "main.c"
+    ],
+    "directory": "/home/devcontainers/caffeinix/kernel",
+    "file": "/home/devcontainers/caffeinix/kernel/main.c",
+    "output": "/home/devcontainers/caffeinix/kernel/main.o"
+  }
+]

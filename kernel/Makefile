@@ -1,6 +1,6 @@
-EXTRA_CFLAGS := 
+EXTRA_CFLAGS := -I ./include -I ../arch/riscv/include
 EXTRA_LDFLAGS := -T ./kernel.ld
 CFLAGS_file.o := 
 
 
-obj-y += main.o
+obj-y += string.o palloc.o main.o 
