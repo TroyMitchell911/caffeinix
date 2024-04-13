@@ -1,0 +1,32 @@
+centos7 生成ssh秘钥 
+ ssh-keygen -t rsa -C "zhuxueyi896@126.com"
+Generating public/private rsa key pair.
+Enter file in which to save the key (/root/.ssh/id_rsa): 
+Created directory '/root/.ssh'.
+Enter passphrase (empty for no passphrase): 
+Enter same passphrase again: 
+Your identification has been saved in /root/.ssh/id_rsa.
+Your public key has been saved in /root/.ssh/id_rsa.pub.
+The key fingerprint is:
+SHA256:s6eCxq2svEryHm8EDUXgs8T4Og1beUyXrlZw1YhU3/s zhuxueyi896@126.com
+The key's randomart image is:
++---[RSA 2048]----+
+|  .+o..ooo       |
+| +.   .o....     |
+|. =oo +   . .    |
+| o.*.=       .   |
+|. =.o o S   .    |
+| * ..o   o   .   |
+|=.oooo  . .   E  |
+|o+ == o  o       |
+|.o*=+. ..        |
++----[SHA256]-----+
+进入.ssh目录
+cd .ssh
+ ls
+id_rsa  id_rsa.pub
+//把显示的内容复制到GitHub的SSHkey配置即可
+ cat id_rsa.pub
+
+测试
+ssh -T git@github.com
