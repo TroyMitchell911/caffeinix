@@ -33,6 +33,7 @@ void vmmap(pagedir_t pgdir, uint64 va, uint64 pa, uint64 size, int perm)
 {
         uint64 start, end;
         pte_t *pte;
+        /* Size can't be 0 */
         if(!size) {
                 PANIC("vmmap size");
         }
@@ -41,12 +42,17 @@ void vmmap(pagedir_t pgdir, uint64 va, uint64 pa, uint64 size, int perm)
         end = PGROUNDDOWN(va + size - 1);
         
         for(;;) {
+                /* 
+                        Obtain the address of the page table entry 
+                        with the virtual address in the page table  
+                */
                 if((pte = PTE(pgdir, start, 1)) == 0)
                         PANIC("vmmap");
-                
+                /* The pte can't include the bit PTE_V */
                 if(*pte & PTE_V) {
                         PANIC("vmmap pte");
                 }
+                /* Set the PTE */
                 *pte = PA2PTE(pa) | PTE_V | perm;
                 if(start == end)
                         break;
@@ -57,10 +63,12 @@ void vmmap(pagedir_t pgdir, uint64 va, uint64 pa, uint64 size, int perm)
 
 static pagedir_t kernel_pagedir_t_create(void)
 {
+        /* Alloc the physical memory for page-table */
         pagedir_t pgdir = (pagedir_t)palloc();
         
         memset(pgdir, 0, PGSIZE);
 
+        /* map the text */
         vmmap(pgdir, KERNEL_BASE, KERNEL_BASE, (uint64)etext - KERNEL_BASE, PTE_R | PTE_X);
         /* map the data and the rest of physical DRAM */
         vmmap(pgdir, (uint64)etext, (uint64)etext, PHY_MEM_STOP - (uint64)etext, PTE_R | PTE_W);

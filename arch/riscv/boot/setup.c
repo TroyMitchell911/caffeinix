@@ -2,12 +2,15 @@
 #include <riscv.h>
 
 extern void main(void);
+extern void timer_init(uint8 hartid);
 
 /* Create a stack that the CPUS go into c environment */
 __attribute__ ((aligned (16))) int8 stack_for_c[4096 * NCPU];
 
 void setup(void)
 {
+        int hartid;
+
         /* Read value of status into variable 'status' */
         uint64 status = mstatus_r();
         /* Clear the flag of previous mode */
@@ -24,7 +27,13 @@ void setup(void)
         
         /* Allow 'Supervisor mode' to access all 128M of memory */
         pmpaddr0_w(0x3fffffffffffffull);
-        pmpcfg0_W(0xf);
+        pmpcfg0_w(0xf);
+
+        sie_w(sie_r() | SIE_SEIE | SIE_SSIE | SIE_STIE);
+
+        /* Initialize the timer corresponding to each hart */
+        hartid = mhartid_r();
+        timer_init(hartid);
 
         /* Enter 'Supervisor mode' and 'main'  */
         asm volatile("mret");

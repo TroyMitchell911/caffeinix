@@ -3,15 +3,6 @@
 
 #include <typedefs.h>
 
-/* Previous mode of machine mode */
-#define MSTATUS_MPP_MASK        (3L << 11) 
-/* Machine mode */
-#define MSTATUS_MPP_M           (3L << 11)
-/* Supervisor mode */
-#define MSTATUS_MPP_S           (1L << 11)
-/* User mode */
-#define MSTATUS_MPP_U           (0L << 11)
-
 #define PGSHIFT                 12  // bits of offset within a page
 #define PGSIZE                  4096
 
@@ -55,6 +46,16 @@ static inline uint64 mhartid_r(void)
         asm volatile("csrr %0, mhartid" : "=r"(id) :);
         return id;
 }
+/* machine-mode interrupt enable. */
+#define MSTATUS_MIE (1L << 3)     
+/* Previous mode of machine mode */
+#define MSTATUS_MPP_MASK        (3L << 11) 
+/* Machine mode */
+#define MSTATUS_MPP_M           (3L << 11)
+/* Supervisor mode */
+#define MSTATUS_MPP_S           (1L << 11)
+/* User mode */
+#define MSTATUS_MPP_U           (0L << 11)
 
 /* Write status */
 static inline void mstatus_w(uint64 s)
@@ -85,7 +86,7 @@ static inline void pmpaddr0_w(uint64 v)
         asm volatile("csrw pmpaddr0, %0" : : "r"(v));
 }
 
-static inline void pmpcfg0_W(uint64 v)
+static inline void pmpcfg0_w(uint64 v)
 {
         asm volatile("csrw pmpcfg0, %0" : : "r"(v));
 }
@@ -94,5 +95,48 @@ static inline void sfence_vma(void)
 {
         asm volatile("sfence.vma zero, zero");
 }
+
+static inline void mtvec_w(uint64 v)
+{
+        asm volatile("csrw mtvec, %0" : : "r"(v));
+}
+
+static inline void mscratch_w(uint64 v)
+{
+        asm volatile("csrw mscratch, %0" : : "r"(v));
+}
+
+/* Supervisor Interrupt Enable */
+#define SIE_SEIE (1L << 9)  /* external */
+#define SIE_STIE (1L << 5)  /* timer */
+#define SIE_SSIE (1L << 1)  /* software */
+static inline uint64 sie_r(void)
+{
+        uint64 r;
+        asm volatile("csrr %0, sie" : "=r"(r) :);
+        return r;
+}
+
+static inline void sie_w(uint64 v)
+{
+        asm volatile("csrw sie, %0" : : "r"(v));
+}
+
+/* Supervisor Interrupt Enable */
+#define MIE_MEIE (1L << 11) /* external */
+#define MIE_MTIE (1L << 7)  /* timer */
+#define MIE_MSIE (1L << 3)  /* software */
+static inline uint64 mie_r(void)
+{
+        uint64 r;
+        asm volatile("csrr %0, mie" : "=r"(r) :);
+        return r;
+}
+
+static inline void mie_w(uint64 v)
+{
+        asm volatile("csrw mie, %0" : : "r"(v));
+}
+
 
 #endif

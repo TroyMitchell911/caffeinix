@@ -103,8 +103,7 @@ clean:
 	rm -f $(shell find -name "*.asm")
 	rm -f $(shell find -name "*.sym")
 	rm -f $(shell find -name "*.d")
+
+distclean: clean
 	rm -f $(shell find -name "compile_commands.json")
-	rm -f $(TARGET)
-distclean:
-	rm -f $(shell find -name "*.o")
 	rm -f $(TARGET)
