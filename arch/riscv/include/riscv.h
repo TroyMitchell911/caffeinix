@@ -122,6 +122,52 @@ static inline void sie_w(uint64 v)
         asm volatile("csrw sie, %0" : : "r"(v));
 }
 
+#define SSTATUS_SPP (1L << 8)  // Previous mode, 1=Supervisor, 0=User
+#define SSTATUS_SPIE (1L << 5) // Supervisor Previous Interrupt Enable
+#define SSTATUS_UPIE (1L << 4) // User Previous Interrupt Enable
+#define SSTATUS_SIE (1L << 1)  // Supervisor Interrupt Enable
+#define SSTATUS_UIE (1L << 0)  // User Interrupt Enable
+
+static inline uint64 sstatus_r()
+{
+        uint64 v;
+        asm volatile("csrr %0, sstatus" : "=r" (v) );
+        return v;
+}
+
+static inline void sstatus_w(uint64 v)
+{
+  asm volatile("csrw sstatus, %0" : : "r" (v));
+}
+
+static inline void tp_w(uint64 v)
+{
+        asm volatile("mv tp, %0" : : "r"(v));
+}
+
+static inline uint64 tp_r(void)
+{
+        uint64 r;
+        asm volatile("mv %0, tp" : "=r"(r) :);
+        return r;
+}
+
+static inline uint64 intr_status(void)
+{
+        uint64 x = sstatus_r();
+        return (x & SSTATUS_SIE) != 0;
+}
+
+static inline void intr_on(void)
+{
+        sstatus_w(sstatus_r() | SSTATUS_SIE);
+}
+
+static inline void intr_off(void)
+{
+        sstatus_w(sstatus_r() & ~SSTATUS_SIE);
+}
+
 /* Supervisor Interrupt Enable */
 #define MIE_MEIE (1L << 11) /* external */
 #define MIE_MTIE (1L << 7)  /* timer */
