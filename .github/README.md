@@ -73,6 +73,7 @@ You need a RISC-V "newlib" tool chain from https://github.com/riscv/riscv-gnu-to
 > You need to install 'qemu-system-misc' if you are using Docker to deploy otherwise you can't use the command 'make qemu-gdb'.
 
 > [!NOTE]  
+> None now
 
 ## Getting the sources
 
