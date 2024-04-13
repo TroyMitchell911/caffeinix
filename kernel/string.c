@@ -11,3 +11,10 @@ void* memset(void* dst, char c, uint32 n)
 
         return dst;
 }
+
+size_t strlen(const char* s)
+{
+        char* p = (char*)s;
+        while((*p++) != '\0');
+        return (p - s - 1);
+}

@@ -11,4 +11,6 @@ typedef signed short int16;
 typedef signed int int32;
 typedef signed long int64;
 
+typedef uint64 size_t;
+
 #endif

@@ -79,9 +79,11 @@ static pagedir_t kernel_pagedir_t_create(void)
         
         memset(pgdir, 0, PGSIZE);
 
-        /* map the text */
+        /* Map the UART0 */
+        vmmap(pgdir, UART0, UART0, PGSIZE, PTE_R | PTE_W);
+        /* Map the text */
         vmmap(pgdir, KERNEL_BASE, KERNEL_BASE, (uint64)etext - KERNEL_BASE, PTE_R | PTE_X);
-        /* map the data and the rest of physical DRAM */
+        /* Map the data and the rest of physical DRAM */
         vmmap(pgdir, (uint64)etext, (uint64)etext, PHY_MEM_STOP - (uint64)etext, PTE_R | PTE_W);
 
         return pgdir;
