@@ -53,6 +53,7 @@ export TOPDIR
 # variable records (the subdirectory must contain a makefile)
 obj-y += arch/riscv/boot/
 obj-y += kernel/
+obj-y += arch/riscv/
 
 TARGET := $(OUTPUT)/kernel
 
