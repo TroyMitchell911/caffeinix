@@ -1,5 +1,6 @@
 #include <uart.h>
 #include <string.h>
+#include <spinlock.h>
 
 #define REG(r)                  ((volatile unsigned char *)(UART0 + r))
 
@@ -33,6 +34,8 @@
 #define REG_R(r)                (*(REG(r)))
 #define REG_W(r, v)             (*(REG(r)) = (v))
 
+static struct spinlock spinlock_uart;
+
 void uart_init(void)
 {
         /* disable interrupts. */
@@ -58,11 +61,15 @@ void uart_init(void)
 
         /* enable transmit and receive interrupts. */
         // REG_W(IER, IER_TX_ENABLE | IER_RX_ENABLE);
+
+        spinlock_init(&spinlock_uart, "uart");
 }
 
 void uart_putc(int c)
 {
+        spinlock_acquire(&spinlock_uart);
         REG_W(THR, c);
+        spinlock_release(&spinlock_uart);
 }
 
 void uart_puts(const char* str)

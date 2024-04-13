@@ -11,4 +11,11 @@ typedef struct spinlock {
         cpu_t cpu;
 }*spinlock_t;
 
+void spinlock_init(spinlock_t lock, const char* name);
+void spinlock_acquire(spinlock_t lock);
+void spinlock_release(spinlock_t lock);
+int spinlock_holding(spinlock_t lock);
+void enter_critical(void);
+void exit_critical(void);
+
 #endif
