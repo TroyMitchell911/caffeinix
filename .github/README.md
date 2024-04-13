@@ -69,7 +69,7 @@ $ sudo apt install build-essential gcc make perl dkms git gdb-multiarch qemu-sys
 
 You need a RISC-V "newlib" tool chain from https://github.com/riscv/riscv-gnu-toolchain
 
-> [!IMPORTANT]  
+> [!IMPORTANT] You need to install 'qemu-system-misc' if you are using Docker to deploy otherwise you can't use the command 'make qemu-gdb'.
 
 > [!NOTE]  
 
