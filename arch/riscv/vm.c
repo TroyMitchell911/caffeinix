@@ -12,20 +12,31 @@ pte_t *PTE(pagedir_t pgdir, uint64 va, int flag)
 {
         int i;
         pte_t *pte;
+        /* The value of va can't be more than MAXVA */
         if(va >= MAXVA)
                 PANIC("PTE");
+        /* 
+                Starting from a high address,
+                retrieve the page table pointed to by the page table entry
+        */
         for(i = 2; i > 0; i--) {
+                /* Get the page table pointed to by the page table entry */
                 pte = &pgdir[PTEX(i, va)];
+                /* If the page-table exists */
                 if((*pte) & PTE_V) {
+                        /* Store the physical address of page-table into pgdir */
                         pgdir = (pagedir_t)PTE2PA(*pte);
                 } else {
                         if(flag == 0 || (pgdir = (pte_t*)palloc()) == 0){
                                 return 0;
                         }
+                        /* The variable 'pgdir' has been alloced above */
                         memset(pgdir, 0, PGSIZE);
+                        /* Store the pte */
                         *pte = PA2PTE(pgdir) | PTE_V;
                 }
         }
+        /* Return the lowest level of pte */
         return (pte_t*)&pgdir[PTEX(0, va)];
 }
 
