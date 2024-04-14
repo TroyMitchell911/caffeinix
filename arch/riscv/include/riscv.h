@@ -184,5 +184,20 @@ static inline void mie_w(uint64 v)
         asm volatile("csrw mie, %0" : : "r"(v));
 }
 
+static inline void stvec_w(uint64 v)
+{
+        asm volatile("csrw stvec, %0" : : "r"(v));
+}
+
+static inline void medeleg_w(uint64 v)
+{
+        asm volatile("csrw medeleg, %0" : : "r"(v));
+}
+
+static inline void mideleg_w(uint64 v)
+{
+        asm volatile("csrw mideleg, %0" : : "r"(v));
+}
+
 
 #endif
