@@ -6,12 +6,14 @@
 static list_t all_thread;
 struct cpu cpus[NCPU];
 
+/* Get hart id */
 uint8 cpuid(void)
 {
         uint8 hartid = tp_r();
         return hartid;  
 }
 
+/* Get current cpu structure */
 cpu_t cur_cpu(void)
 {
         uint8 hartid = cpuid();

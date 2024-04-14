@@ -33,6 +33,9 @@ void setup(void)
 
         /* Initialize the timer corresponding to each hart */
         hartid = mhartid_r();
+        /* Write hartid into the register 'tp' */
+        tp_w(hartid);
+
         timer_init(hartid);
 
         /* Enter 'Supervisor mode' and 'main'  */
