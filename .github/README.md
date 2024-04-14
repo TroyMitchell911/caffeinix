@@ -12,6 +12,8 @@
          alt="GitHub pull requests">
 </p>
 
+my pr test(wangshuqi)
+
 <p align="center">
   <a href="#installation">Installation</a> •
   <a href="#updating">Updating</a> •
