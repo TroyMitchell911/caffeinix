@@ -140,6 +140,32 @@ static inline void sstatus_w(uint64 v)
   asm volatile("csrw sstatus, %0" : : "r" (v));
 }
 
+static inline uint64 scause_r(void)
+{
+        uint64 r;
+        asm volatile("csrr %0, scause" : "=r"(r) :);
+        return r;
+}
+
+static inline uint64 sepc_r(void)
+{
+        uint64 r;
+        asm volatile("csrr %0, sepc" : "=r"(r) :);
+        return r;
+}
+
+static inline void sip_w(uint64 v)
+{
+  asm volatile("csrw sip, %0" : : "r" (v));
+}
+
+static inline uint64 sip_r(void)
+{
+        uint64 r;
+        asm volatile("csrr %0, sip" : "=r"(r) :);
+        return r;
+}
+
 static inline void tp_w(uint64 v)
 {
         asm volatile("mv tp, %0" : : "r"(v));
@@ -198,6 +224,5 @@ static inline void mideleg_w(uint64 v)
 {
         asm volatile("csrw mideleg, %0" : : "r"(v));
 }
-
 
 #endif

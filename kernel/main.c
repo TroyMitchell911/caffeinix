@@ -18,7 +18,7 @@ void main(void)
                 intr_on();
 
                 uart_putc('h');
-                uart_puts("ello, caffeinix");
+                uart_puts("ello, caffeinix\n");
         }
         
         while(1);
