@@ -8,6 +8,7 @@ extern void kernel_vec(void);
 static struct spinlock trap_spinlock;
 /* For test */
 uint64 count = 0;
+volatile uint64 tick_count = 0;
 
 void kernel_trap(void)
 {
@@ -20,6 +21,7 @@ void kernel_trap(void)
                 PANIC("[kernel_trap]Interrupt enabled");
 
         if(cause == 0x8000000000000001L) {
+                tick_count++;
                 if(count++ == 10) {
                         uart_puts("timer interrupt\n");
                         count = 0;
