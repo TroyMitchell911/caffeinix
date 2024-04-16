@@ -8,6 +8,8 @@
 /* Defination in kernel.ld */
 extern char etext[];
 
+static pagedir_t kernel_pgdir;
+
 pte_t *PTE(pagedir_t pgdir, uint64 va, int flag)
 {
         int i;
@@ -89,14 +91,18 @@ static pagedir_t kernel_pagedir_t_create(void)
         return pgdir;
 }
 
+void vm_create(void)
+{
+        kernel_pgdir = kernel_pagedir_t_create();
+}
+
 void vm_init(void)
 {
-        pagedir_t kernel_pgdir;
+        
         /* Wait page-table operation */
         sfence_vma();
 
-        /* Create page-table then load it */
-        kernel_pgdir = kernel_pagedir_t_create();
+        /* Load it */
         satp_w(MAKE_SATP(kernel_pgdir));
 
         /* Refresh the 'satp' register */

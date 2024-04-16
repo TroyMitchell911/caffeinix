@@ -2,6 +2,7 @@
 #include <spinlock.h>
 #include <uart.h>
 #include <debug.h>
+#include <thread.h>
 
 extern void kernel_vec(void);
 
@@ -28,6 +29,9 @@ void kernel_trap(void)
                 }
                 /* Clear the interrupt flag */
                 sip_w(sip_r() &~ 2);
+                /* We change the running thread if the current thread != 0 and it's state == ACTIVE */
+                if(cur_thread() != 0 && cur_thread()->state == ACTIVE)
+                        yield();
         }
 }
 

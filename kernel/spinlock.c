@@ -1,13 +1,15 @@
 #include <spinlock.h>
 #include <riscv.h>
 #include <debug.h>
+#include <thread.h>
 
 void enter_critical(void)
 {
-        cpu_t cpu = cur_cpu();
         /* Get the interrupt status */
         int old = intr_status();
         intr_off();
+        /* Call the function when the interrupt disabled */
+        cpu_t cpu = cur_cpu();
         /* Add the depth */
         if(cpu->lock_nest_depth++ == 0) {
                 cpu->before_lock = old;

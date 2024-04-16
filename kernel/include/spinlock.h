@@ -2,7 +2,9 @@
 #define __CAFFEINIX_KERNEL_SPIN_LOCK_H
 
 #include <typedefs.h>
-#include <thread.h>
+
+struct cpu;
+typedef struct cpu *cpu_t;
 
 typedef struct spinlock {
         /* Is the lock held? */

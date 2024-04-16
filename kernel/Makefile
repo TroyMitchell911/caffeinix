@@ -3,4 +3,4 @@ EXTRA_LDFLAGS := -T ./kernel.ld
 CFLAGS_file.o := 
 
 
-obj-y += string.o palloc.o thread.o spinlock.o main.o 
+obj-y += string.o palloc.o thread.o spinlock.o switchto.o main.o 
