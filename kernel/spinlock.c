@@ -1,7 +1,7 @@
 #include <spinlock.h>
 #include <riscv.h>
 #include <debug.h>
-#include <thread.h>
+#include <scheduler.h>
 
 void enter_critical(void)
 {

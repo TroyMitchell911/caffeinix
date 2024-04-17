@@ -2,7 +2,7 @@
 #include <spinlock.h>
 #include <uart.h>
 #include <debug.h>
-#include <thread.h>
+#include <scheduler.h>
 
 extern void kernel_vec(void);
 

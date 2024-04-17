@@ -3,6 +3,7 @@
 #include <console.h>
 #include <palloc.h>
 #include <thread.h>
+#include <scheduler.h>
 #include <trap.h>
 #include <printf.h>
 
@@ -23,13 +24,12 @@ void main(void)
                 uart_putc('h');
                 uart_puts("ello, caffeinix\n");
 
-                // thread_test();
+                thread_test();
                 
                 __sync_synchronize();
 
                 start = 1;
-                // scheduler();
-                PANIC("test");
+                scheduler();
         } else {
                 while(start == 0)
                         ;
