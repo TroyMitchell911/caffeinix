@@ -1,33 +1,36 @@
 #include <mem_layout.h>
 #include <vm.h>
-#include <uart.h>
+#include <console.h>
 #include <palloc.h>
 #include <thread.h>
 #include <trap.h>
+#include <printf.h>
 
 volatile static uint8 start = 0;
 
 void main(void)
 {
         if(cpuid() == 0) {
+                console_init();
+
                 palloc_init();
                 vm_create();
                 vm_init();
                 thread_init();
-                uart_init();
                 trap_init_lock();
                 trap_init();
-                
 
                 uart_putc('h');
                 uart_puts("ello, caffeinix\n");
 
-                thread_test();
+                // thread_test();
                 
                 __sync_synchronize();
 
                 start = 1;
-                scheduler();
+                // scheduler();
+                print_int(123, 10, 1);
+                print_int(-123, 10, 1);
         } else {
                 while(start == 0)
                         ;
