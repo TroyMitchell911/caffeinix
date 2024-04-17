@@ -3,6 +3,8 @@
 #include <spinlock.h>
 #include <debug.h>
 
+volatile uint8 paniced = 0;
+
 static const char digits[] = "0123456789abcdef";
 static struct {
         struct spinlock lock;
@@ -90,6 +92,14 @@ void printf(char* fmt, ...)
 
         if(locking)
                 spinlock_release(&pf.lock);
+}
+
+void panic(char* s)
+{
+        pf.locking = 0;
+        printf("[PANIC]: %s\n", s);
+        paniced = 1;
+        for(;;);
 }
 
 void printf_init(void)

@@ -6,7 +6,7 @@ struct pmem_free_list {
         struct pmem_free_list *next;
 };
 
-static struct pmem_free_list *head;
+static struct pmem_free_list *head = 0;
 
 /* Defination is in kernel.ld */
 extern char end[];
@@ -49,7 +49,7 @@ void pfree(void* p)
 /* Alloc the physical memory */
 void* palloc(void)
 {
-        char* p;
+        char* p = 0;
         /* If the head is not NULL */
         if(head) {
                 p = (char*)head;

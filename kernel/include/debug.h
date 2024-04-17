@@ -5,12 +5,14 @@
 
 #ifdef DEBUG
 
+extern void panic(char* s);
 #define PANIC(s) do {           \
-    for(;;);                    \
+    panic(s);                   \
 } while (0)
 
-
 #else
+
+#define PANIC(s)    
 
 #endif
 

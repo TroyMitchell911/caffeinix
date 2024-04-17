@@ -29,7 +29,7 @@ void main(void)
 
                 start = 1;
                 // scheduler();
-                printf("test %d %x %p %s %l %%\n", 123, 0x123, 0x123, "test");
+                PANIC("test");
         } else {
                 while(start == 0)
                         ;
