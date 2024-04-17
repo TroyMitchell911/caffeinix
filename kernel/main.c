@@ -7,6 +7,7 @@
 #include <trap.h>
 #include <printf.h>
 #include <plic.h>
+#include <process.h>
 
 volatile static uint8 start = 0;
 extern char end[];
@@ -24,6 +25,7 @@ void main(void)
                 thread_init();
                 trap_init_lock();
                 trap_init();
+                process_init();
 
                 uart_putc('h');
                 uart_puts("ello, caffeinix\n");

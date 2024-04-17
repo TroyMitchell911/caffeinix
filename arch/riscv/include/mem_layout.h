@@ -5,6 +5,16 @@
 #define KERNEL_BASE     0x80000000L
 /* The DRAM memory of qemu have set 128M */
 #define PHY_MEM_STOP    (KERNEL_BASE) + (128 * 1024 * 1024)
+/* 
+        map the trampoline page to the highest address,
+        in both user and kernel space.
+ */
+#define TRAMPOLINE (MAXVA - PGSIZE)
+/* 
+        map kernel stacks beneath the trampoline,
+        each surrounded by invalid guard pages.
+ */
+#define KSTACK(p) (TRAMPOLINE - ((p)+1)* 2*PGSIZE)
 
 /* qemu puts UART registers here in physical memory. */
 #define UART0 0x10000000L

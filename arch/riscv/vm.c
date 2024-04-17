@@ -1,9 +1,9 @@
-#include <riscv.h>
 #include <palloc.h>
 #include <mem_layout.h>
 #include <vm.h>
 #include <string.h>
 #include <debug.h>
+#include <process.h>
 
 /* Defination in kernel.ld */
 extern char etext[];
@@ -88,6 +88,7 @@ static pagedir_t kernel_pagedir_t_create(void)
         /* Map the data and the rest of physical DRAM */
         vmmap(pgdir, (uint64)etext, (uint64)etext, PHY_MEM_STOP - (uint64)etext, PTE_R | PTE_W);
 
+        process_map_kernel_stack(pgdir);
         return pgdir;
 }
 
