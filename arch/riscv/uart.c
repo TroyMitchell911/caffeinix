@@ -34,7 +34,12 @@
 #define REG_R(r)                (*(REG(r)))
 #define REG_W(r, v)             (*(REG(r)) = (v))
 
+#define UART_TX_BUF_SIZE 32
+
 static struct spinlock spinlock_uart;
+char uart_tx_buf[UART_TX_BUF_SIZE];
+uint64 uart_tx_w; // write next to uart_tx_buf[uart_tx_w % UART_TX_BUF_SIZE]
+uint64 uart_tx_r; // read next from uart_tx_buf[uart_tx_r % UART_TX_BUF_SIZE]
 
 void uart_init(void)
 {
@@ -65,11 +70,64 @@ void uart_init(void)
         spinlock_init(&spinlock_uart, "uart");
 }
 
+void uart_start(void)
+{
+        while(1){
+                if(uart_tx_w == uart_tx_r){
+                        /* Transmit buffer is empty. */
+                        return;
+                }
+
+                if((REG_R(LSR) & LSR_TX_IDLE) == 0){
+                        /*  
+                                the UART transmit holding register is full,
+                                so we cannot give it another byte.
+                                it will interrupt when it's ready for a new byte. 
+                        */
+                        return;
+                }
+
+                int c = uart_tx_buf[uart_tx_r % UART_TX_BUF_SIZE];
+                uart_tx_r += 1;
+
+                /* TODO: We should wakeup sleeping thread here */
+                /* wakeup() */
+
+                REG_W(THR, c);
+        }  
+}
+
+/* 
+        IMPORTANCE: 
+        This function can't be called in the interrupt!
+        Because it may causes blocked.
+ */
 void uart_putc(int c)
 {
         spinlock_acquire(&spinlock_uart);
-        REG_W(THR, c);
+        while(uart_tx_w == uart_tx_r + UART_TX_BUF_SIZE){
+                /* Buffer is full. Wait for uart_start() to open up space in the buffer. */
+                /* TODO: We should add a function 'sleep' */
+                /* sleep() */
+        }
+        uart_tx_buf[uart_tx_w % UART_TX_BUF_SIZE] = c;
+        uart_tx_w += 1;
+        uart_start();
         spinlock_release(&spinlock_uart);
+}
+
+/* 
+        Alternate version of uart_putc() 
+        It can be called in the interrupt
+*/
+void uart_putc_sync(int c)
+{
+      enter_critical();
+
+      while((REG_R(LSR) & LSR_TX_IDLE) == 0);
+      REG_W(THR, c);
+
+      exit_critical();  
 }
 
 void uart_puts(const char* str)
@@ -78,6 +136,15 @@ void uart_puts(const char* str)
         n = strlen(str);
 
         while(n --) {
-                uart_putc(*str++);
+                uart_putc_sync(*str++);
+        }
+}
+
+int uart_getc(void)
+{
+        if(REG_R(LSR) & 0x01) {
+                return REG_R(RHR);
+        } else {
+                return -1;
         }
 }
