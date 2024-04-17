@@ -1,7 +1,7 @@
 #include <console.h>
 #include <spinlock.h>
 
-struct {
+static struct {
         struct spinlock lock;
   
         #define INPUT_BUF_SIZE 128
@@ -13,8 +13,6 @@ struct {
         /* edit index */
         uint32 e;  
 }console;
-
-static struct spinlock lock;
 
 #define BACKSPACE       0x100
 #define C(x)            ((x)-'@')  // Control-x
@@ -33,6 +31,6 @@ void console_putc(int c)
 
 void console_init(void)
 {
-        spinlock_init(&lock, "console");
+        spinlock_init(&console.lock, "console");
         uart_init();
 }

@@ -4,8 +4,6 @@
 #include <typedefs.h>
 #include <console.h>
 
-
-void print_int(int number, uint8 base, uint8 sign);
-void print_ptr(uint64 ptr);
+void printf(char* fmt, ...);
 
 #endif
