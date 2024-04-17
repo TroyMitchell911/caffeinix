@@ -147,12 +147,25 @@ static inline uint64 scause_r(void)
         return r;
 }
 
+static inline uint64 stval_r(void)
+{
+        uint64 r;
+        asm volatile("csrr %0, stval" : "=r"(r) :);
+        return r;
+}
+
 static inline uint64 sepc_r(void)
 {
         uint64 r;
         asm volatile("csrr %0, sepc" : "=r"(r) :);
         return r;
 }
+
+static inline void sepc_w(uint64 v)
+{
+  asm volatile("csrw sepc, %0" : : "r" (v));
+}
+
 
 static inline void sip_w(uint64 v)
 {

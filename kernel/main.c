@@ -8,13 +8,14 @@
 #include <printf.h>
 
 volatile static uint8 start = 0;
-
+extern char end[];
 void main(void)
 {
         if(cpuid() == 0) {
-                console_init();
-
                 palloc_init();
+                console_init();
+                printf_init();
+                printf("%p\n", end);
                 vm_create();
                 vm_init();
                 thread_init();
@@ -38,9 +39,9 @@ void main(void)
                 trap_init();
         }
 
-        uart_puts("hartid ");
-        uart_putc(cpuid() + '0');
-        uart_puts(" started!\n");
+        // uart_puts("hartid ");
+        // uart_putc(cpuid() + '0');
+        // uart_puts(" started!\n");
 
         
         
