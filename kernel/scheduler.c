@@ -23,16 +23,22 @@ cpu_t cur_cpu(void)
 }
 
 /* Get current thread */
-thread_t cur_thread()
+// thread_t cur_thread()
+// {
+//         return cur_cpu()->thread;
+// }
+
+/* Get current process */
+process_t cur_thread()
 {
-        return cur_cpu()->thread;
+        return cur_cpu()->proc;
 }
 
 /* 
         Them must be called with interrupts disabled above functions
         to prevent race with thread being moved to a different CPU
 */
-
+#if 0
 void scheduler(void)
 {
         volatile cpu_t cpu = cur_cpu();
@@ -89,3 +95,4 @@ void yield(void)
         sched();
         
 }
+#endif

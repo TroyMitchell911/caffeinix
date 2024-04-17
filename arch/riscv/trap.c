@@ -73,8 +73,6 @@ void kernel_trap(void)
                 printf("sepc=%p stval=%p\n", sepc, stval_r());
                 PANIC("kerneltrap");
         }
-         if(which_dev == 2 && cur_thread() != 0 && cur_thread()->state == ACTIVE)
-                yield();
 
         sepc_w(sepc);
         sstatus_w(sstatus);
