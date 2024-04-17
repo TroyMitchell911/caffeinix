@@ -6,5 +6,6 @@
 void uart_init(void);
 void uart_putc(int c);
 void uart_puts(const char* s);
+void uart_putc_sync(int c);
 
 #endif
