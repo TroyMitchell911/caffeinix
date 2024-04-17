@@ -24,3 +24,12 @@ void print_int(int number, uint8 base, uint8 sign)
         while(--i >= 0)
                 console_putc(buf[i]);
 }
+
+void print_ptr(uint64 ptr)
+{
+        int i;
+        console_putc('0');
+        console_putc('x');
+        for (i = 0; i < (sizeof(uint64) * 2); i++, ptr <<= 4)
+                console_putc(digits[ptr >> (sizeof(uint64) * 8 - 4)]);
+}

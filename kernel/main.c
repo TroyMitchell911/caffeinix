@@ -31,6 +31,7 @@ void main(void)
                 // scheduler();
                 print_int(123, 10, 1);
                 print_int(-123, 10, 1);
+                print_ptr(0x123);
         } else {
                 while(start == 0)
                         ;
