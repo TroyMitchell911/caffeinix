@@ -6,6 +6,7 @@
 #include <scheduler.h>
 #include <trap.h>
 #include <printf.h>
+#include <plic.h>
 
 volatile static uint8 start = 0;
 extern char end[];
@@ -15,6 +16,8 @@ void main(void)
                 palloc_init();
                 console_init();
                 printf_init();
+                plic_init();
+                plic_init_hart();
                 printf("%p\n", end);
                 vm_create();
                 vm_init();
@@ -36,6 +39,7 @@ void main(void)
                         ;
                 __sync_synchronize();
                 vm_init();
+                plic_init_hart();
                 trap_init();
         }
 
