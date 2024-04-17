@@ -10,6 +10,7 @@
         in both user and kernel space.
  */
 #define TRAMPOLINE (MAXVA - PGSIZE)
+#define TRAPFRAME (TRAMPOLINE - PGSIZE)
 /* 
         map kernel stacks beneath the trampoline,
         each surrounded by invalid guard pages.

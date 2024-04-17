@@ -29,7 +29,7 @@ cpu_t cur_cpu(void)
 // }
 
 /* Get current process */
-process_t cur_thread()
+process_t cur_proc()
 {
         return cur_cpu()->proc;
 }

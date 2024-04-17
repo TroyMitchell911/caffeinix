@@ -6,9 +6,32 @@
 #include <scheduler.h>
 #include <string.h>
 
+/* From trampoline.S */
+extern char trampoline[];
+
 static struct spinlock pid_lock;
 static struct process proc[NPROC];
 static int next_pid = 1;
+
+static pagedir_t proc_pagedir(process_t p)
+{
+        int ret;
+        pagedir_t pgdir = (pagedir_t)palloc();
+        if(!pgdir) {
+                return 0;
+        }
+
+        memset(pgdir, 0, PGSIZE);
+        ret = vm_map(pgdir, TRAMPOLINE, (uint64)trampoline, PTE_U | PTE_W | PTE_R | PTE_X, 1);
+        if(ret) {
+                /* Something */
+        }
+        ret = vm_map(pgdir, TRAPFRAME, (uint64)p->trapframe, PTE_U | PTE_W | PTE_R | PTE_X, 1);
+        if(ret){
+                /* Something */
+        }
+        return pgdir;
+}
 
 static void proc_first_start(void)
 {
@@ -36,14 +59,16 @@ process_t process_alloc(void)
                 spinlock_release(&process->lock);
         }
 found:
-        process->pagetable = (pagedir_t)palloc();
-        if(!process->pagetable) {
-                goto r1;
-        }
         process->trapframe = (trapframe_t)palloc();
         if(!process->trapframe) {
+                goto r1;
+        }
+
+        process->pagetable = proc_pagedir(process);
+        if(!process->pagetable) {
                 goto r2;
         }
+        
 
         process->pid = pid_alloc();
         process->kstack = KSTACK((int)(process - proc));
@@ -53,12 +78,12 @@ found:
         process->context.sp = process->kstack + PGSIZE;
         process->context.ra = (uint64)(proc_first_start);
 
-
+        return process;
 r2:
-        pfree(process->pagetable);
+        pfree(process->trapframe);
 r1:
         spinlock_release(&process->lock);
-        return process;
+        return 0;
 }
 
 void process_map_kernel_stack(pagedir_t pgdir)
@@ -72,7 +97,7 @@ void process_map_kernel_stack(pagedir_t pgdir)
                         PANIC("process_map_kernel_stack");
                 }
                 va = KSTACK((int)(p - proc));
-                vmmap(pgdir, va, pa, PGSIZE, PTE_R | PTE_W);
+                vm_map(pgdir, va, pa, PGSIZE, PTE_R | PTE_W);
         }
 }
 

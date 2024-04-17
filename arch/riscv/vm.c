@@ -42,13 +42,13 @@ pte_t *PTE(pagedir_t pgdir, uint64 va, int flag)
         return (pte_t*)&pgdir[PTEX(0, va)];
 }
 
-void vmmap(pagedir_t pgdir, uint64 va, uint64 pa, uint64 size, int perm)
+int vm_map(pagedir_t pgdir, uint64 va, uint64 pa, uint64 size, int perm)
 {
         uint64 start, end;
         pte_t *pte;
         /* Size can't be 0 */
         if(!size) {
-                PANIC("vmmap size");
+                PANIC("vm_map size");
         }
         /* Aligned downward at 4096 bytes */
         start = PGROUNDDOWN(va);
@@ -60,10 +60,10 @@ void vmmap(pagedir_t pgdir, uint64 va, uint64 pa, uint64 size, int perm)
                         with the virtual address in the page table  
                 */
                 if((pte = PTE(pgdir, start, 1)) == 0)
-                        PANIC("vmmap");
+                        return -1;
                 /* The pte can't include the bit PTE_V */
                 if(*pte & PTE_V) {
-                        PANIC("vmmap pte");
+                        PANIC("vm_map remap");
                 }
                 /* Set the PTE */
                 *pte = PA2PTE(pa) | PTE_V | perm;
@@ -72,6 +72,7 @@ void vmmap(pagedir_t pgdir, uint64 va, uint64 pa, uint64 size, int perm)
                 start += PGSIZE;
                 pa += PGSIZE;
         }
+        return 0;
 }
 
 static pagedir_t kernel_pagedir_t_create(void)
@@ -82,11 +83,11 @@ static pagedir_t kernel_pagedir_t_create(void)
         memset(pgdir, 0, PGSIZE);
 
         /* Map the UART0 */
-        vmmap(pgdir, UART0, UART0, PGSIZE, PTE_R | PTE_W);
+        vm_map(pgdir, UART0, UART0, PGSIZE, PTE_R | PTE_W);
         /* Map the text */
-        vmmap(pgdir, KERNEL_BASE, KERNEL_BASE, (uint64)etext - KERNEL_BASE, PTE_R | PTE_X);
+        vm_map(pgdir, KERNEL_BASE, KERNEL_BASE, (uint64)etext - KERNEL_BASE, PTE_R | PTE_X);
         /* Map the data and the rest of physical DRAM */
-        vmmap(pgdir, (uint64)etext, (uint64)etext, PHY_MEM_STOP - (uint64)etext, PTE_R | PTE_W);
+        vm_map(pgdir, (uint64)etext, (uint64)etext, PHY_MEM_STOP - (uint64)etext, PTE_R | PTE_W);
 
         process_map_kernel_stack(pgdir);
         return pgdir;
