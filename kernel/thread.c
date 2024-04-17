@@ -2,6 +2,7 @@
 #include <palloc.h>
 #include <string.h>
 #include <uart.h>
+#include <printf.h>
 
 struct list all_thread;
 
@@ -39,7 +40,7 @@ static void test1(void* arg)
         while(1) {
                 if(tick_count - last_tick >= 10) {
                         last_tick = tick_count;
-                        uart_puts("test1\n");
+                        printf("test1\n");
                 }
         }
 }
@@ -51,7 +52,7 @@ static void test2(void* arg)
         while(1) {
                 if(tick_count - last_tick >= 10) {
                         last_tick = tick_count;
-                        uart_puts("test2\n");
+                        printf("test2\n");
                 }
         }
 }

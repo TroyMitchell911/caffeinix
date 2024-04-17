@@ -18,7 +18,7 @@ static void tick_intr(void)
 
         tick_count ++;
         if(tick_count % 10 == 0) {
-                uart_puts("timer interrupt\n");
+                printf("timer interrupt\n");
         }
         /* TODO: We should wakeup here */
         // wakeup

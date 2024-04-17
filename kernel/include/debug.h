@@ -7,7 +7,7 @@
 
 extern void panic(char* s);
 #define PANIC(s) do {           \
-    panic(s"\n");                   \
+    panic(s);                   \
 } while (0)
 
 #else

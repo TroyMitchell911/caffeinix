@@ -27,15 +27,13 @@ void main(void)
                 trap_init();
                 process_init();
 
-                uart_putc('h');
-                uart_puts("ello, caffeinix\n");
+                printf("Hello! Caffeinix\n");
 
                 thread_test();
                 
                 __sync_synchronize();
-
                 start = 1;
-                scheduler();
+                
         } else {
                 while(start == 0)
                         ;
@@ -45,11 +43,8 @@ void main(void)
                 trap_init();
         }
 
-        // uart_puts("hartid ");
-        // uart_putc(cpuid() + '0');
-        // uart_puts(" started!\n");
+        printf("hardid %d started\n", cpuid());
+        scheduler();
 
-        
-        
         while(1);
 }
