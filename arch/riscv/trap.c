@@ -4,6 +4,7 @@
 #include <debug.h>
 #include <scheduler.h>
 #include <printf.h>
+#include <plic.h>
 
 extern void kernel_vec(void);
 
@@ -11,11 +12,8 @@ static struct spinlock tick_lock;
 /* For test */
 volatile uint64 tick_count = 0;
 
-static volatile uint8 test[10240] = {0};
-
 static void tick_intr(void)
 {
-        test[0] = 1;
         spinlock_acquire(&tick_lock);
 
         tick_count ++;
@@ -33,7 +31,7 @@ static int dev_intr(uint64 scause)
         /* This is a supervisor external interrupt via PLIC */
         if((scause & 0x8000000000000000L) &&
            (scause & 0xff) == 9) {
-                // irq = plic_claim();
+                irq = plic_claim();
                 if(irq == UART0_IRQ) {
 
                 } else if(irq == VIRTIO0_IRQ) {
@@ -42,7 +40,7 @@ static int dev_intr(uint64 scause)
                         printf("Unexpected interrupt irq=%d\n");
                 }
                 if(irq) {
-                        // plic_complete(irq);
+                        plic_complete(irq);
                 }
                 return 1;
         } else if(scause == 0x8000000000000001L) {
