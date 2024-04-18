@@ -31,6 +31,7 @@ static int dev_intr(uint64 scause)
         /* This is a supervisor external interrupt via PLIC */
         if((scause & 0x8000000000000000L) &&
            (scause & 0xff) == 9) {
+                /* Get interrupt number from PLIC */
                 irq = plic_claim();
                 if(irq == UART0_IRQ) {
 
@@ -40,6 +41,7 @@ static int dev_intr(uint64 scause)
                         printf("Unexpected interrupt irq=%d\n");
                 }
                 if(irq) {
+                        /* Clear the interrupt flag */
                         plic_complete(irq);
                 }
                 return 1;
@@ -78,11 +80,13 @@ void kernel_trap(void)
         sstatus_w(sstatus);
 }
 
+/* This function for first hart */
 void trap_init_lock(void)
 {
         spinlock_init(&tick_lock, "trap_tick");
 }
 
+/* This function for any hart */
 void trap_init(void)
 {
         stvec_w((uint64)kernel_vec);
