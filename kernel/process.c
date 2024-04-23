@@ -16,22 +16,21 @@ static int next_pid = 1;
 static pagedir_t proc_pagedir(process_t p)
 {
         int ret;
+        pagedir_t pgdir;
         /* Malloc memory for page-talble */
-        pagedir_t pgdir = (pagedir_t)palloc();
-        if(!pgdir) {
-                return 0;
-        }
-        /* Clear the memory */
-        memset(pgdir, 0, PGSIZE);
-        /* Map highest address to trampoline */
+        pgdir = pagedir_alloc();
+        /* Map trampoline */
         ret = vm_map(pgdir, TRAMPOLINE, (uint64)trampoline, PTE_R | PTE_X, 1);
         if(ret) {
-                /* Something */
+                pagedir_free(pgdir);
+                return 0;
         }
         /* Map address of under trampoline to trapframe */
         ret = vm_map(pgdir, TRAPFRAME, (uint64)p->trapframe, PTE_W | PTE_R, 1);
         if(ret){
-                /* Something */
+                /* We don't need free the address that PTE points because it is a code seg */
+                vm_unmap(pgdir, TRAMPOLINE, 1, 0);
+                pagedir_free(pgdir);
         }
         return pgdir;
 }

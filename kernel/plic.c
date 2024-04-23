@@ -21,14 +21,14 @@ void plic_init_hart(void)
 /* ask the PLIC what interrupt we should serve. */
 int plic_claim(void)
 {
-  int hart = cpuid();
-  int irq = *(uint32*)PLIC_SCLAIM(hart);
-  return irq;
+        int hart = cpuid();
+        int irq = *(uint32*)PLIC_SCLAIM(hart);
+        return irq;
 }
 
 /* tell the PLIC we've served this IRQ. */
 void plic_complete(int irq)
 {
-  int hart = cpuid();
-  *(uint32*)PLIC_SCLAIM(hart) = irq;
+        int hart = cpuid();
+        *(uint32*)PLIC_SCLAIM(hart) = irq;
 }

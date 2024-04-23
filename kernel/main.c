@@ -20,8 +20,8 @@ void main(void)
                 plic_init();
                 plic_init_hart();
                 printf("%p\n", end);
-                vm_create();
-                vm_init();
+                kvm_create();
+                kvm_init();
                 thread_init();
                 trap_init_lock();
                 trap_init();
@@ -38,7 +38,7 @@ void main(void)
                 while(start == 0)
                         ;
                 __sync_synchronize();
-                vm_init();
+                kvm_init();
                 plic_init_hart();
                 trap_init();
         }
