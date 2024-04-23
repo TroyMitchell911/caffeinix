@@ -10,7 +10,7 @@
 extern char trampoline[];
 
 static struct spinlock pid_lock;
-static struct process proc[NPROC];
+struct process proc[NPROC];
 static int next_pid = 1;
 
 static pagedir_t proc_pagedir(process_t p)
@@ -40,6 +40,8 @@ static void proc_first_start(void)
 {
         /* The function scheduler will acquire the lock */
         spinlock_release(&cur_proc()->lock);
+
+        PANIC("proc_first_start");
 }
 
 /* All processes have a alone id, pid */
@@ -164,4 +166,7 @@ void userinit(void)
         p->name = "initcode";
         /* Allow schedule */
         p->state = RUNNABLE;
+
+        /* The lock will be held in process_alloc */
+        spinlock_release(&p->lock);
 }

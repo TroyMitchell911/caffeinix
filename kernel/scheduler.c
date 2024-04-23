@@ -96,3 +96,28 @@ void yield(void)
         
 }
 #endif
+extern struct process proc[NPROC];
+void scheduler(void)
+{
+        volatile cpu_t cpu = cur_cpu();
+        process_t p;
+
+        cpu->proc = 0;
+
+        for(;;) {
+                /* Open interrupt to avoid dead lock */
+                intr_on();
+                
+                for(p = proc; p != &proc[NPROC - 1]; p++) {
+                        spinlock_acquire(&p->lock);
+                        if(p->state == RUNNABLE) {
+                                p->state = RUNNING;
+                                cpu->proc = p;
+                                switchto(&cpu->context, &p->context);
+                                cpu->proc = 0;
+                        }
+                        spinlock_release(&p->lock);
+                }
+        }
+        
+}

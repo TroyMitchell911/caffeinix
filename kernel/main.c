@@ -26,6 +26,7 @@ void main(void)
                 trap_init_lock();
                 trap_init();
                 process_init();
+                userinit();
 
                 printf("Hello! Caffeinix\n");
 
@@ -44,8 +45,8 @@ void main(void)
         }
 
         printf("hardid %d started\n", cpuid());
-        intr_on();
-        // scheduler();
+
+        scheduler();
 
         while(1);
 }

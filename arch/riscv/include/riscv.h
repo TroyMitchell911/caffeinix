@@ -81,6 +81,13 @@ static inline void satp_w(uint64 v)
         asm volatile("csrw satp, %0" : : "r"(v));
 }
 
+static inline uint64 satp_r(void)
+{
+        uint64 s;
+        asm volatile("csrr %0, satp" : "=r"(s) :);
+        return s;
+}
+
 static inline void pmpaddr0_w(uint64 v)
 {
         asm volatile("csrw pmpaddr0, %0" : : "r"(v));
