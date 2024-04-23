@@ -94,6 +94,7 @@ r1:
         return 0;
 }
 
+/* Be called by vm_create */
 void process_map_kernel_stack(pagedir_t pgdir)
 {
         process_t p = proc;
@@ -121,4 +122,46 @@ void process_init(void)
                 p->state = UNUSED;
                 p->kstack = KSTACK((int)(p - proc));
         }
+}
+
+static uint8 initcode[] = {
+0x00
+};
+
+void userinit(void)
+{
+        process_t p;
+        char* mem;
+        /* Alloc a process */
+        p = process_alloc();
+
+        if(!p) {
+                PANIC("userinit");
+        }
+
+        if(sizeof(initcode) > PGSIZE) {
+                PANIC("userinit");
+        }
+        /* Alloc physical memory for the process that we just alloced */
+        mem = palloc();
+        if(!mem) {
+                PANIC("userinit palloc");
+        }
+        memset(mem, 0, PGSIZE);
+        /* Map the lowest virtual address */
+        vm_map(p->pagetable, 0, (uint64)mem, PGSIZE, PTE_U | PTE_R | PTE_W | PTE_X);
+        /* Copy the code of first process into the memory that we just alloced */
+        memmove(mem, initcode, sizeof(initcode));
+
+        /* Set the epc to '0' because we have mapped the code to lowest address */
+        p->trapframe->epc = 0;
+        /* Set the stack pointer to highest address in memory we just alloced */
+        /* IMPORTANT: NOT HIGHEST VIRTUAL ADDRESS */
+        p->trapframe->sp = PGSIZE;
+        /* Record how many memory we used */
+        p->sz = PGSIZE;
+
+        p->name = "initcode";
+        /* Allow schedule */
+        p->state = RUNNABLE;
 }

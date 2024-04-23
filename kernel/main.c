@@ -29,7 +29,7 @@ void main(void)
 
                 printf("Hello! Caffeinix\n");
 
-                thread_test();
+                // thread_test();
                 
                 __sync_synchronize();
                 start = 1;
@@ -44,6 +44,7 @@ void main(void)
         }
 
         printf("hardid %d started\n", cpuid());
+        intr_on();
         // scheduler();
 
         while(1);

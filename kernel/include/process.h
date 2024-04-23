@@ -73,4 +73,6 @@ typedef struct process{
 void process_map_kernel_stack(pagedir_t pgdir);
 void process_init(void);
 
+/* User init for first process */
+void userinit(void);
 #endif
