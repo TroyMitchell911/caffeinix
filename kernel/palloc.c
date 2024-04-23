@@ -17,10 +17,9 @@ void palloc_init(void)
         /* Aligned upward at 4096 bytes */
         char* heap_start = (char*)PGROUNDUP((uint64)end);\
         char* p;
-        int a = 5;
 
         /* Traverse free memory */
-        for(p = heap_start; p <= (char*)(PHY_MEM_STOP - PGSIZE); p += PGSIZE, a++) {
+        for(p = heap_start; p <= (char*)(PHY_MEM_STOP - PGSIZE); p += PGSIZE) {
                 pfree(p);
         }
 }

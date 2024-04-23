@@ -7,6 +7,7 @@
 #include <plic.h>
 
 extern void kernel_vec(void);
+extern char trampoline[], user_vec[], user_ret[];
 
 static struct spinlock tick_lock;
 /* For test */
@@ -78,6 +79,48 @@ void kernel_trap(void)
 
         sepc_w(sepc);
         sstatus_w(sstatus);
+}
+
+void user_trap_entry(void)
+{
+
+}
+
+void user_trap_ret(void)
+{
+        process_t p;
+        uint64 sstatus;
+        uint64 satp;
+        uint64 trampoline_uservec;
+        uint64 trampoline_userret;
+
+        p = cur_proc();
+        /* Turn off the interrupt until we' are back in user space */
+        intr_off();
+
+        trampoline_uservec = TRAMPOLINE + (user_vec - trampoline);
+        stvec_w(trampoline_uservec);
+
+        p->trapframe->kernel_satp = satp_r();
+        p->trapframe->kernel_sp = p->kstack + PGSIZE;
+        p->trapframe->kernel_hartid = tp_r();
+        p->trapframe->kernel_trap = (uint64)user_trap_entry;
+
+        sstatus = sstatus_r();
+        /* Set the interrupt is from user mode */
+        sstatus &= ~SSTATUS_SPP; 
+        /* Enable interrupt */
+        sstatus |= SSTATUS_SPIE; 
+        sstatus_w(sstatus);
+
+        /* Write the epc. It will be set to 0 if the process is first started */
+        sepc_w(p->trapframe->epc);
+
+        satp = MAKE_SATP(p->pagetable);
+
+        trampoline_userret = TRAMPOLINE + (user_ret - trampoline);
+        /* Call user_ret */
+        ((void (*)(uint64))trampoline_userret)(satp);
 }
 
 /* This function for first hart */

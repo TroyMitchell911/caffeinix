@@ -40,8 +40,9 @@ static void proc_first_start(void)
 {
         /* The function scheduler will acquire the lock */
         spinlock_release(&cur_proc()->lock);
-
-        PANIC("proc_first_start");
+        
+        extern void user_trap_ret(void);
+        user_trap_ret();
 }
 
 /* All processes have a alone id, pid */

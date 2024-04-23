@@ -9,6 +9,8 @@
 /* Defination in kernel.ld */
 extern char etext[];
 
+extern char trampoline[];
+
 static pagedir_t kernel_pgdir;
 
 pte_t *PTE(pagedir_t pgdir, uint64 va, int flag)
@@ -85,6 +87,8 @@ static pagedir_t kernel_pagedir_t_create(void)
 
         /* Map the UART0 */
         vm_map(pgdir, UART0, UART0, PGSIZE, PTE_R | PTE_W);
+        /* Map the trampoline */        
+        vm_map(pgdir, TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_X | PTE_R);
         /* Map the text */
         vm_map(pgdir, KERNEL_BASE, KERNEL_BASE, (uint64)etext - KERNEL_BASE, PTE_R | PTE_X);
         /* Map the data and the rest of physical DRAM */
