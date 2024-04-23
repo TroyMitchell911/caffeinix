@@ -39,6 +39,7 @@
 extern volatile uint8 paniced;
 
 static struct spinlock lock;
+static uart_rx_callback_t rx_callback;
 char uart_tx_buf[UART_TX_BUF_SIZE];
 uint64 uart_tx_w; // write next to uart_tx_buf[uart_tx_w % UART_TX_BUF_SIZE]
 uint64 uart_tx_r; // read next from uart_tx_buf[uart_tx_r % UART_TX_BUF_SIZE]
@@ -163,6 +164,11 @@ int uart_getc(void)
         }
 }
 
+void uart_register_rx_callback(uart_rx_callback_t callback) 
+{
+        rx_callback = callback;
+}
+
 void uart_intr(void)
 {
         int c;
@@ -171,7 +177,7 @@ void uart_intr(void)
                 if(c == -1) {
                         break;
                 }
-                uart_putc(c);
+                rx_callback(c);
         }
         spinlock_acquire(&lock);
         uart_start();
