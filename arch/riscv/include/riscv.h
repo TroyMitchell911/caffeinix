@@ -1,8 +1,6 @@
 #ifndef __CAFFEINIX_ARCH_RISCV_RISCV_H
 #define __CAFFEINIX_ARCH_RISCV_RISCV_H
 
-#include <typedefs.h>
-
 #define PGSHIFT                 12  // bits of offset within a page
 #define PGSIZE                  4096
 
@@ -35,6 +33,8 @@
 */
 #define MAXVA (1L << (9 + 9 + 9 + 12 - 1))
 
+#ifndef __ASSEMBLER__
+#include <typedefs.h>
 
 typedef uint64 pte_t;
 typedef uint64 *pagedir_t;
@@ -244,5 +244,7 @@ static inline void mideleg_w(uint64 v)
 {
         asm volatile("csrw mideleg, %0" : : "r"(v));
 }
+
+#endif
 
 #endif

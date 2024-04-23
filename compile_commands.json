@@ -15,20 +15,17 @@
       "-I.",
       "-fno-stack-protector",
       "-fno-pie",
-      "-I",
-      "./include",
-      "-I",
-      "../arch/riscv/include",
-      "-I",
-      "../include",
-      "-Wp,-MD,.process.o.d",
+      "-march=rv64g",
+      "-nostdinc",
+      "-I.",
+      "-Ikernel",
       "-c",
       "-o",
-      "process.o",
-      "process.c"
+      "user/initcode.o",
+      "user/initcode.S"
     ],
-    "directory": "/root/caffeinix/kernel",
-    "file": "/root/caffeinix/kernel/process.c",
-    "output": "/root/caffeinix/kernel/process.o"
+    "directory": "/root/caffeinix",
+    "file": "/root/caffeinix/user/initcode.S",
+    "output": "/root/caffeinix/user/initcode.o"
   }
 ]

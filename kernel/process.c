@@ -20,13 +20,13 @@ static pagedir_t proc_pagedir(process_t p)
         /* Malloc memory for page-talble */
         pgdir = pagedir_alloc();
         /* Map trampoline */
-        ret = vm_map(pgdir, TRAMPOLINE, (uint64)trampoline, PTE_R | PTE_X, 1);
+        ret = vm_map(pgdir, TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
         if(ret) {
                 pagedir_free(pgdir);
                 return 0;
         }
         /* Map address of under trampoline to trapframe */
-        ret = vm_map(pgdir, TRAPFRAME, (uint64)p->trapframe, PTE_W | PTE_R, 1);
+        ret = vm_map(pgdir, TRAPFRAME, (uint64)p->trapframe, PGSIZE, PTE_W | PTE_R);
         if(ret){
                 /* We don't need free the address that PTE points because it is a code seg */
                 vm_unmap(pgdir, TRAMPOLINE, 1, 0);
@@ -127,8 +127,11 @@ void process_init(void)
         }
 }
 
+/* asm volatile("li t0, 0; jr t0"); */
 static uint8 initcode[] = {
-0x00
+// 0x97, 0x20, 0x00, 0x00,
+// 0xe7, 0x80,0x80,0xa0,
+0x6f, 0x00, 0x00, 0x00
 };
 
 void userinit(void)

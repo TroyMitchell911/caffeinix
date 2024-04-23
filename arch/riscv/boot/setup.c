@@ -40,7 +40,7 @@ void setup(void)
         /* Write hartid into the register 'tp' */
         tp_w(hartid);
 
-        timer_init(hartid);
+        // timer_init(hartid);
 
         /* Enter 'Supervisor mode' and 'main'  */
         asm volatile("mret");
