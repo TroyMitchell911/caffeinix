@@ -89,6 +89,8 @@ static pagedir_t kernel_pagedir_t_create(void)
         vm_map(pgdir, UART0, UART0, PGSIZE, PTE_R | PTE_W);
         /* Map the trampoline */        
         vm_map(pgdir, TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_X | PTE_R);
+        /* PLIC */
+        vm_map(pgdir, PLIC, PLIC, 0x400000, PTE_R | PTE_W);
         /* Map the text */
         vm_map(pgdir, KERNEL_BASE, KERNEL_BASE, (uint64)etext - KERNEL_BASE, PTE_R | PTE_X);
         /* Map the data and the rest of physical DRAM */

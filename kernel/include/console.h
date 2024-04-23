@@ -6,6 +6,4 @@
 void console_putc(int c);
 void console_init(void);
 
-
-
 #endif

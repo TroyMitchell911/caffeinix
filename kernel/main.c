@@ -45,8 +45,8 @@ void main(void)
         }
 
         printf("hardid %d started\n", cpuid());
-
-        scheduler();
+        // scheduler();
+        intr_on();
 
         while(1);
 }
