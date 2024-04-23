@@ -85,6 +85,8 @@ static pagedir_t kernel_pagedir_t_create(void)
 
         /* Map the UART0 */
         vm_map(pgdir, UART0, UART0, PGSIZE, PTE_R | PTE_W);
+        /* PLIC */
+        vm_map(pgdir, PLIC, PLIC, 0x400000, PTE_R | PTE_W);
         /* Map the text */
         vm_map(pgdir, KERNEL_BASE, KERNEL_BASE, (uint64)etext - KERNEL_BASE, PTE_R | PTE_X);
         /* Map the data and the rest of physical DRAM */

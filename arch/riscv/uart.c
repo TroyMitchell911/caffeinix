@@ -38,7 +38,7 @@
 
 extern volatile uint8 paniced;
 
-static struct spinlock spinlock_uart;
+static struct spinlock lock;
 char uart_tx_buf[UART_TX_BUF_SIZE];
 uint64 uart_tx_w; // write next to uart_tx_buf[uart_tx_w % UART_TX_BUF_SIZE]
 uint64 uart_tx_r; // read next from uart_tx_buf[uart_tx_r % UART_TX_BUF_SIZE]
@@ -67,9 +67,9 @@ void uart_init(void)
         REG_W(FCR, FCR_FIFO_ENABLE | FCR_FIFO_CLEAR);
 
         /* enable transmit and receive interrupts. */
-        // REG_W(IER, IER_TX_ENABLE | IER_RX_ENABLE);
+        REG_W(IER, IER_TX_ENABLE | IER_RX_ENABLE);
 
-        spinlock_init(&spinlock_uart, "uart");
+        spinlock_init(&lock, "uart");
 }
 
 void uart_start(void)
@@ -109,7 +109,7 @@ void uart_start(void)
  */
 void uart_putc(int c)
 {
-        spinlock_acquire(&spinlock_uart);
+        spinlock_acquire(&lock);
 
         if(paniced) {
                 for(;;);        
@@ -123,7 +123,7 @@ void uart_putc(int c)
         uart_tx_buf[uart_tx_w % UART_TX_BUF_SIZE] = c;
         uart_tx_w += 1;
         uart_start();
-        spinlock_release(&spinlock_uart);
+        spinlock_release(&lock);
 }
 
 /* 
@@ -161,4 +161,19 @@ int uart_getc(void)
         } else {
                 return -1;
         }
+}
+
+void uart_intr(void)
+{
+        int c;
+        while(1) {
+                c = uart_getc();
+                if(c == -1) {
+                        break;
+                }
+                uart_putc(c);
+        }
+        spinlock_acquire(&lock);
+        uart_start();
+        spinlock_release(&lock);
 }

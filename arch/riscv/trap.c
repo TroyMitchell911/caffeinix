@@ -34,7 +34,7 @@ static int dev_intr(uint64 scause)
                 /* Get interrupt number from PLIC */
                 irq = plic_claim();
                 if(irq == UART0_IRQ) {
-
+                        uart_intr();
                 } else if(irq == VIRTIO0_IRQ) {
 
                 } else{
