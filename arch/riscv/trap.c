@@ -83,7 +83,23 @@ void kernel_trap(void)
 
 void user_trap_entry(void)
 {
+        process_t p = cur_proc();
 
+        if((sstatus_r() & SSTATUS_SPP)) {
+                PANIC("Not from user mode");
+        }
+
+        stvec_w((uint64)kernel_vec);
+
+        p->trapframe->epc = sepc_r();
+
+        if(scause_r() == 8) {
+                PANIC("SYSCALL");
+                /* System call */
+                // p->trapframe->epc += 4;
+                // intr_on();
+                // syscall();
+        }
 }
 
 void user_trap_ret(void)
@@ -91,15 +107,15 @@ void user_trap_ret(void)
         process_t p;
         uint64 sstatus;
         uint64 satp;
-        // uint64 trampoline_uservec;
+        uint64 trampoline_uservec;
         uint64 trampoline_userret;
 
         p = cur_proc();
         /* Turn off the interrupt until we' are back in user space */
         intr_off();
 
-        // trampoline_uservec = TRAMPOLINE + (user_vec - trampoline);
-        // stvec_w(trampoline_uservec);
+        trampoline_uservec = TRAMPOLINE + (user_vec - trampoline);
+        stvec_w(trampoline_uservec);
 
         p->trapframe->kernel_satp = satp_r();
         p->trapframe->kernel_sp = p->kstack + PGSIZE;
@@ -110,7 +126,7 @@ void user_trap_ret(void)
         /* Set the interrupt is from user mode */
         sstatus &= ~SSTATUS_SPP; 
         /* Enable interrupt */
-        // sstatus |= SSTATUS_SPIE; 
+        sstatus |= SSTATUS_SPIE; 
         sstatus_w(sstatus);
 
         /* Write the epc. It will be set to 0 if the process is first started */

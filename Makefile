@@ -75,8 +75,8 @@ $(TARGET) : built-in.o user/initcode
 	$(OBJDUMP) -t $(TARGET) | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $(TARGET).sym
 	@rm -f $(shell find -name "*.o")
 
-user/initcode: user/initcode.S
-	$(CC) $(CFLAGS) -march=rv64g -nostdinc -I. -Ikernel -c user/initcode.S -o user/initcode.o
+user/initcode: user/initcode.S 
+	$(CC) $(CFLAGS) -march=rv64g -nostdinc -I ./kernel/include/ -c user/initcode.S -o user/initcode.o
 	$(LD) $(LDFLAGS) -N -e start -Ttext 0 -o user/initcode.out user/initcode.o
 	$(OBJCOPY) -S -O binary user/initcode.out user/initcode
 	$(OBJDUMP) -S user/initcode.o > user/initcode.asm
