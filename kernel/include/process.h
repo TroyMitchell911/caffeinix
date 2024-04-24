@@ -68,10 +68,14 @@ typedef struct process{
         pagedir_t pagetable;
         trapframe_t trapframe;
         struct context context;
+        void* sleep_chan;
 }*process_t;
 
 void process_map_kernel_stack(pagedir_t pgdir);
 void process_init(void);
+
+void sleep(void* chan, spinlock_t lk);
+void wakeup(void* chan);
 
 /* User init for first process */
 void userinit(void);

@@ -1,6 +1,7 @@
 #include <uart.h>
 #include <string.h>
 #include <spinlock.h>
+#include <process.h>
 
 #define REG(r)                  ((volatile unsigned char *)(UART0 + r))
 
@@ -96,8 +97,8 @@ void uart_start(void)
                 int c = uart_tx_buf[uart_tx_r % UART_TX_BUF_SIZE];
                 uart_tx_r += 1;
 
-                /* TODO: We should wakeup sleeping thread here */
-                /* wakeup() */
+                /* Wake up tasks that are sleeping because uart_putc */
+                wakeup(&uart_tx_r);
 
                 REG_W(THR, c);
         }  
@@ -118,8 +119,7 @@ void uart_putc(int c)
 
         while(uart_tx_w == uart_tx_r + UART_TX_BUF_SIZE){
                 /* Buffer is full. Wait for uart_start() to open up space in the buffer. */
-                /* TODO: We should add a function 'sleep' */
-                /* sleep() */
+                sleep(&uart_tx_r, &lock);
         }
         uart_tx_buf[uart_tx_w % UART_TX_BUF_SIZE] = c;
         uart_tx_w += 1;

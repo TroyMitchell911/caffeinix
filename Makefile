@@ -67,8 +67,8 @@ start_recursive_build:
 	make -C ./ -f $(TOPDIR)/Makefile.build
 
 $(TARGET) : built-in.o user/initcode
-	if [ ! -d $(OUTPUT) ]; then \
-        	mkdir $(OUTPUT); \
+	@if [ ! -d $(OUTPUT) ]; then \
+        	@mkdir $(OUTPUT); \
     	fi
 	$(LD) $(LDFLAGS) -T kernel/kernel.ld -o $(TARGET) built-in.o
 	$(OBJDUMP) -S $(TARGET) > $(TARGET).asm
@@ -105,11 +105,11 @@ qemu-gdb: all .gdbinit
 	@echo "*** Now run 'gdb' in another window." 1>&2
 
 clean:
-	rm -f $(shell find -name "*.o")
-	rm -f $(shell find -name "*.asm")
-	rm -f $(shell find -name "*.sym")
-	rm -f $(shell find -name "*.d")
+	@rm -f $(shell find -name "*.o")
+	@rm -f $(shell find -name "*.asm")
+	@rm -f $(shell find -name "*.sym")
+	@rm -f $(shell find -name "*.d")
 
 distclean: clean
-	rm -f $(shell find -name "compile_commands.json")
-	rm -f $(TARGET)
+	@rm -f $(shell find -name "compile_commands.json")
+	@rm -f $(TARGET)

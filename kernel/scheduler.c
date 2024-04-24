@@ -2,6 +2,7 @@
 #include <kernel_config.h>
 #include <riscv.h>
 #include <list.h>
+#include <debug.h>
 
 extern struct list all_thread;
 extern void switchto(context_t c, context_t p);
@@ -118,6 +119,37 @@ void scheduler(void)
                         }
                         spinlock_release(&p->lock);
                 }
+        } 
+}
+
+/* Change the context to kernel scheduler */
+void sched(void)
+{
+        cpu_t cpu = cur_cpu();
+        process_t p = cpu->proc;
+        uint8 before_lock;
+
+        if(!spinlock_holding(&p->lock)) {
+                PANIC("holding");
         }
-        
+
+        if(intr_status()) {
+                PANIC("sched intr open");
+        }
+
+        if(cpu->lock_nest_depth != 1) {
+                PANIC("sched lock_nest_depth");
+        }
+
+        if(p->state == RUNNING) {
+                PANIC("sched running");
+        }
+
+
+        /* Save the value of lock */
+        before_lock = cpu->before_lock;
+        /* Change the context to  kernel scheduler */
+        switchto(&p->context, &cpu->context);
+        /* Restore the value of lock */
+        cpu->before_lock = before_lock;
 }

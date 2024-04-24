@@ -20,5 +20,6 @@ cpu_t cur_cpu(void);
 process_t cur_proc();
 void scheduler(void);
 void yield(void);
+void sched(void);
 
 #endif
