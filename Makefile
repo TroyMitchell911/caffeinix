@@ -60,13 +60,16 @@ TARGET := $(OUTPUT)/kernel
 build:
 	bear -- make all
 
+fsimg: 
+	qemu-img create -f raw ./mkfs/fsimg.img 16M
+
 all : start_recursive_build $(TARGET)
 	@echo $(TARGET) has been built!
 
 start_recursive_build:
 	make -C ./ -f $(TOPDIR)/Makefile.build
 
-$(TARGET) : built-in.o user/initcode
+$(TARGET) : built-in.o user/initcode fsimg
 	@if [ ! -d $(OUTPUT) ]; then \
         	@mkdir $(OUTPUT); \
     	fi
@@ -84,6 +87,8 @@ user/initcode: user/initcode.S
 QEMU = qemu-system-riscv64
 QEMUOPTS = -machine virt -bios none -kernel $(TARGET) -m 128M -smp $(CPUS) -nographic
 QEMUOPTS += -global virtio-mmio.force-legacy=false
+QEMUOPTS += -drive file=./mkfs/fsimg.img,if=none,format=raw,id=x0
+QEMUOPTS += -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
 ifndef CPUS
 CPUS := 1
 endif

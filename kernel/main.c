@@ -8,6 +8,7 @@
 #include <printf.h>
 #include <plic.h>
 #include <process.h>
+#include <virtio_disk.h>
 
 volatile static uint8 start = 0;
 extern char end[];
@@ -27,6 +28,13 @@ void main(void)
                 trap_init();
                 process_init();
                 userinit();
+                virtio_disk_init();
+                char buf1[1024] = {"test"};
+                char buf2[1024] = {0};
+                virtio_disk_rw(buf1, 0, 1);
+                virtio_disk_rw(buf2, 0, 0);
+                printf("virtio_disk: %s\n", buf2);
+                
 
                 printf("Hello! Caffeinix\n");
 
