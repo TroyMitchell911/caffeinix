@@ -56,6 +56,10 @@ bio_t bget(uint16 dev, uint16 block)
                         b->ref = 1;
                         b->vaild = 0;
 
+
+                        /* Remove */
+                        b->next->prev = b->prev;
+                        b->prev->next = b->next;
                         /* Insert head */
                         b->next = bio_table.head.next;
                         b->prev = &bio_table.head;
@@ -75,19 +79,19 @@ void brelse(bio_t bio)
         if(!sleeplock_holding(&bio->lk)) {
                 PANIC("brelse");
         }
+        sleeplock_release(&bio->lk);
+
         spinlock_acquire(&bio_table.lk);
         if(bio->ref == 1) {
                 printf("release\n");
-                bio->vaild = 0;
                 /* Remove */
                 bio->next->prev = bio->prev;
                 bio->prev->next = bio->next;
                 /* Insert tail */
-                bio->next = bio_table.head.next;
+                bio->next = &bio_table.head;
                 bio->prev = bio_table.head.prev;
                 bio_table.head.prev->next = bio;
                 bio_table.head.prev = bio;
-                sleeplock_release(&bio->lk);
         }
         
         bio->ref --;
@@ -113,7 +117,7 @@ void bwrite(bio_t bio)
 
 void bpin(bio_t bio)
 {
-        printf("bpin");
+        printf("bpin\n");
         spinlock_acquire(&bio_table.lk);
         bio->ref ++;
         spinlock_release(&bio_table.lk);
@@ -121,7 +125,7 @@ void bpin(bio_t bio)
 
 void bunpin(bio_t bio)
 {
-        printf("bunpin");
+        printf("bunpin\n");
         spinlock_acquire(&bio_table.lk);
         bio->ref --;
         spinlock_release(&bio_table.lk);

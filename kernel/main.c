@@ -11,6 +11,7 @@
 #include <virtio_disk.h>
 #include <bio.h>
 #include <string.h>
+#include <log.h>
 
 volatile static uint8 start = 0;
 extern char end[];
@@ -32,6 +33,18 @@ void main(void)
                 userinit();
                 virtio_disk_init();
                 binit();
+                log_init(1);
+
+                intr_on();
+
+                log_begin();
+                bio_t b = bread(1, 1);
+                strncpy(b->buf, "test1", 6);
+                log_write(b);
+                brelse(b);
+                log_end();
+                b = bread(1, 1);
+                printf("log test: %s\n", b->buf);
 
                 printf("Hello! Caffeinix\n");
 

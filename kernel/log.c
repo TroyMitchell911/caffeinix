@@ -1,6 +1,7 @@
 #include <log.h>
 #include <debug.h>
 #include <process.h>
+#include <string.h>
 
 struct log_info {
         uint16 n;
@@ -16,6 +17,62 @@ struct log {
         uint8 commiting;
         struct log_info info;
 }log;
+
+static void log_head_write(void)
+{
+        struct log_info *info;
+        bio_t binfo;
+
+        binfo = bread(log.dev, log.start);
+        info = (struct log_info*)binfo->buf;
+        memmove(info, &log.info, sizeof(struct log_info));
+        bwrite(binfo);
+        brelse(binfo);
+
+}
+
+static void log_temp_write(void)
+{
+        int i;
+        bio_t to,from;
+
+        for(i = 0; i < log.info.n; i++) {
+                from = bread(log.dev, log.info.blocks[i]);
+                to = bread(log.dev, log.start + 1 + i);
+                memmove(to->buf, from->buf, BSIZE);
+                bwrite(to);
+                brelse(to);
+                brelse(from);
+        }
+}
+
+static void log_trans(void)
+{
+        int i;
+        bio_t to,from;
+
+        for(i = 0; i < log.info.n; i++) {
+                to = bread(log.dev, log.info.blocks[i]);
+                from = bread(log.dev, log.start + 1 + i);
+                memmove(to->buf, from->buf, BSIZE);
+                bwrite(to);
+                /* bpin in log_write */
+                bunpin(to);
+                brelse(to);
+                brelse(from);
+        }
+}
+
+static void commit(void)
+{
+        log_temp_write();
+        log_head_write();
+        log_trans();
+        spinlock_acquire(&log.lk);
+        log.info.n = 0;
+        spinlock_release(&log.lk);
+        log_head_write();
+}
 
 void log_init(uint16 dev)
 {
@@ -65,8 +122,10 @@ void log_end(void)
 
         if(log.commiting == 0) {
                 /* Commit in here */
+                commit();
                 spinlock_acquire(&log.lk);
                 log.commiting = 0;
+                wakeup(&log);
                 spinlock_release(&log.lk);
         }
 }

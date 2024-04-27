@@ -7,5 +7,8 @@
 #define LOGOP                           10 
 
 void log_init(uint16 dev);
+void log_write(bio_t b);
+void log_begin(void);
+void log_end(void);
 
 #endif
