@@ -33,17 +33,6 @@ void main(void)
                 virtio_disk_init();
                 binit();
 
-                intr_on();
-
-                char buf1[BSIZE] = {"test caffeinix"};
-                bio_t b = bread(1, 1);
-                memmove(b->buf, buf1, BSIZE);
-                bwrite(b);
-                brelse(b);
-                b = bread(1, 1);
-                printf("bio test: %s\n", b->buf);
-                
-
                 printf("Hello! Caffeinix\n");
 
                 // thread_test();

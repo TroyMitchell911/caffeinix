@@ -60,7 +60,7 @@ TARGET := $(OUTPUT)/kernel
 build:
 	bear -- make all
 
-fsimg: 
+./mkfs/fsimg.img: 
 	qemu-img create -f raw ./mkfs/fsimg.img 16M
 
 all : start_recursive_build $(TARGET)
@@ -69,7 +69,7 @@ all : start_recursive_build $(TARGET)
 start_recursive_build:
 	make -C ./ -f $(TOPDIR)/Makefile.build
 
-$(TARGET) : built-in.o user/initcode fsimg
+$(TARGET) : built-in.o user/initcode ./mkfs/fsimg.img
 	@if [ ! -d $(OUTPUT) ]; then \
         	@mkdir $(OUTPUT); \
     	fi
