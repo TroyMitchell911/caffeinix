@@ -33,7 +33,7 @@ void main(void)
                 virtio_disk_init();
                 binit();
 
-                char buf1[BSIZE] = {"hello"};
+                char buf1[BSIZE] = {"caffeinix"};
                 bio_t b = bread(1, 1);
                 memmove(b->buf, buf1, BSIZE);
                 bwrite(b);

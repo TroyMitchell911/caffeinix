@@ -5,6 +5,7 @@
 #include <palloc.h>
 #include <mem_layout.h>
 #include <process.h>
+#include <bio.h>
 
 #define BSIZE                   1024
 
@@ -205,10 +206,10 @@ static int alloc3_desc(int *idx)
         return 0;
 }
 
-void virtio_disk_rw(void* buf, uint16 block,  int write)
+void virtio_disk_rw(struct bio *b, int write)
 {
-        // uint64 sector = b->blockno * (BSIZE / 512);
-        uint64 sector = block * (BSIZE / 512);
+        uint64 sector = b->bnum * (BSIZE / 512);
+        // uint64 sector = block * (BSIZE / 512);
 
         acquire(&disk.vdisk_lock);
 
@@ -219,10 +220,10 @@ void virtio_disk_rw(void* buf, uint16 block,  int write)
         // allocate the three descriptors.
         int idx[3];
         while(1){
-        if(alloc3_desc(idx) == 0) {
-        break;
-        }
-        sleep(&disk.free[0], &disk.vdisk_lock);
+                if(alloc3_desc(idx) == 0) {
+                        break;
+                }
+                sleep(&disk.free[0], &disk.vdisk_lock);
         }
 
         // format the three descriptors.
@@ -231,9 +232,9 @@ void virtio_disk_rw(void* buf, uint16 block,  int write)
         struct virtio_blk_req *buf0 = &disk.ops[idx[0]];
 
         if(write)
-        buf0->type = VIRTIO_BLK_T_OUT; // write the disk
+                buf0->type = VIRTIO_BLK_T_OUT; // write the disk
         else
-        buf0->type = VIRTIO_BLK_T_IN; // read the disk
+                buf0->type = VIRTIO_BLK_T_IN; // read the disk
         buf0->reserved = 0;
         buf0->sector = sector;
 
@@ -243,12 +244,12 @@ void virtio_disk_rw(void* buf, uint16 block,  int write)
         disk.desc[idx[0]].next = idx[1];
 
         // disk.desc[idx[1]].addr = (uint64) b->data;
-        disk.desc[idx[1]].addr = (uint64) buf;
+        disk.desc[idx[1]].addr = (uint64) b->buf;
         disk.desc[idx[1]].len = BSIZE;
         if(write)
-        disk.desc[idx[1]].flags = 0; // device reads b->data
+                disk.desc[idx[1]].flags = 0; // device reads b->data
         else
-        disk.desc[idx[1]].flags = VRING_DESC_F_WRITE; // device writes b->data
+                disk.desc[idx[1]].flags = VRING_DESC_F_WRITE; // device writes b->data
         disk.desc[idx[1]].flags |= VRING_DESC_F_NEXT;
         disk.desc[idx[1]].next = idx[2];
 

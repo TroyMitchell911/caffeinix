@@ -98,7 +98,7 @@ bio_t bread(uint16 dev, uint16 block)
 {
         bio_t bio = bget(dev, block);
         if(bio->vaild == 0) {
-                virtio_disk_rw(bio->buf, block, 0);
+                virtio_disk_rw(bio, 0);
                 bio->vaild = 1;
         }
         return bio;
@@ -108,7 +108,7 @@ void bwrite(bio_t bio)
 {
         if(!sleeplock_holding(&bio->lk))
                 PANIC("bio_write");
-        virtio_disk_rw(bio->buf, bio->bnum, 1);
+        virtio_disk_rw(bio,1);
 }
 
 void bpin(bio_t bio)

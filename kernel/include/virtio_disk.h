@@ -91,7 +91,9 @@ struct virtio_blk_req {
         uint64 sector;
 };
 
-void virtio_disk_rw(void* buf, uint16 block,  int write);
+struct bio;
+
+void virtio_disk_rw(struct bio *b, int write);
 void virtio_disk_init(void);
 
 
