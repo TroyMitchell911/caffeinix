@@ -19,6 +19,8 @@ typedef struct bio {
         uint16 ref;
         /* It has been loaded in memory? */
         uint8 vaild;
+        /* Writing into disk? */
+        uint8 disking;
         /* For LRU */
         struct bio *prev;
         struct bio *next;

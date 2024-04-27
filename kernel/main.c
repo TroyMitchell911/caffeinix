@@ -33,6 +33,8 @@ void main(void)
                 virtio_disk_init();
                 binit();
 
+                intr_on();
+
                 char buf1[BSIZE] = {"caffeinix"};
                 bio_t b = bread(1, 1);
                 memmove(b->buf, buf1, BSIZE);
@@ -59,7 +61,7 @@ void main(void)
         }
 
         printf("hardid %d started\n", cpuid());
-        scheduler();
+        // scheduler();
 
         while(1);
 }

@@ -37,7 +37,7 @@ static int dev_intr(uint64 scause)
                 if(irq == UART0_IRQ) {
                         uart_intr();
                 } else if(irq == VIRTIO0_IRQ) {
-
+                        PANIC("VIRTIO");
                 } else{
                         printf("Unexpected interrupt irq=%d\n");
                 }

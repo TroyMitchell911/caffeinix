@@ -54,7 +54,7 @@ static int pid_alloc(void)
         spinlock_release(&pid_lock);
         return pid;
 }
-
+#if 0
 void sleep(void* chan, spinlock_t lk)
 {
         process_t p = cur_proc();
@@ -86,7 +86,18 @@ void wakeup(void* chan)
                 }
         }
 }
+#else
+/* TODO */
+void sleep(void* chan, spinlock_t lk)
+{
 
+}
+
+void wakeup(void* chan)
+{
+
+}
+#endif
 /* Alloc a process */
 process_t process_alloc(void)
 {

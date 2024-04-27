@@ -47,8 +47,8 @@ static struct disk {
         // for use when completion interrupt arrives.
         // indexed by first descriptor index of chain.
         struct {
-        struct buf *b;
-        char status;
+                bio_t b;
+                char status;
         } info[VIRTIO_DES_NUM];
 
         // disk command headers.
@@ -260,8 +260,8 @@ void virtio_disk_rw(struct bio *b, int write)
         disk.desc[idx[2]].next = 0;
 
         // record struct buf for virtio_disk_intr().
-        // b->disk = 1;
-        // disk.info[idx[0]].b = b;
+        b->disking = 1;
+        disk.info[idx[0]].b = b;
 
         // tell the device the first index in our chain of descriptors.
         disk.avail->ring[disk.avail->idx % NUM] = idx[0];
@@ -276,12 +276,15 @@ void virtio_disk_rw(struct bio *b, int write)
         *R(VIRTIO_MMIO_QUEUE_NOTIFY) = 0; // value is queue number
 
         // Wait for virtio_disk_intr() to say request has finished.
-        // while(b->disk == 1) {
-        //         sleep(b, &disk.vdisk_lock);
-        // }
+        release(&disk.vdisk_lock);
+        while(b->disking == 1) {
+                sleep(b, &disk.vdisk_lock);
+        }
+        acquire(&disk.vdisk_lock);
 
         disk.info[idx[0]].b = 0;
         free_chain(idx[0]);
 
         release(&disk.vdisk_lock);
 }
+
