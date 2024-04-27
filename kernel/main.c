@@ -9,6 +9,8 @@
 #include <plic.h>
 #include <process.h>
 #include <virtio_disk.h>
+#include <bio.h>
+#include <string.h>
 
 volatile static uint8 start = 0;
 extern char end[];
@@ -29,11 +31,15 @@ void main(void)
                 process_init();
                 userinit();
                 virtio_disk_init();
-                char buf1[1024] = {"test"};
-                char buf2[1024] = {0};
-                virtio_disk_rw(buf1, 0, 1);
-                virtio_disk_rw(buf2, 0, 0);
-                printf("virtio_disk: %s\n", buf2);
+                binit();
+
+                char buf1[BSIZE] = {"hello"};
+                bio_t b = bread(1, 1);
+                memmove(b->buf, buf1, BSIZE);
+                bwrite(b);
+                brelse(b);
+                b = bread(1, 1);
+                printf("bio test: %s\n", b->buf);
                 
 
                 printf("Hello! Caffeinix\n");

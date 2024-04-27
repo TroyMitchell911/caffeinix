@@ -12,6 +12,7 @@ typedef struct bio {
         char buf[BSIZE];
         /* For task sleeps */
         struct sleeplock lk;
+        uint16 dev;
         /* Block number */
         uint16 bnum;
         /* Reference count */
@@ -23,6 +24,11 @@ typedef struct bio {
         struct bio *next;
 }*bio_t;
 
-void bio_init(void);
+void binit(void);
+bio_t bread(uint16 dev, uint16 block);
+void bwrite(bio_t b);
+void bpin(bio_t b);
+void bunpin(bio_t b);
+void brelse(bio_t b);
 
 #endif

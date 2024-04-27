@@ -1,13 +1,16 @@
 #include <bio.h>
 #include <debug.h>
+#include <printf.h>
+
+/* Remember one thing: spinlock protects information of bio and sleeplock protects buffer of bio. */
 
 struct bio_table {
         struct spinlock lk;
         struct bio bios[BIO_NUM];
         struct bio head;
-}bio_table;
+}bio_table; 
 
-void bio_init(void)
+void binit(void)
 {
         bio_t b;
 
@@ -24,11 +27,10 @@ void bio_init(void)
                 b->prev = &bio_table.head;
                 bio_table.head.next->prev = b;
                 bio_table.head.next = b;
-                b->ref = b->vaild = 0;
         }
 }
 
-bio_t bio_get(uint16 dev, uint16 block)
+bio_t bget(uint16 dev, uint16 block)
 {
         bio_t b;
 
@@ -37,9 +39,10 @@ bio_t bio_get(uint16 dev, uint16 block)
         /* Find a bio that the bnum equals block */
         for(b = bio_table.head.next; b->next != &bio_table.head; b = b->next) {
                 if(b->bnum == block) {
-                        sleeplock_acquire(&b->lk);
+                        printf("bget found it\n");
                         b->ref ++;
                         spinlock_release(&bio_table.lk);
+                        sleeplock_acquire(&b->lk);
                         return b;
                 }
         }
@@ -47,18 +50,79 @@ bio_t bio_get(uint16 dev, uint16 block)
         /* LRU */
         for(b = bio_table.head.prev; b->prev != &bio_table.head; b = b->prev) {
                 if(b->ref == 0) {
-                        sleeplock_acquire(&b->lk);
+                        printf("bget created it\n");
+                        b->dev = dev;
                         b->bnum = block;
                         b->ref = 1;
                         b->vaild = 0;
-                         b->next = bio_table.head.next;
+
+                        /* Insert head */
+                        b->next = bio_table.head.next;
                         b->prev = &bio_table.head;
                         bio_table.head.next->prev = b;
                         bio_table.head.next = b;
                         spinlock_release(&bio_table.lk);
+                        sleeplock_acquire(&b->lk);
                         return b;
                 }
         }
         PANIC("bio_get");
         return 0;
+}
+
+void brelse(bio_t bio)
+{
+        if(!sleeplock_holding(&bio->lk)) {
+                PANIC("brelse");
+        }
+        spinlock_acquire(&bio_table.lk);
+        if(bio->ref == 1) {
+                printf("release\n");
+                bio->vaild = 0;
+                /* Remove */
+                bio->next->prev = bio->prev;
+                bio->prev->next = bio->next;
+                /* Insert tail */
+                bio->next = bio_table.head.next;
+                bio->prev = bio_table.head.prev;
+                bio_table.head.prev->next = bio;
+                bio_table.head.prev = bio;
+                sleeplock_release(&bio->lk);
+        }
+        
+        bio->ref --;
+        spinlock_release(&bio_table.lk);
+}
+
+bio_t bread(uint16 dev, uint16 block)
+{
+        bio_t bio = bget(dev, block);
+        if(bio->vaild == 0) {
+                virtio_disk_rw(bio->buf, block, 0);
+                bio->vaild = 1;
+        }
+        return bio;
+}
+
+void bwrite(bio_t bio)
+{
+        if(!sleeplock_holding(&bio->lk))
+                PANIC("bio_write");
+        virtio_disk_rw(bio->buf, bio->bnum, 1);
+}
+
+void bpin(bio_t bio)
+{
+        printf("bpin");
+        spinlock_acquire(&bio_table.lk);
+        bio->ref ++;
+        spinlock_release(&bio_table.lk);
+}
+
+void bunpin(bio_t bio)
+{
+        printf("bunpin");
+        spinlock_acquire(&bio_table.lk);
+        bio->ref --;
+        spinlock_release(&bio_table.lk);
 }
