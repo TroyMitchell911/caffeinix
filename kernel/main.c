@@ -35,7 +35,7 @@ void main(void)
 
                 intr_on();
 
-                char buf1[BSIZE] = {"caffeinix"};
+                char buf1[BSIZE] = {"test caffeinix"};
                 bio_t b = bread(1, 1);
                 memmove(b->buf, buf1, BSIZE);
                 bwrite(b);

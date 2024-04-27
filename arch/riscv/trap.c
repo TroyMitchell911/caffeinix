@@ -5,6 +5,7 @@
 #include <scheduler.h>
 #include <printf.h>
 #include <plic.h>
+#include <virtio_disk.h>
 
 extern void kernel_vec(void);
 extern char trampoline[], user_vec[], user_ret[];
@@ -37,7 +38,7 @@ static int dev_intr(uint64 scause)
                 if(irq == UART0_IRQ) {
                         uart_intr();
                 } else if(irq == VIRTIO0_IRQ) {
-                        PANIC("VIRTIO");
+                        virtio_disk_intr();
                 } else{
                         printf("Unexpected interrupt irq=%d\n");
                 }

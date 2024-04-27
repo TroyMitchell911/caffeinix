@@ -288,3 +288,36 @@ void virtio_disk_rw(struct bio *b, int write)
         release(&disk.vdisk_lock);
 }
 
+void virtio_disk_intr(void)
+{
+        acquire(&disk.vdisk_lock);
+
+        // the device won't raise another interrupt until we tell it
+        // we've seen this interrupt, which the following line does.
+        // this may race with the device writing new entries to
+        // the "used" ring, in which case we may process the new
+        // completion entries in this interrupt, and have nothing to do
+        // in the next interrupt, which is harmless.
+        *R(VIRTIO_MMIO_INTERRUPT_ACK) = *R(VIRTIO_MMIO_INTERRUPT_STATUS) & 0x3;
+
+        __sync_synchronize();
+
+        // the device increments disk.used->idx when it
+        // adds an entry to the used ring.
+
+        while(disk.used_idx != disk.used->idx){
+                __sync_synchronize();
+                int id = disk.used->ring[disk.used_idx % NUM].id;
+
+                if(disk.info[id].status != 0)
+                        panic("virtio_disk_intr status");
+
+                bio_t b = disk.info[id].b;
+                b->disking = 0;   // disk is done with buf
+                wakeup(b);
+
+                disk.used_idx += 1;
+        }
+
+        release(&disk.vdisk_lock);
+}
