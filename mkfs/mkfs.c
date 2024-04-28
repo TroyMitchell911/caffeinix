@@ -1,7 +1,6 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <stdlib.h>
-#include <memory.h>
 #include <fcntl.h>
 #include <assert.h>
 #include <string.h>
@@ -12,7 +11,6 @@ typedef unsigned short ushort;
 
 #define stat xv6_stat  // avoid clash with host struct stat
 #include "../kernel/include/inode.h"
-#include "../kernel/include/file.h"
 
 #ifndef static_assert
 #define static_assert(a, b) do { switch (0) case 0: case (a): ; } while (0)
@@ -20,7 +18,7 @@ typedef unsigned short ushort;
 
 #define NINODES 200
 
-#define bzero(dst, sz)  memset(dst, 0, sz)
+#define bzero_mkfs(dst, sz)  memset(dst, 0, sz)
 
 // Disk layout:
 // [ boot block | sb block | log | inode blocks | free bit map | data blocks ]
@@ -38,7 +36,7 @@ uint freeinode = 1;
 uint freeblock;
 
 
-void balloc(int);
+void balloc_mkfs(int);
 void wsect(uint, void*);
 void winode(uint, struct dinode*);
 void rinode(uint inum, struct dinode *ip);
@@ -122,12 +120,12 @@ main(int argc, char *argv[])
   rootino = ialloc(T_DIR);
   assert(rootino == ROOTINO);
 
-  bzero(&de, sizeof(de));
+  bzero_mkfs(&de, sizeof(de));
   de.inum = xshort(rootino);
   strcpy(de.name, ".");
   iappend(rootino, &de, sizeof(de));
 
-  bzero(&de, sizeof(de));
+  bzero_mkfs(&de, sizeof(de));
   de.inum = xshort(rootino);
   strcpy(de.name, "..");
   iappend(rootino, &de, sizeof(de));
@@ -154,7 +152,7 @@ main(int argc, char *argv[])
 
     inum = ialloc(T_FILE);
 
-    bzero(&de, sizeof(de));
+    bzero_mkfs(&de, sizeof(de));
     de.inum = xshort(inum);
     strncpy(de.name, shortname, DIRSIZ);
     iappend(rootino, &de, sizeof(de));
@@ -172,7 +170,7 @@ main(int argc, char *argv[])
   din.size = xint(off);
   winode(rootino, &din);
 
-  balloc(freeblock);
+  balloc_mkfs(freeblock);
 
   exit(0);
 }
@@ -228,7 +226,7 @@ ialloc(ushort type)
   uint inum = freeinode++;
   struct dinode din;
 
-  bzero(&din, sizeof(din));
+  bzero_mkfs(&din, sizeof(din));
   din.type = xshort(type);
   din.nlink = xshort(1);
   din.size = xint(0);
@@ -237,18 +235,18 @@ ialloc(ushort type)
 }
 
 void
-balloc(int used)
+balloc_mkfs(int used)
 {
   uchar buf[BSIZE];
   int i;
 
-  printf("balloc: first %d blocks have been allocated\n", used);
+  printf("balloc_mkfs: first %d blocks have been allocated\n", used);
   assert(used < BSIZE*8);
-  bzero(buf, BSIZE);
+  bzero_mkfs(buf, BSIZE);
   for(i = 0; i < used; i++){
     buf[i/8] = buf[i/8] | (0x1 << (i%8));
   }
-  printf("balloc: write bitmap block at sector %d\n", sb.bmapstart);
+  printf("balloc_mkfs: write bitmap block at sector %d\n", sb.bmapstart);
   wsect(sb.bmapstart, buf);
 }
 

@@ -3,14 +3,8 @@
 
 #include <typedefs.h>
 #include <sleeplock.h>
-#include <balloc.h>
-
-#define NDIRECT                         12
-#define NINDIRECT                       (BSIZE / sizeof(uint))
-#define DIRSIZ                          14
-#define ROOTINO                         1
-
-#define IBLOCK(i, sb)                   ((i) / IPB + sb.inodestart)
+#include <log.h>
+#include <fs.h>
 
 typedef enum file_type {
         T_DIR = 1,
@@ -48,8 +42,5 @@ struct dirent {
   unsigned short inum;
   char name[DIRSIZ];
 };
-
-/* How many inodes per block */
-#define IPB                             (BSIZE / sizeof(struct inode))
 
 #endif

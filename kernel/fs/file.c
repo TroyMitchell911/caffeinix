@@ -10,7 +10,7 @@ void fs_init(uint32 dev)
         /* Read super block */
         b = bread(dev, SUPERBLOCK_NUM);
         memmove(&sb, b->buf, sizeof(struct superblock));
-        if(sb.magic != 0x10203040)
+        if(sb.magic != FSMAGIC)
                 PANIC("fs_init");
         log_init(dev, sb.size, sb.logstart);
         brelse(b);

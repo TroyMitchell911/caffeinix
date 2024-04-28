@@ -21,7 +21,7 @@ uint32 balloc(uint32 dev)
         bio_t b;
         /* Traverse the bitmap blocks corresponding to all blocks */
         for(i = 0; i < sb.size; i += BPB) {
-                b = bread(dev, sb.bmapstart + i / BPB);
+                b = bread(dev, BBLOCK(i, sb));
                 /* Iterate through each bit of the bitmap block */
                 for(j = 0; j < BPB; j++) {
                         mask = 1 << (j % 8);
@@ -42,12 +42,11 @@ uint32 balloc(uint32 dev)
 
 void bfree(uint32 dev, uint32 block)
 {
-        uint32 bitmap_block = block / BPB;
         uint32 bitmap_bit = block % BPB;
         uint8 mask = 1 << (bitmap_bit % 8);
         bio_t b;
 
-        b = bread(dev, sb.bmapstart + bitmap_block);
+        b = bread(dev, BBLOCK(block, sb));
 
         if((b->buf[bitmap_bit / 8] & mask) == 0)
                 PANIC("bfree");
