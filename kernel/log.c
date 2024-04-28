@@ -125,10 +125,13 @@ void log_init(uint16 dev)
 
 void log_begin(void)
 {
+        /* Protect log */
         spinlock_acquire(&log.lk);
         while(1) {
+                /* If it is commit-ing */
                 if(log.commiting) {
                         sleep(&log, &log.lk);
+                /* reserve some space for the process that will write */
                 } else if(log.info.n + (log.syscalling + 1)* LOGOP > log.sz) {
                         sleep(&log, &log.lk);
                 } else {
@@ -141,15 +144,16 @@ void log_begin(void)
 
 void log_end(void)
 {
+        /* Protect log */
         spinlock_acquire(&log.lk);
-
+        
         if(log.syscalling == 0 || log.commiting == 1) {
                 PANIC("log_end");
         }
 
         log.syscalling --;
 
-        if(log.syscalling == 1) {
+        if(log.syscalling == 0) {
                 log.commiting = 1;
         } else {
                 wakeup(&log);
@@ -157,7 +161,7 @@ void log_end(void)
 
         spinlock_release(&log.lk);
 
-        if(log.commiting == 0) {
+        if(log.commiting == 1) {
                 /* Commit in here */
                 commit();
                 spinlock_acquire(&log.lk);
@@ -170,7 +174,7 @@ void log_end(void)
 void log_write(bio_t b)
 {
         int i;
-        
+        /* Protect info */
         spinlock_acquire(&log.lk);
         if(log.info.n > log.sz || log.info.n > LOGSIZE) {
                 PANIC("log_write I'm full");
@@ -184,9 +188,10 @@ void log_write(bio_t b)
                 if(log.info.blocks[i] == b->bnum)
                         break;
         }
-
+        /* Point the real block */
         log.info.blocks[i] = b->bnum;
         if(i == log.info.n) {
+                /* Avoiding be released by brelse */
                 bpin(b);
                 log.info.n ++;
         }
@@ -206,7 +211,7 @@ void log_test(void)
 #ifdef LOG_TEST
         log_begin();
         b = bread(1, 1);
-        strncpy(b->buf, "test", 5);
+        strncpy(b->buf, "test123", 8);
         log_write(b);
         brelse(b);
         log_end();
