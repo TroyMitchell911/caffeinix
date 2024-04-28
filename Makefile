@@ -52,6 +52,7 @@ export TOPDIR
 # Define the subdirectory to be searched for 
 # variable records (the subdirectory must contain a makefile)
 obj-y += arch/riscv/boot/
+obj-y += kernel/fs/
 obj-y += kernel/
 obj-y += arch/riscv/
 
