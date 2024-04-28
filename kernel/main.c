@@ -33,18 +33,11 @@ void main(void)
                 userinit();
                 virtio_disk_init();
                 binit();
-                log_init(1);
 
                 intr_on();
+                log_init(1);
 
-                log_begin();
-                bio_t b = bread(1, 1);
-                strncpy(b->buf, "test1", 6);
-                log_write(b);
-                brelse(b);
-                log_end();
-                b = bread(1, 1);
-                printf("log test: %s\n", b->buf);
+                log_test();
 
                 printf("Hello! Caffeinix\n");
 

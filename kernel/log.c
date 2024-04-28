@@ -2,6 +2,7 @@
 #include <debug.h>
 #include <process.h>
 #include <string.h>
+#include <printf.h>
 
 struct log_info {
         uint16 n;
@@ -28,7 +29,17 @@ static void log_head_write(void)
         memmove(info, &log.info, sizeof(struct log_info));
         bwrite(binfo);
         brelse(binfo);
+}
 
+static void log_head_read(void)
+{
+        struct log_info *info;
+        bio_t binfo;
+
+        binfo = bread(log.dev, log.start);
+        info = (struct log_info*)binfo->buf;
+        memmove(&log.info, info, sizeof(struct log_info));
+        brelse(binfo);
 }
 
 static void log_temp_write(void)
@@ -46,32 +57,58 @@ static void log_temp_write(void)
         }
 }
 
-static void log_trans(void)
+static void log_trans(uint8 is_recover)
 {
         int i;
+#ifndef LOG_TEST
         bio_t to,from;
+#else
+        bio_t to;
+#endif
 
         for(i = 0; i < log.info.n; i++) {
                 to = bread(log.dev, log.info.blocks[i]);
+#ifndef LOG_TEST
                 from = bread(log.dev, log.start + 1 + i);
                 memmove(to->buf, from->buf, BSIZE);
                 bwrite(to);
+#endif
                 /* bpin in log_write */
-                bunpin(to);
+                if(!is_recover)
+                        bunpin(to);
                 brelse(to);
+#ifndef LOG_TEST
                 brelse(from);
+#endif
         }
 }
 
 static void commit(void)
 {
-        log_temp_write();
-        log_head_write();
-        log_trans();
-        spinlock_acquire(&log.lk);
-        log.info.n = 0;
-        spinlock_release(&log.lk);
-        log_head_write();
+        if(log.info.n > 0) {
+                log_temp_write();
+                log_head_write();
+                log_trans(0);
+#ifndef LOG_TEST
+                spinlock_acquire(&log.lk);
+                log.info.n = 0;
+                spinlock_release(&log.lk);
+                log_head_write();
+#endif
+        }
+}
+
+static void recover(void)
+{
+        log_head_read();
+        printf("recover: %d\n", log.info.n);
+        if(log.info.n > 0) {
+                log_trans(1);
+                spinlock_acquire(&log.lk);
+                log.info.n = 0;
+                spinlock_release(&log.lk);
+                log_head_write();
+        }
 }
 
 void log_init(uint16 dev)
@@ -83,7 +120,7 @@ void log_init(uint16 dev)
         log.sz = LOGSIZE;
         log.dev = 1;
         log.start = 2;
-        log.info.n = 0;
+        recover();
 }
 
 void log_begin(void)
@@ -157,3 +194,23 @@ void log_write(bio_t b)
         spinlock_release(&log.lk);
 }
 
+/*
+        For test recover.
+        First step: Enable the macro LOG_TEST in log.h then execute "make qemu"
+        Second step: Disable the macro LOG_TEST in log.h then execute "make qemu"
+        Note: You need to call this function under log_init in main.c
+*/
+void log_test(void)
+{
+        bio_t b;
+#ifdef LOG_TEST
+        log_begin();
+        b = bread(1, 1);
+        strncpy(b->buf, "test", 5);
+        log_write(b);
+        brelse(b);
+        log_end();
+#endif
+        b = bread(1, 1);
+        printf("log test: %s\n", b->buf);
+}
