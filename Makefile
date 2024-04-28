@@ -118,6 +118,7 @@ clean:
 	@rm -f $(shell find -name "*.asm")
 	@rm -f $(shell find -name "*.sym")
 	@rm -f $(shell find -name "*.d")
+	@rm -f output/*
 
 distclean: clean
 	@rm -f compile_commands.json

@@ -3,6 +3,13 @@
 
 #include <typedefs.h>
 
+/* Max loaded inode */
+#define NINODES                         50
+/* Max opened file per system */
+#define NFILE                           100
+/* Max opened file per system */
+#define NPFILE                          16
+
 /* How many bits per block : 8096 bits */
 #define BPB                             (1024*8)
 /* How many inodes per block */
@@ -20,6 +27,7 @@
 #define NINDIRECT                       (BSIZE / sizeof(uint))
 #define DIRSIZ                          14
 #define ROOTINO                         1
+#define ROOTDEV                         1
 
 #define IBLOCK(i, sb)                   ((i) / IPB + sb.inodestart)
 #define BBLOCK(i, sb)                   ((i) / BPB + sb.bmapstart)

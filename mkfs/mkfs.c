@@ -16,8 +16,6 @@ typedef unsigned short ushort;
 #define static_assert(a, b) do { switch (0) case 0: case (a): ; } while (0)
 #endif
 
-#define NINODES 200
-
 #define bzero_mkfs(dst, sz)  memset(dst, 0, sz)
 
 // Disk layout:

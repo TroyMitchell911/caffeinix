@@ -12,16 +12,16 @@ typedef enum file_type {
         T_DEVICE
 }file_type_t;
 
-struct dinode {
-        short type;                     // File type
+typedef struct dinode {
+        short type;               // File type
         short major;                    // Major device number (T_DEVICE only)
         short minor;                    // Minor device number (T_DEVICE only)
         short nlink;                    // Number of links to inode in file system
         uint32 size;                    // Size of file (bytes)
         uint32 addrs[NDIRECT+1];        // Data block addresses
-};
+}*dinode_t;
 
-struct inode {
+typedef struct inode {
         uint32 dev;                     // Device number
         uint32 inum;                    // Inode number
 
@@ -29,18 +29,19 @@ struct inode {
         struct sleeplock lock;          // protects everything below here
         int valid;                      // inode has been read from disk?
 
-        short type;                     // copy of disk inode
+        // copy of disk inode
+        short type;                     
         short major;
         short minor;
         short nlink;
         uint32 size;
         uint32 addrs[NDIRECT+1];
-};
+}*inode_t;
 
-struct dirent {
-// 为0代表该目录项空闲
-  unsigned short inum;
-  char name[DIRSIZ];
-};
+typedef struct dirent {
+        /* It means the dirent is free if the inum equals 0 */
+        unsigned short inum;
+        char name[DIRSIZ];
+}*dirent_t;
 
 #endif
