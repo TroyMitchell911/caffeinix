@@ -1,4 +1,4 @@
-#include <string.h>
+#include <mystring.h>
 
 /* Clear n bytes of memory pointing to dst as c */
 void* memset(void* dst, char c, uint32 n)

@@ -1,5 +1,5 @@
 #include <file.h>
-#include <string.h>
+#include <mystring.h>
 #include <debug.h>
 
 struct superblock sb;

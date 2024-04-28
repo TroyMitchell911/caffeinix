@@ -1,7 +1,7 @@
 #include <virtio_disk.h>
 #include <spinlock.h>
 #include <debug.h>
-#include <string.h>
+#include <mystring.h>
 #include <palloc.h>
 #include <mem_layout.h>
 #include <process.h>

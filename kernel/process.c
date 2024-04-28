@@ -4,7 +4,7 @@
 #include <kernel_config.h>
 #include <vm.h>
 #include <scheduler.h>
-#include <string.h>
+#include <mystring.h>
 #include <file.h>
 
 /* From trampoline.S */

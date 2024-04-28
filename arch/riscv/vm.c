@@ -1,7 +1,7 @@
 #include <palloc.h>
 #include <mem_layout.h>
 #include <vm.h>
-#include <string.h>
+#include <mystring.h>
 #include <debug.h>
 #include <process.h>
 #include <printf.h>

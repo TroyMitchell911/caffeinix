@@ -1,7 +1,7 @@
 #include <log.h>
 #include <debug.h>
 #include <process.h>
-#include <string.h>
+#include <mystring.h>
 #include <printf.h>
 
 struct log_info {

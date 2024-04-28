@@ -1,5 +1,5 @@
 #include <uart.h>
-#include <string.h>
+#include <mystring.h>
 #include <spinlock.h>
 #include <process.h>
 

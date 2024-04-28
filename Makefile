@@ -61,8 +61,11 @@ TARGET := $(OUTPUT)/kernel
 build:
 	bear -- make all
 
-./mkfs/fsimg.img: 
-	qemu-img create -f raw ./mkfs/fsimg.img 16M
+mkfs/mkfs: mkfs/mkfs.c ./kernel/include/file.h ./kernel/include/inode.h
+	gcc -Werror -Wall -I./kernel/include -I./include -I./arch/riscv/include -o mkfs/mkfs mkfs/mkfs.c
+
+fs.img: mkfs/mkfs .github/README.md
+	mkfs/mkfs mkfs/fs.img LICENSE
 
 all : start_recursive_build $(TARGET)
 	@echo $(TARGET) has been built!
@@ -70,7 +73,7 @@ all : start_recursive_build $(TARGET)
 start_recursive_build:
 	make -C ./ -f $(TOPDIR)/Makefile.build
 
-$(TARGET) : built-in.o user/initcode ./mkfs/fsimg.img
+$(TARGET) : built-in.o user/initcode
 	@if [ ! -d $(OUTPUT) ]; then \
         	@mkdir $(OUTPUT); \
     	fi
@@ -88,7 +91,7 @@ user/initcode: user/initcode.S
 QEMU = qemu-system-riscv64
 QEMUOPTS = -machine virt -bios none -kernel $(TARGET) -m 128M -smp $(CPUS) -nographic
 QEMUOPTS += -global virtio-mmio.force-legacy=false
-QEMUOPTS += -drive file=./mkfs/fsimg.img,if=none,format=raw,id=x0
+QEMUOPTS += -drive file=./mkfs/fs.img,if=none,format=raw,id=x0
 QEMUOPTS += -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
 ifndef CPUS
 CPUS := 1
@@ -100,7 +103,7 @@ QEMUGDB = $(shell if $(QEMU) -help | grep -q '^-gdb'; \
 	then echo "-gdb tcp::$(GDBPORT)"; \
 	else echo "-s -p $(GDBPORT)"; fi)
 
-qemu: all
+qemu: all fs.img
 	$(QEMU) $(QEMUOPTS)
 
 .gdbinit: .gdbinit.tmpl-riscv
@@ -117,5 +120,5 @@ clean:
 	@rm -f $(shell find -name "*.d")
 
 distclean: clean
-	@rm -f $(shell find -name "compile_commands.json")
-	@rm -f $(TARGET)
+	@rm -f compile_commands.json
+	@rm -f ./mkfs/mkfs ./mkfs/fs.img

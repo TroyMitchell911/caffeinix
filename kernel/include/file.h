@@ -3,9 +3,16 @@
 
 #include <typedefs.h>
 #include <log.h>
+#include <inode.h>
 
+
+/* Just a magic number */
 #define FSMAGIC                 0x10203040
+/* Which block is used by superblock */
 #define SUPERBLOCK_NUM          1
+/* How many blocks file-system used */
+#define FSSIZE                  2000
+#define MAXFILE                 (NDIRECT + NINDIRECT)
 
 typedef struct superblock {
         uint32 magic;        // Must be FSMAGIC
