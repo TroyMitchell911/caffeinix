@@ -5,6 +5,7 @@
 #include <vm.h>
 #include <scheduler.h>
 #include <string.h>
+#include <file.h>
 
 /* From trampoline.S */
 extern char trampoline[];
@@ -38,9 +39,13 @@ static pagedir_t proc_pagedir(process_t p)
 /* This function is the first when a process first start */
 static void proc_first_start(void)
 {
+        static uint8 first = 0;
         /* The function scheduler will acquire the lock */
         spinlock_release(&cur_proc()->lock);
-        
+        if(!first) {
+                first = 1;
+                fs_init(1);
+        }
         extern void user_trap_ret(void);
         user_trap_ret();
 }

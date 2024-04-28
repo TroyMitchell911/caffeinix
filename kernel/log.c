@@ -111,7 +111,7 @@ static void recover(void)
         }
 }
 
-void log_init(uint16 dev)
+void log_init(uint32 dev, uint32 sz, uint32 start)
 {
         if(sizeof(log.info) > BSIZE)
                 PANIC("log_init");

@@ -3,4 +3,5 @@ EXTRA_LDFLAGS := -T ../kernel.ld
 CFLAGS_file.o := 
 
 
-obj-y += virtio_disk.o bio.o log.o balloc.o 
+obj-y += virtio_disk.o bio.o log.o balloc.o \
+file.o

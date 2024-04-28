@@ -10,7 +10,6 @@
 #include <process.h>
 #include <virtio_disk.h>
 #include <bio.h>
-#include <string.h>
 #include <log.h>
 
 volatile static uint8 start = 0;
@@ -31,13 +30,8 @@ void main(void)
                 trap_init();
                 process_init();
                 userinit();
-                virtio_disk_init();
                 binit();
-
-                intr_on();
-                log_init(1);
-
-                log_test();
+                virtio_disk_init();
 
                 printf("Hello! Caffeinix\n");
 
@@ -56,7 +50,7 @@ void main(void)
         }
 
         printf("hardid %d started\n", cpuid());
-        // scheduler();
+        scheduler();
 
         while(1);
 }

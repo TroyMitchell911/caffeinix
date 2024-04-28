@@ -1,5 +1,5 @@
-#ifndef __CAFFEINIX_KERNEL_LOG_H
-#define __CAFFEINIX_KERNEL_LOG_H
+#ifndef __CAFFEINIX_KERNEL_FS_LOG_H
+#define __CAFFEINIX_KERNEL_FS_LOG_H
 
 #include <bio.h>
 
@@ -8,7 +8,7 @@
 
 // #define LOG_TEST
 
-void log_init(uint16 dev);
+void log_init(uint32 dev, uint32 sz, uint32 start);
 void log_write(bio_t b);
 void log_begin(void);
 void log_end(void);

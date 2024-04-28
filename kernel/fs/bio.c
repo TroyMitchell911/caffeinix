@@ -98,7 +98,7 @@ void brelse(bio_t bio)
         spinlock_release(&bio_table.lk);
 }
 
-bio_t bread(uint16 dev, uint16 block)
+bio_t bread(uint32 dev, uint32 block)
 {
         bio_t bio = bget(dev, block);
         if(bio->vaild == 0) {

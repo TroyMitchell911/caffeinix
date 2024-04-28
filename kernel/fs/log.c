@@ -5,16 +5,16 @@
 #include <printf.h>
 
 struct log_info {
-        uint16 n;
-        uint16 blocks[LOGSIZE];
+        uint32 n;
+        uint32 blocks[LOGSIZE];
 };
 
 struct log {
         struct spinlock lk;
-        uint16 dev;
-        uint16 start;
-        uint16 sz;
-        uint16 syscalling;
+        uint32 dev;
+        uint32 start;
+        uint32 sz;
+        uint32 syscalling;
         uint8 commiting;
         struct log_info info;
 }log;
@@ -111,15 +111,15 @@ static void recover(void)
         }
 }
 
-void log_init(uint16 dev)
+void log_init(uint32 dev, uint32 sz, uint32 start)
 {
         if(sizeof(log.info) > BSIZE)
                 PANIC("log_init");
         spinlock_init(&log.lk, "log");
 
-        log.sz = LOGSIZE;
-        log.dev = 1;
-        log.start = 2;
+        log.sz = sz;
+        log.dev = dev;
+        log.start = start;
         recover();
 }
 
