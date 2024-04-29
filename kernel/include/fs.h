@@ -24,7 +24,7 @@
 #define MAXFILE                         (NDIRECT + NINDIRECT)
 
 #define NDIRECT                         12
-#define NINDIRECT                       (BSIZE / sizeof(uint))
+#define NINDIRECT                       (BSIZE / sizeof(uint32))
 #define DIRSIZ                          14
 #define ROOTINO                         1
 #define ROOTDEV                         1

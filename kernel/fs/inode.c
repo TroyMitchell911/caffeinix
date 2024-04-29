@@ -1,6 +1,7 @@
 #include <inode.h>
 #include <mystring.h>
 #include <debug.h>
+#include <balloc.h>
 
 extern struct superblock sb;
 
@@ -19,6 +20,10 @@ void iinit(void)
         }
 }
 
+/* 
+        This function will return a inode that be not locked.
+        At same time, this function will not load data from disk.
+*/
 inode_t iget(uint32 dev, uint32 inum)
 {
         inode_t i, empty = 0;
@@ -64,6 +69,45 @@ inode_t ialloc(uint32 dev, short type)
                 brelse(b);
         }
         PANIC("ialloc");
+        return 0;
+}
+
+/* Return a real block number */
+uint32 imap(inode_t ip, uint32 vblock)
+{
+        uint32 pblock, *indirect;
+        bio_t b;
+        if(vblock < NDIRECT) {
+                /* It's a direct block */
+                pblock = ip->addrs[vblock];
+                /* If this space of virtual block is not used */
+                if(pblock == 0) {
+                        /* Alloc a block */
+                        pblock = balloc(ip->dev);
+                        ip->addrs[vblock] = pblock;
+                        return 0;
+                }
+                /* return the physical block number */
+                return pblock;
+        }
+        vblock -= NDIRECT;
+        if(vblock < NINDIRECT) {
+                if(ip->addrs[NDIRECT] == 0) {
+                        ip->addrs[NDIRECT] = balloc(ip->dev);
+                }
+                b = bread(ip->dev, ip->addrs[NDIRECT]);
+                indirect = (uint32*)b->buf;
+                
+                pblock = indirect[vblock];
+                if(pblock == 0) {
+                        /* Alloc a block */
+                        pblock = balloc(ip->dev);
+                        indirect[vblock] = pblock;
+                        log_write(b);
+                }
+                brelse(b);
+                return pblock;
+        }
         return 0;
 }
 
