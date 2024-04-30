@@ -30,12 +30,7 @@ typedef struct inode {
         int valid;                      // inode has been read from disk?
 
         // copy of disk inode
-        short type;                     
-        short major;
-        short minor;
-        short nlink;
-        uint32 size;
-        uint32 addrs[NDIRECT+1];
+        struct dinode d;
 }*inode_t;
 
 typedef struct dirent {
