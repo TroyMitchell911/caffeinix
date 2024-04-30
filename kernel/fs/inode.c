@@ -186,5 +186,36 @@ inode_t ialloc(uint32 dev, short type)
         return 0;
 }
 
+void ilock(inode_t ip)
+{
+        bio_t b;
+        dinode_t dip;
+        sleeplock_acquire(&ip->lock);
+
+        if(!ip->valid) {
+                b = bread(ip->dev, IBLOCK(ip->inum, sb));
+                dip = ((dinode_t)b->buf) + ip->inum % IPB;
+                memmove(&ip->d, dip, sizeof(struct dinode));
+                brelse(b);
+                ip->valid = 1;
+                if(ip->d.type == 0) {
+                        PANIC("ilock");
+                }
+        }
+}
+
+void iunlock(inode_t ip)
+{
+        if(!sleeplock_holding(&ip->lock) || ip->ref < 1 || ip == 0) {
+                PANIC("iunlock");
+        }
+        sleeplock_release(&ip->lock);
+}
+
+void iunlockput(inode_t ip)
+{
+        iunlock(ip);
+        iput(ip);
+}
 
 
