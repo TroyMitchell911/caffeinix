@@ -77,7 +77,7 @@ You need a RISC-V "newlib" tool chain from https://github.com/riscv/riscv-gnu-to
 
 ## Getting the sources
 
-You don't need this step if you are using [Docker](### Method 1: Using Docker) because we have put the sources into the directory `~/caffeinix`. But the only thing you need to do is entering the directory `~/caffeinix` then run `git pull origin main` command to avoiding the source is old.
+You don't need this step if you are using [Docker](###Method-1:-Using-Docker) because we have put the sources into the directory `~/caffeinix`. But the only thing you need to do is entering the directory `~/caffeinix` then run `git pull origin main` command to avoiding the source is old.
 
 ```bash
 $ git clone https://github.com/TroyMitchell911/caffeinix.git
