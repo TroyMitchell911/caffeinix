@@ -71,7 +71,7 @@ start_recursive_build:
 
 $(TARGET) : built-in.o user/initcode fsimg
 	@if [ ! -d $(OUTPUT) ]; then \
-        	@mkdir $(OUTPUT); \
+        	mkdir $(OUTPUT); \
     	fi
 	$(LD) $(LDFLAGS) -T kernel/kernel.ld -o $(TARGET) built-in.o
 	$(OBJDUMP) -S $(TARGET) > $(TARGET).asm
