@@ -1,3 +1,13 @@
+/*
+ * @Author: TroyMitchell
+ * @Date: 2024-04-30 06:23
+ * @LastEditors: TroyMitchell
+ * @LastEditTime: 2024-05-06 12:59
+ * @FilePath: /caffeinix/arch/riscv/vm.c
+ * @Description: This file about all virtual address
+ * Words are cheap so I do.
+ * Copyright (c) 2024 by TroyMitchell, All Rights Reserved. 
+ */
 #include <palloc.h>
 #include <mem_layout.h>
 #include <vm.h>
@@ -217,7 +227,7 @@ int copyin(pagedir_t pgdir, char* dst, uint64 srcva, uint64 len)
                 n = PGSIZE - (srcva - va0);
                 if(n > len)
                         n = len;
-                memmove(dst, (void *)(pa0 + (srcva - va0)), n);
+                memmove(dst, (void *)(pa0 + (srcva - va0)),n);
 
                 len -= n;
                 dst += n;

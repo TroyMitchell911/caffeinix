@@ -1,3 +1,13 @@
+/*
+ * @Author: TroyMitchell
+ * @Date: 2024-04-30 06:23
+ * @LastEditors: TroyMitchell
+ * @LastEditTime: 2024-05-06 13:14
+ * @FilePath: /caffeinix/kernel/fs/inode.c
+ * @Description: This file for inode layer of file-system
+ * Words are cheap so I do.
+ * Copyright (c) 2024 by TroyMitchell, All Rights Reserved. 
+ */
 #include <inode.h>
 #include <mystring.h>
 #include <debug.h>
@@ -127,11 +137,11 @@ inode_t iget(uint32 dev, uint32 inum)
                         i->ref ++;
                         spinlock_release(&inodes.lk);
                         return i;
-                } else if(i->ref == 0 && !empty) {
+                } else if(i->ref == 0 && empty == 0) {
                         empty = i;
                 }
         }
-        if(!empty) {
+        if(empty) {
                 i->ref = 1;
                 i->valid = 0;
                 i->dev = dev;
@@ -140,7 +150,7 @@ inode_t iget(uint32 dev, uint32 inum)
                 PANIC("iget");
         }
         spinlock_release(&inodes.lk);
-        return 0;
+        return empty;
 }
 
 void iput(inode_t ip)
@@ -226,11 +236,11 @@ void iunlockput(inode_t ip)
  * @param {inode_t*} ip: the pointer of inode
  * @param {int} user_dst: dst is a user virtual address if user_dst == 1 
  * @param {uint64} dst: address of destination
- * @param {uint32} off: offset of data
+ * @param {uint32} off: offset of data in inode
  * @param {uint32} n: byte number
- * @return {*}
+ * @return {*} Returns the number of bytes on success, -1 on failure.
  */
-uint32 readi(inode_t ip, int user_dst, uint64 dst, uint32 off, uint32 n)
+int readi(inode_t ip, int user_dst, uint64 dst, uint32 off, uint32 n)
 {
         uint32 tot, rn, addr;
         bio_t b;
@@ -266,6 +276,15 @@ uint32 readi(inode_t ip, int user_dst, uint64 dst, uint32 off, uint32 n)
         return tot;
 }
 
+/**
+ * @description: Write data to inode
+ * @param {inode_t*} ip: the pointer of inode
+ * @param {int} user_src: dst is a user virtual address if user_src == 1 
+ * @param {uint64} src: address of source
+ * @param {uint32} off: offset of data in inode
+ * @param {uint32} n: byte number
+ * @return {*} Returns the number of bytes on success, -1 on failure 
+ */
 int writei(inode_t ip, int user_src, uint64 src, uint32 off, uint32 n)
 {
         uint32 tot, rn, addr;

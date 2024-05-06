@@ -1,6 +1,17 @@
+/*
+ * @Author: TroyMitchell
+ * @Date: 2024-04-30 06:23
+ * @LastEditors: TroyMitchell
+ * @LastEditTime: 2024-05-06 13:07
+ * @FilePath: /caffeinix/kernel/fs/file.c
+ * @Description: This file for file-system operation
+ * Words are cheap so I do.
+ * Copyright (c) 2024 by TroyMitchell, All Rights Reserved. 
+ */
 #include <file.h>
 #include <mystring.h>
 #include <debug.h>
+#include <printf.h>
 
 struct superblock sb;
 
@@ -14,4 +25,10 @@ void fs_init(uint32 dev)
                 PANIC("fs_init");
         log_init(dev, sb.size, sb.logstart);
         brelse(b);
+
+        /* The inum of first file is 2 bcs 1 is used by root dirent */
+        inode_t inode = iget(ROOTDEV, 2);
+        ilock(inode);
+        printf("size: %ld", inode->d.size);
+        iunlockput(inode);
 }

@@ -39,4 +39,18 @@ typedef struct dirent {
         char name[DIRSIZ];
 }*dirent_t;
 
+void iinit(void);
+void iupdate(inode_t ip);
+inode_t idup(inode_t ip);
+uint32 imap(inode_t ip, uint32 vblock);
+void itrunc(inode_t ip);
+inode_t iget(uint32 dev, uint32 inum);
+void iput(inode_t ip);
+inode_t ialloc(uint32 dev, short type);
+void ilock(inode_t ip);
+void iunlock(inode_t ip);
+void iunlockput(inode_t ip);
+int readi(inode_t ip, int user_dst, uint64 dst, uint32 off, uint32 n);
+int writei(inode_t ip, int user_src, uint64 src, uint32 off, uint32 n);
+
 #endif
