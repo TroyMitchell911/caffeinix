@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-30 06:23
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-06 13:50
+ * @LastEditTime: 2024-05-06 14:02
  * @FilePath: /caffeinix/kernel/fs/file.c
  * @Description: This file for file-system operation
  * Words are cheap so I do.
@@ -18,6 +18,12 @@
 
 struct superblock sb;
 
+/**
+ * @description: File system initialization function
+ * @param {uint32} dev: Which device?
+ * @return {*}
+ * @note This function has to be called in process context
+ */
 void fs_init(uint32 dev)
 {
         bio_t b;

@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-30 06:23
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-06 13:50
+ * @LastEditTime: 2024-05-06 14:11
  * @FilePath: /caffeinix/kernel/fs/inode.c
  * @Description: This file for inode layer of file-system
  * Words are cheap so I do.
@@ -23,6 +23,10 @@ struct inodes{
         struct inode is[NINODES];
 }inodes;
 
+/**
+ * @description: Inode layer of file system initialization function
+ * @return {*}
+ */
 void iinit(void)
 {
         int i = 0;
@@ -33,6 +37,11 @@ void iinit(void)
         }
 }
 
+/**
+ * @description: Update the contents of the inode to disk
+ * @param {inode_t} ip: pointer of inode
+ * @return {*}
+ */
 void iupdate(inode_t ip)
 {
         bio_t b;
@@ -46,6 +55,11 @@ void iupdate(inode_t ip)
         brelse(b);
 }
 
+/**
+ * @description: Increase the number of references to inode
+ * @param {inode_t} ip: pointer of inode
+ * @return {*}
+ */
 inode_t idup(inode_t ip)
 {
         spinlock_acquire(&inodes.lk);
@@ -54,7 +68,12 @@ inode_t idup(inode_t ip)
         return ip;
 }
 
-/* Return a real block number */
+/**
+ * @description: Get the physical block number on the disk through the virtual block number of the inode
+ * @param {inode_t} ip: pointer of inode
+ * @param {uint32} vblock: virtual block number in inode
+ * @return {*} physical block number
+ */
 uint32 imap(inode_t ip, uint32 vblock)
 {
         uint32 pblock, *indirect;
@@ -93,6 +112,11 @@ uint32 imap(inode_t ip, uint32 vblock)
         return 0;
 }
 
+/**
+ * @description: Clean the all content that the inode links
+ * @param {inode_t} ip: pointer of inode
+ * @return {*}
+ */
 void itrunc(inode_t ip)
 {
         uint32 i, *addr;
@@ -123,10 +147,12 @@ void itrunc(inode_t ip)
         spinlock_release(&inodes.lk);
 }
 
-/* 
-        This function will return a inode that be not locked.
-        At same time, this function will not load data from disk.
-*/
+/**
+ * @description: Get a inode then increase reference and this function will not load data from disk
+ * @param {uint32} dev: which device?
+ * @param {uint32} inum: what is inum?
+ * @return {*} return a inode that be not locked
+ */
 inode_t iget(uint32 dev, uint32 inum)
 {
         inode_t i, empty = 0;
@@ -153,6 +179,11 @@ inode_t iget(uint32 dev, uint32 inum)
         return empty;
 }
 
+/**
+ * @description: Decrease reference and clean the all content that the inode links if conditions met
+ * @param {inode_t} ip: pointer of inode
+ * @return {*}
+ */
 void iput(inode_t ip)
 {
         if(ip->ref < 1)
@@ -176,7 +207,12 @@ void iput(inode_t ip)
         spinlock_release(&inodes.lk);
 }
 
-
+/**
+ * @description: Alloc a free inode from disk and this function will writes inode to disk
+ * @param {uint32} dev: which device?
+ * @param {short} type: what is type of inode? 
+ * @return {*} inode that be alloced
+ */
 inode_t ialloc(uint32 dev, short type)
 {
         int i;
@@ -199,6 +235,11 @@ inode_t ialloc(uint32 dev, short type)
         return 0;
 }
 
+/**
+ * @description: Lock the inode so that modify it and this function will load dinode from disk if 'vaild' == 1
+ * @param {inode_t} ip: pointer of inode
+ * @return {*}
+ */
 void ilock(inode_t ip)
 {
         bio_t b;
@@ -217,6 +258,11 @@ void ilock(inode_t ip)
         }
 }
 
+/**
+ * @description: Unlock inode
+ * @param {inode_t} ip: pointer of inode
+ * @return {*}
+ */
 void iunlock(inode_t ip)
 {
         if(!sleeplock_holding(&ip->lock) || ip->ref < 1 || ip == 0) {
@@ -225,6 +271,11 @@ void iunlock(inode_t ip)
         sleeplock_release(&ip->lock);
 }
 
+/**
+ * @description: Unlock and put inode
+ * @param {inode_t} ip: pointer of inode
+ * @return {*}
+ */
 void iunlockput(inode_t ip)
 {
         iunlock(ip);
