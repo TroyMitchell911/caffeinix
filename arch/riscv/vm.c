@@ -205,6 +205,27 @@ int copyout(pagedir_t pgdir, uint64 dstva, char* src, uint64 len)
         return 0;
 }
 
+int copyin(pagedir_t pgdir, char* dst, uint64 srcva, uint64 len)
+{
+         uint64 n, va0, pa0;
+
+        while(len > 0){
+                va0 = PGROUNDDOWN(srcva);
+                pa0 = va2pa(pgdir, va0);
+                if(pa0 == 0)
+                        return -1;
+                n = PGSIZE - (srcva - va0);
+                if(n > len)
+                        n = len;
+                memmove(dst, (void *)(pa0 + (srcva - va0)), n);
+
+                len -= n;
+                dst += n;
+                srcva = va0 + PGSIZE;
+        }
+        return 0;
+}
+
 void kvm_create(void)
 {
         kernel_pgdir = kernel_pagedir_t_create();

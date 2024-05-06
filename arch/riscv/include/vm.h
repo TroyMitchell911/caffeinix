@@ -15,4 +15,5 @@ pagedir_t pagedir_alloc(void);
 void pagedir_free(pagedir_t pgdir);
 
 int copyout(pagedir_t pgdir, uint64 dstva, char* src, uint64 len);
+int copyin(pagedir_t pgdir, char* dst, uint64 srcva, uint64 len);
 #endif

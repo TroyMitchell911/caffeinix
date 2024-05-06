@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-25 09:22
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-06 09:48
+ * @LastEditTime: 2024-05-06 09:58
  * @FilePath: /caffeinix/kernel/include/process.h
  * @Description: 
  * Words are cheap so I do.
@@ -88,7 +88,7 @@ void sleep(void* chan, spinlock_t lk);
 void wakeup(void* chan);
 
 int either_copyout(int user_dst, uint64 dst, void* src, uint64 len);
-
+int either_copyin(void *dst, int user_src, uint64 src, uint64 len);
 /* User init for first process */
 void userinit(void);
 #endif

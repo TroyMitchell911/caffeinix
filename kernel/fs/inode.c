@@ -236,8 +236,8 @@ uint32 readi(inode_t ip, int user_dst, uint64 dst, uint32 off, uint32 n)
         bio_t b;
 
         /* Out of range */
-        if(off > ip->d.size || n > ip->d.size) {
-                return 0;
+        if(off > ip->d.size || off + n < off) {
+                return -1;
         }
         /* Correct the size so that it does not exceed the range */
         if((off + n) > ip->d.size) {
@@ -255,7 +255,43 @@ uint32 readi(inode_t ip, int user_dst, uint64 dst, uint32 off, uint32 n)
                 /* Let's determine how many bytes we need to read */
                 rn = min(n - off, BSIZE - off % BSIZE);
 
-                if(either_copyout(user_dst, dst, b->buf + off % BSIZE, rn)) {
+                if(either_copyout(user_dst, dst, b->buf + off % BSIZE, rn) == -1) {
+                        brelse(b);
+                        tot = -1;
+                        break;
+                }
+                brelse(b);
+        }
+
+        return tot;
+}
+
+int writei(inode_t ip, int user_src, uint64 src, uint32 off, uint32 n)
+{
+        uint32 tot, rn, addr;
+        bio_t b;
+
+        /* Out of range */
+        if(off > ip->d.size || off + n < off) {
+                return -1;
+        }
+        /* Correct the size so that it does not exceed the range */
+        if((off + n) > MAXFILE*BSIZE) {
+                return -1;
+        }
+
+        for(tot = 0; tot < n; tot += rn, off += rn, src += rn) {
+                addr = imap(ip, off / BSIZE);
+                if(addr == 0)
+                        return 0;
+
+                b = bread(ip->dev, addr);
+                if(!b) 
+                        return 0;
+                /* Let's determine how many bytes we need to read */
+                rn = min(n - off, BSIZE - off % BSIZE);
+
+                if(either_copyin(b->buf + off % BSIZE, user_src, src, rn) == -1) {
                         brelse(b);
                         tot = -1;
                         break;

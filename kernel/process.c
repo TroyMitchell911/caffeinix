@@ -238,3 +238,15 @@ int either_copyout(int user_dst, uint64 dst, void* src, uint64 len)
                 return 0;
         }
 }
+
+int either_copyin(void *dst, int user_src, uint64 src, uint64 len)
+{
+        process_t p = cur_proc();
+
+        if(user_src) {
+                return copyin(p->pagetable, (char*)dst, src, len);
+        } else {
+                memmove(dst, (char*)src, len);
+                return 0;
+        }
+}
