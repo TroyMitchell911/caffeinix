@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-30 06:23
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-06 13:28
+ * @LastEditTime: 2024-05-06 13:50
  * @FilePath: /caffeinix/kernel/fs/inode.c
  * @Description: This file for inode layer of file-system
  * Words are cheap so I do.
@@ -315,6 +315,7 @@ int writei(inode_t ip, int user_src, uint64 src, uint32 off, uint32 n)
                         tot = -1;
                         break;
                 }
+                log_write(b);
                 brelse(b);
         }
 
