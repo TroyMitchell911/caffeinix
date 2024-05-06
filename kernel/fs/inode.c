@@ -2,6 +2,9 @@
 #include <mystring.h>
 #include <debug.h>
 #include <balloc.h>
+#include <process.h>
+
+#define min(x1, x2)     x1 > x2 ? x2 : x1
 
 extern struct superblock sb;
 
@@ -218,4 +221,47 @@ void iunlockput(inode_t ip)
         iput(ip);
 }
 
+/**
+ * @description: Read data from inode
+ * @param {inode_t*} ip: the pointer of inode
+ * @param {int} user_dst: dst is a user virtual address if user_dst == 1 
+ * @param {uint64} dst: address of destination
+ * @param {uint32} off: offset of data
+ * @param {uint32} n: byte number
+ * @return {*}
+ */
+uint32 readi(inode_t ip, int user_dst, uint64 dst, uint32 off, uint32 n)
+{
+        uint32 tot, rn, addr;
+        bio_t b;
 
+        /* Out of range */
+        if(off > ip->d.size || n > ip->d.size) {
+                return 0;
+        }
+        /* Correct the size so that it does not exceed the range */
+        if((off + n) > ip->d.size) {
+                n = ip->d.size - off;
+        }
+
+        for(tot = 0; tot < n; tot += rn, off += rn, dst += rn) {
+                addr = imap(ip, off / BSIZE);
+                if(addr == 0)
+                        return 0;
+
+                b = bread(ip->dev, addr);
+                if(!b) 
+                        return 0;
+                /* Let's determine how many bytes we need to read */
+                rn = min(n - off, BSIZE - off % BSIZE);
+
+                if(either_copyout(user_dst, dst, b->buf + off % BSIZE, rn)) {
+                        brelse(b);
+                        tot = -1;
+                        break;
+                }
+                brelse(b);
+        }
+
+        return tot;
+}

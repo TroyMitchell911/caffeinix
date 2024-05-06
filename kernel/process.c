@@ -226,3 +226,15 @@ void userinit(void)
         /* The lock will be held in process_alloc */
         spinlock_release(&p->lock);
 }
+
+int either_copyout(int user_dst, uint64 dst, void* src, uint64 len)
+{
+        process_t p = cur_proc();
+
+        if(user_dst) {
+                return copyout(p->pagetable, dst, (char*)src, len);
+        } else {
+                memmove((char*)dst, src, len);
+                return 0;
+        }
+}

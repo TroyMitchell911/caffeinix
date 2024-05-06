@@ -45,6 +45,25 @@ pte_t *PTE(pagedir_t pgdir, uint64 va, int flag)
         return (pte_t*)&pgdir[PTEX(0, va)];
 }
 
+uint64 va2pa(pagedir_t pgdir, uint64 va)
+{
+        pte_t *pte;
+        uint64 pa;
+
+        if(va >= MAXVA)
+                return 0;
+
+        pte = PTE(pgdir, va, 0);
+        if(pte == 0)
+                return 0;
+        if((*pte & PTE_V) == 0)
+                return 0;
+        if((*pte & PTE_U) == 0)
+                return 0;
+        pa = PTE2PA(*pte);
+                return pa;
+}
+
 int vm_map(pagedir_t pgdir, uint64 va, uint64 pa, uint64 size, int perm)
 {
         uint64 start, end;
@@ -163,6 +182,27 @@ void vm_unmap(pagedir_t pgdir, uint64 va, uint64 npages, int do_free)
                 }
                 *pte = 0;
         }
+}
+
+int copyout(pagedir_t pgdir, uint64 dstva, char* src, uint64 len)
+{
+        uint64 n, va0, pa0;
+
+        while(len > 0){
+                va0 = PGROUNDDOWN(dstva);
+                pa0 = va2pa(pgdir, va0);
+                if(pa0 == 0)
+                        return -1;
+                n = PGSIZE - (dstva - va0);
+                if(n > len)
+                        n = len;
+                memmove((void *)(pa0 + (dstva - va0)), src, n);
+
+                len -= n;
+                src += n;
+                dstva = va0 + PGSIZE;
+        }
+        return 0;
 }
 
 void kvm_create(void)

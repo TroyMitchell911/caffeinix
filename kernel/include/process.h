@@ -1,3 +1,13 @@
+/*
+ * @Author: TroyMitchell
+ * @Date: 2024-04-25 09:22
+ * @LastEditors: TroyMitchell
+ * @LastEditTime: 2024-05-06 09:48
+ * @FilePath: /caffeinix/kernel/include/process.h
+ * @Description: 
+ * Words are cheap so I do.
+ * Copyright (c) 2024 by ${TroyMitchell}, All Rights Reserved. 
+ */
 #ifndef __CAFFEINIX_KERNEL_PROCESS_H
 #define __CAFFEINIX_KERNEL_PROCESS_H
 
@@ -76,6 +86,8 @@ void process_init(void);
 
 void sleep(void* chan, spinlock_t lk);
 void wakeup(void* chan);
+
+int either_copyout(int user_dst, uint64 dst, void* src, uint64 len);
 
 /* User init for first process */
 void userinit(void);
