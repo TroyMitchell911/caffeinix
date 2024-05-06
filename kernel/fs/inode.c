@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-30 06:23
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-06 13:14
+ * @LastEditTime: 2024-05-06 13:28
  * @FilePath: /caffeinix/kernel/fs/inode.c
  * @Description: This file for inode layer of file-system
  * Words are cheap so I do.
@@ -142,10 +142,10 @@ inode_t iget(uint32 dev, uint32 inum)
                 }
         }
         if(empty) {
-                i->ref = 1;
-                i->valid = 0;
-                i->dev = dev;
-                i->inum = inum;
+                empty->ref = 1;
+                empty->valid = 0;
+                empty->dev = dev;
+                empty->inum = inum;
         } else {
                 PANIC("iget");
         }

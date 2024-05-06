@@ -94,6 +94,9 @@ void printf(char* fmt, ...)
                         case '%':
                                 console_putc('%');
                                 break;
+                        case 'c':
+                                console_putc(va_arg(ap, int));
+                                break;
                         /* Unknown converting symbol */
                         default:     
                                 console_putc('%');
