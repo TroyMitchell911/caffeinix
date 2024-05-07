@@ -1,6 +1,8 @@
 #ifndef __CAFFEINIX_KERNEL_SYSCALL_H
 #define __CAFFEINIX_KERNEL_SYSCALL_H
 
+#include <typedefs.h>
+
 #define SYS_fork    1
 #define SYS_exit    2
 #define SYS_wait    3
@@ -22,5 +24,11 @@
 #define SYS_link   19
 #define SYS_mkdir  20
 #define SYS_close  21
+
+int fetch_str_from_user(uint64 user_addr, char* buf, int max);
+void argint(int n, int *ip);
+void argaddr(int n, uint64 *ap);
+int argstr(int n, char *buf, int max);
+
 
 #endif

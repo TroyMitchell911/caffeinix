@@ -14,9 +14,4 @@
 #include <typedefs.h>
 #include <myfcntl.h>
 
-uint64 sys_open(const char* name, int flag);
-
-uint64 sys_read(int fd, uint64 dst, int n);
-uint64 sys_close(int fd);
-
 #endif

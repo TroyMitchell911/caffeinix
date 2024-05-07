@@ -14,6 +14,7 @@
 #include <dirent.h>
 #include <scheduler.h>
 #include <process.h>
+#include <syscall.h>
 
 static int fdalloc(file_t f)
 {
@@ -34,14 +35,18 @@ static inode_t create(char* path, short type, short major, short minor)
         return 0;
 }
 
-uint64 sys_open(const char* name, int flag)
+uint64 sys_open(void)
 {
         inode_t ip;
         char path[MAXPATH];
-        int fd;
+        int fd, flag;
         file_t f;
 
-        for(int i = 0; name[i] != '\0'; path[i] = name[i], i++);
+        argint(1, &flag);
+        if(argstr(0, path, MAXPATH) < 0) {
+                return -1;
+        }
+
         log_begin();
         /* If the caller need to create and open a file */
         if(flag & O_CREAT) {
@@ -94,18 +99,29 @@ fail1:
         return -1;
 }
 
-uint64 sys_read(int fd, uint64 dst, int n)
+uint64 sys_read(void)
 {
         file_t f;
+        int fd, n;
+        uint64 dst;
+
+        argint(0, &fd);
+        argint(2, &n);
+        argaddr(1, &dst);
+
         f = cur_proc()->ofile[fd];
         if(f)
                 return file_read(f, dst, n); 
         return -1;
 }
 
-uint64 sys_close(int fd)
+uint64 sys_close(void)
 {
         file_t f;
+        int fd;
+
+        argint(0, &fd);
+
         f = cur_proc()->ofile[fd];
         if(!f)
                 return -1;

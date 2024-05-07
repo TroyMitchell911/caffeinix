@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-30 06:23
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-06 12:59
+ * @LastEditTime: 2024-05-07
  * @FilePath: /caffeinix/arch/riscv/vm.c
  * @Description: This file about all virtual address
  * Words are cheap so I do.
@@ -235,6 +235,45 @@ int copyin(pagedir_t pgdir, char* dst, uint64 srcva, uint64 len)
         }
         return 0;
 }
+
+int copyinstr(pagedir_t pgdir, char *dst, uint64 srcva, uint64 max)
+{
+        uint64 n, va0, pa0;
+        int got_null = 0;
+
+        while(got_null == 0 && max > 0) {
+                va0 = PGROUNDDOWN(srcva);
+                pa0 = va2pa(pgdir, va0);
+                if(pa0 == 0)
+                        return -1;
+                n = PGSIZE - (srcva - va0);
+                if(n > max)
+                        n = max;
+
+                char *p = (char *) (pa0 + (srcva - va0));
+                while(n > 0) {
+                        if(*p == '\0') {
+                                *dst = '\0';
+                                got_null = 1;
+                                break;
+                        } else {
+                                *dst = *p;
+                        }
+                        --n;
+                        --max;
+                        p++;
+                        dst++;
+                }
+
+                srcva = va0 + PGSIZE;
+        }
+        if(got_null) {
+                return 0;
+        } else {
+                return -1;
+        }
+}
+
 
 void kvm_create(void)
 {
