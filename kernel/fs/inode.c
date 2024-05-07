@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-30 06:23
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-06 14:11
+ * @LastEditTime: 2024-05-07
  * @FilePath: /caffeinix/kernel/fs/inode.c
  * @Description: This file for inode layer of file-system
  * Words are cheap so I do.
@@ -314,7 +314,8 @@ int readi(inode_t ip, int user_dst, uint64 dst, uint32 off, uint32 n)
                 if(!b) 
                         return 0;
                 /* Let's determine how many bytes we need to read */
-                rn = min(n - off, BSIZE - off % BSIZE);
+                /* 2024-05-07 ToryMitchell: Fixed a bug */
+                rn = min(n - tot, BSIZE - off % BSIZE);
 
                 if(either_copyout(user_dst, dst, b->buf + off % BSIZE, rn) == -1) {
                         brelse(b);

@@ -12,8 +12,9 @@
 #include <mystring.h>
 #include <debug.h>
 #include <printf.h>
+#include <sysfile.h>
 
-#define TEST_W          1
+#define TEST_W          0
 #define TEST_R          1
 
 struct superblock sb;
@@ -41,35 +42,15 @@ void fs_init(uint32 dev)
         brelse(b);
 
 #if TEST_W || TEST_R
-        inode_t inode;
-        uint8 buf[1024];
-        int ret;
+        int fd;
 #endif
 
 #if TEST_W
-        /* The inum of first file is 2 bcs 1 is used by root dirent */
-        log_begin();
-        inode = iget(ROOTDEV, 2);
-        ilock(inode);
-        memmove(buf, "hello", 5);
-        ret = writei(inode, 0, (uint64)buf, 0, 5);
-        printf("%d\n", ret);
-        iunlockput(inode);
-        log_end();
 #endif
 
 #if TEST_R
-        /* The inum of first file is 2 bcs 1 is used by root dirent */
-        inode = iget(ROOTDEV, 2);
-        ilock(inode);
-        printf("size: %d\n", inode->d.size);
-        ret = readi(inode, 0, (uint64)buf, 0, 1024);
-        printf("%d\n", ret);
-        for(int i = 0; i < 1024; i++) {
-                printf("%c", buf[i]);
-        }
-        printf("\n");
-        iunlockput(inode);
+        fd = sys_open("LICENSE", O_RDWR);
+        printf("fd: %d\n", fd);
 #endif
 }
 
@@ -151,7 +132,7 @@ int file_read(file_t f, uint64 addr, int n)
                 PANIC("file_read");
         }
 
-        return 0;
+        return ret;
 }
 
 /* addr is virtual address */

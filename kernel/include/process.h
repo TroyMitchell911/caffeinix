@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-25 09:22
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-06 09:58
+ * @LastEditTime: 2024-05-07
  * @FilePath: /caffeinix/kernel/include/process.h
  * @Description: 
  * Words are cheap so I do.
@@ -14,6 +14,9 @@
 #include <thread.h>
 #include <spinlock.h>
 #include <riscv.h>
+#include <file.h>
+
+typedef struct inode *inode_t;
 
 typedef struct trapframe {
         /* kernel page table */
@@ -78,6 +81,8 @@ typedef struct process{
         pagedir_t pagetable;
         trapframe_t trapframe;
         struct context context;
+        inode_t cwd;
+        file_t ofile[NOFILE];
         void* sleep_chan;
 }*process_t;
 

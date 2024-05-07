@@ -16,6 +16,9 @@
 #include <inode.h>
 #include <fs.h>
 
+#define MAXPATH                 128
+#define NOFILE                  16
+
 typedef struct file{
         enum { FD_NONE, FD_PIPE, FD_INODE, FD_DEVICE } type;
         int ref;                // reference count

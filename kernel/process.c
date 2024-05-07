@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-30 06:23
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-06 12:59
+ * @LastEditTime: 2024-05-07
  * @FilePath: /caffeinix/kernel/process.c
  * @Description: 
  * Words are cheap so I do.
@@ -16,6 +16,7 @@
 #include <scheduler.h>
 #include <mystring.h>
 #include <file.h>
+#include <dirent.h>
 
 /* From trampoline.S */
 extern char trampoline[];
@@ -220,6 +221,8 @@ void userinit(void)
         vm_map(p->pagetable, 0, (uint64)mem, PGSIZE, PTE_U | PTE_R | PTE_W | PTE_X);
         /* Copy the code of first process into the memory that we just alloced */
         memmove(mem, initcode, sizeof(initcode));
+
+        p->cwd = namei("/");
 
         /* Set the epc to '0' because we have mapped the code to lowest address */
         p->trapframe->epc = 0;
