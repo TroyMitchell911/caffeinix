@@ -17,6 +17,7 @@
 #include <fs.h>
 
 #define MAXPATH                 128
+#define MAXARG                  32
 #define NOFILE                  16
 
 typedef struct file{

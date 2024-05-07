@@ -24,6 +24,17 @@ int fetch_str_from_user(uint64 user_addr, char* buf, int max)
         return strlen(buf);
 }
 
+int fetch_addr_from_user(uint64 user_addr, uint64* dst)
+{
+        process_t p = cur_proc();
+        if(user_addr >= p->sz || user_addr + sizeof(uint64) > p->sz) 
+                return -1;
+        if(copyin(p->pagetable, (char*)dst, user_addr, sizeof(uint64)) != 0) {
+                return -1;
+        }
+        return 0;
+}
+
 void argint(int n, int *ip)
 {
         *ip = argraw(n);

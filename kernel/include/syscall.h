@@ -26,6 +26,7 @@
 #define SYS_close  21
 
 int fetch_str_from_user(uint64 user_addr, char* buf, int max);
+int fetch_addr_from_user(uint64 user_addr, uint64* dst);
 void argint(int n, int *ip);
 void argaddr(int n, uint64 *ap);
 int argstr(int n, char *buf, int max);
