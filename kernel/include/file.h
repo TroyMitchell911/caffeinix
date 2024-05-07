@@ -28,4 +28,12 @@ typedef struct file{
 
 void fs_init(uint32 dev);
 
+void file_init(void);
+file_t file_alloc(void);
+file_t file_dup(file_t f);
+void file_close(file_t f);
+int file_read(file_t f, uint64 addr, int n);
+int file_write(file_t f, uint64 addr, int n);
+
+
 #endif

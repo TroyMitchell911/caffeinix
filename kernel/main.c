@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-30 06:23
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-06 13:03
+ * @LastEditTime: 2024-05-07
  * @FilePath: /caffeinix/kernel/main.c
  * @Description: 
  * Words are cheap so I do.
@@ -22,6 +22,7 @@
 #include <bio.h>
 #include <log.h>
 #include <inode.h>
+#include <file.h>
 
 volatile static uint8 start = 0;
 extern char end[];
@@ -43,6 +44,7 @@ void main(void)
                 userinit();
                 binit();
                 iinit();
+                file_init();
                 virtio_disk_init();
 
                 printf("Hello! Caffeinix\n");

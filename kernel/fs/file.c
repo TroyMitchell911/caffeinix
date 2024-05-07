@@ -132,3 +132,58 @@ void file_close(file_t f)
                 log_end();
         }
 }
+
+/* addr is virtual address */
+int file_read(file_t f, uint64 addr, int n)
+{
+        int ret = 0;
+
+        if(!f->readable)
+                return -1;
+
+        if(f->type == FD_INODE) {
+                ilock(f->ip);
+                ret = readi(f->ip, 1, addr, f->off, n);
+                if(ret > 0)
+                        f->off += ret;
+                iunlock(f->ip);
+        } else {
+                PANIC("file_read");
+        }
+
+        return 0;
+}
+
+/* addr is virtual address */
+int file_write(file_t f, uint64 addr, int n)
+{
+        int ret = 0;
+        
+        if(!f->writable)
+                return -1;
+
+        if(f->type == FD_INODE) {
+                int max = ((LOGOP-1-1-2) / 2) * BSIZE;
+                int i = 0;
+                /* Avoiding out of range(MAXLOGOP) */
+                while(i < n) {
+                        int w_n = n - i;
+                        w_n = w_n > max ? max : w_n;
+                        log_begin();
+                        ilock(f->ip);
+                        ret = writei(f->ip, 1, addr + i, f->off + i, w_n);
+                        if(ret > 0)
+                                f->off += ret;
+                        iunlock(f->ip);
+                        log_end();
+
+                        if(ret != w_n) {
+                                break;
+                        }
+                        i += w_n;
+                }
+                ret = (i == n ? n : -1);
+        }
+
+        return ret;
+}
