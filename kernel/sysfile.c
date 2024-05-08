@@ -42,6 +42,7 @@ static inode_t create(char* path, short type, short major, short minor)
 
 uint64 sys_open(void)
 {
+        PANIC("sys_open");
         inode_t ip;
         char path[MAXPATH];
         int fd, flag;
@@ -163,8 +164,8 @@ uint64 sys_exec(void)
 
         ret = exec(path, argv);
 
-        for(i = 0; i < NELEM(argv) && argv[i] != 0; i++)
-                pfree(argv[i]);
+        // for(i = 0; i < NELEM(argv) && argv[i] != 0; i++)
+        //         pfree(argv[i]);
 
         return ret;
 fail:

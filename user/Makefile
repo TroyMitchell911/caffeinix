@@ -2,15 +2,15 @@
 
 ULIB = usys.o
 
-$U/usys.S : $U/usys.pl
-	perl $U/usys.pl > $U/usys.S
+usys.S : usys.pl
+	perl usys.pl > usys.S
 
-$U/usys.o : $U/usys.S
-	$(CC) $(CFLAGS) -c -o $U/usys.o $U/usys.S
+usys.o : usys.S
+	$(CC) $(CFLAGS) -c -o usys.o usys.S
 
 .PRECIOUS: %.o
 
-_%: %.o $(ULIB)
+$(TOPDIR)/user/_%: %.o $(ULIB)
 	$(LD) $(LDFLAGS) -T ./user.ld -o $@ $^
 	$(OBJDUMP) -S $@ > $*.asm
 	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $*.sym
@@ -25,4 +25,5 @@ all: initcode $(UPROGS)
 	@echo test
 
 clean:
-	@rm -rf initcode initcode.out
+	@rm -rf initcode initcode.out usys.S
+	@rm -rf _*

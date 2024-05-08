@@ -6,10 +6,13 @@
 #include <printf.h>
 #include <plic.h>
 #include <virtio_disk.h>
+#include <debug.h>
 
 extern void kernel_vec(void);
 extern char trampoline[], user_vec[], user_ret[];
 extern void syscall(void);
+
+void user_trap_ret(void);
 
 static struct spinlock tick_lock;
 /* For test */
@@ -86,6 +89,7 @@ void kernel_trap(void)
 void user_trap_entry(void)
 {
         process_t p = cur_proc();
+        uint64 cause = scause_r();
 
         if((sstatus_r() & SSTATUS_SPP)) {
                 PANIC("Not from user mode");
@@ -95,12 +99,17 @@ void user_trap_entry(void)
 
         p->trapframe->epc = sepc_r();
 
-        if(scause_r() == 8) {
+        if(cause == 8) {
                 /* System call */
                 p->trapframe->epc += 4;
                 intr_on();
                 syscall();
+        } else {
+                printf("scause %p\n", cause);
+                printf("sepc=%p stval=%p\n", p->trapframe->epc, stval_r());
+                PANIC("user_trap_entry");
         }
+        user_trap_ret();
 }
 
 void user_trap_ret(void)

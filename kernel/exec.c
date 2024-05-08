@@ -16,6 +16,7 @@
 #include <vm.h>
 #include <debug.h>
 #include <mystring.h>
+#include <printf.h>
 
 static int flags2perm(int flags)
 {
@@ -147,6 +148,7 @@ int exec(char* path, char** argv)
         p->trapframe->a1 = sp;
         p->trapframe->sp = sp;
         p->trapframe->epc = elf.entry;
+        printf("%d\n", elf.entry);
         proc_freepagedir(oldpgdir, oldsz);
 
         /* Rid of the last element (ustack[argc ++] = 0;) */

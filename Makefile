@@ -87,7 +87,6 @@ $(TARGET) : built-in.o user_build
 	$(LD) $(LDFLAGS) -T kernel/kernel.ld -o $(TARGET) built-in.o
 	$(OBJDUMP) -S $(TARGET) > $(TARGET).asm
 	$(OBJDUMP) -t $(TARGET) | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $(TARGET).sym
-	@rm -f $(shell find -name "*.o")
 
 QEMU = qemu-system-riscv64
 QEMUOPTS = -machine virt -bios none -kernel $(TARGET) -m 128M -smp $(CPUS) -nographic
@@ -110,7 +109,7 @@ qemu: all fs.img
 .gdbinit: .gdbinit.tmpl-riscv
 	@sed "s/:1234/:$(GDBPORT)/" < $^ > $@
 
-qemu-gdb: all .gdbinit
+qemu-gdb: all .gdbinit fs.img
 	$(QEMU) $(QEMUOPTS) -S $(QEMUGDB)
 	@echo "*** Now run 'gdb' in another window." 1>&2
 
