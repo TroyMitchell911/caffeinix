@@ -174,7 +174,10 @@ void vm_unmap(pagedir_t pgdir, uint64 va, uint64 npages, int do_free)
         pte_t* pte;
         uint64 pa;
 
-        for(addr = va; addr <= va + npages * PGSIZE; addr += PGSIZE) {
+        if((va % PGSIZE) != 0)
+                panic("uvmunmap: not aligned");
+
+        for(addr = va; addr < va + npages * PGSIZE; addr += PGSIZE) {
                 pte = PTE(pgdir, addr, 0);
                 if(pte == 0) {
                         PANIC("vm_unmap PTE");

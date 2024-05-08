@@ -52,7 +52,7 @@ void proc_freepagedir(pagedir_t pgdir, uint64 sz)
         vm_unmap(pgdir, TRAPFRAME, 1, 0);
         vm_unmap(pgdir, TRAMPOLINE, 1, 0);
         vm_unmap(pgdir, 0, PGROUNDUP(sz) / PGSIZE, 1);
-        pagedir_free(pgdir);
+        // pagedir_free(pgdir);
 }
 
 /* This function is the first when a process first start */
