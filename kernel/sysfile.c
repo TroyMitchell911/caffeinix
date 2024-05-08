@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-05-07
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-07
+ * @LastEditTime: 2024-05-08
  * @FilePath: /caffeinix/kernel/sysfile.c
  * @Description: 
  * Words are cheap so I do.
@@ -18,6 +18,8 @@
 #include <mystring.h>
 #include <palloc.h>
 #include <debug.h>
+
+extern int exec(char* path, char** argv);
 
 static int fdalloc(file_t f)
 {
@@ -134,40 +136,39 @@ uint64 sys_close(void)
 
 uint64 sys_exec(void)
 {
-        PANIC("sys_exec");
-        return 0;
-//         char path[MAXPATH], *argv[MAXARG];
-//         int i, ret = 0;
-//         uint64 uargv, uarg;
-//         /* Get parameters */
-//         argaddr(1, &uargv);
-//         if(argstr(0, path, MAXPATH) < 0) {
-//                 return -1;
-//         }
-//         /* Clear buffer */
-//         memset(argv, 0, sizeof(argv));
+        char path[MAXPATH], *argv[MAXARG];
+        int i, ret = 0;
+        uint64 uargv, uarg;
+        /* Get parameters */
+        argaddr(1, &uargv);
+        if(argstr(0, path, MAXPATH) < 0) {
+                return -1;
+        }
+        /* Clear buffer */
+        memset(argv, 0, sizeof(argv));
 
-//         for(i = 0; ;i++) {
-//                 if(i > NELEM(argv))
-//                         goto fail;
-//                 if(fetch_addr_from_user(uargv + i * sizeof(uint64), &uarg) < 0)
-//                         goto fail;
-//                 if(uarg == 0)
-//                         break;
-//                 argv[i] = palloc();
-//                 if(argv[i] == 0)
-//                         goto fail;
-//                 if(fetch_str_from_user(uarg, argv[i], PGSIZE) < 0)
-//                         goto fail;
-//         }
+        for(i = 0; ;i++) {
+                if(i > NELEM(argv))
+                        goto fail;
+                if(fetch_addr_from_user(uargv + i * sizeof(uint64), &uarg) < 0)
+                        goto fail;
+                if(uarg == 0)
+                        break;
+                argv[i] = palloc();
+                if(argv[i] == 0)
+                        goto fail;
+                if(fetch_str_from_user(uarg, argv[i], PGSIZE) < 0)
+                        goto fail;
+        }
 
-//         /* exec here */
-//         for(i = 0; i < NELEM(argv) && argv[i] != 0; i++)
-//                 pfree(argv[i]);
+        ret = exec(path, argv);
 
-//         return ret;
-// fail:
-//         for(i = 0; i < NELEM(argv) && argv[i] != 0; i++)
-//                 pfree(argv[i]);
-//         return -1;
+        for(i = 0; i < NELEM(argv) && argv[i] != 0; i++)
+                pfree(argv[i]);
+
+        return ret;
+fail:
+        for(i = 0; i < NELEM(argv) && argv[i] != 0; i++)
+                pfree(argv[i]);
+        return -1;
 }

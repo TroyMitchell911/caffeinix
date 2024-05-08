@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-30 06:23
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-07
+ * @LastEditTime: 2024-05-08
  * @FilePath: /caffeinix/arch/riscv/vm.c
  * @Description: This file about all virtual address
  * Words are cheap so I do.
@@ -191,6 +191,55 @@ void vm_unmap(pagedir_t pgdir, uint64 va, uint64 npages, int do_free)
                         pfree((void*)pa);
                 }
                 *pte = 0;
+        }
+}
+
+/* Free page-table from oldsz to newsz */
+uint64 vm_dealloc(pagedir_t pgdir, uint64 oldsz, uint64 newsz)
+{
+        if(newsz >= oldsz)
+                return oldsz;
+
+        if(PGROUNDUP(newsz) < PGROUNDUP(oldsz)){
+                int npages = (PGROUNDUP(oldsz) - PGROUNDUP(newsz)) / PGSIZE;
+                vm_unmap(pgdir, PGROUNDUP(newsz), npages, 1);
+        }
+        return newsz;
+}
+
+
+uint64 vm_alloc(pagedir_t pgdir, uint64 oldsz, uint64 newsz, int eperm)
+{
+        uint64 addr;
+        void* mem;
+        if(newsz <= oldsz)
+                return oldsz;
+
+        oldsz = PGROUNDUP(oldsz);
+        for(addr = oldsz; addr < newsz;addr += PGSIZE) {
+                mem = palloc();
+                if(!mem) {
+                        vm_dealloc(pgdir, addr, oldsz);
+                        return 0;
+                }
+                memset(mem, 0, PGSIZE);
+                if(vm_map(pgdir, (uint64)addr, (uint64)mem, PGSIZE, PTE_R | PTE_U | eperm) != 0) {
+                        pfree(mem);
+                        vm_dealloc(pgdir, addr, oldsz);
+                        return 0;
+                }
+        }
+
+        return newsz;
+}
+
+void vm_clear(pagedir_t pgdir, uint64 va)
+{
+        pte_t* pte = PTE(pgdir, va, 0);
+        if(!pte) {
+                PANIC("vm_clear");
+        } else {
+                *pte &= ~PTE_U;
         }
 }
 
