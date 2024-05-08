@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-30 06:23
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-07
+ * @LastEditTime: 2024-05-08
  * @FilePath: /caffeinix/kernel/fs/file.c
  * @Description: This file for file-system operation
  * Words are cheap so I do.
@@ -15,7 +15,7 @@
 #include <sysfile.h>
 
 #define TEST_W          0
-#define TEST_R          1
+#define TEST_R          0
 
 struct superblock sb;
 

@@ -1,8 +1,19 @@
+/*
+ * @Author: TroyMitchell
+ * @Date: 2024-05-07
+ * @LastEditors: TroyMitchell
+ * @LastEditTime: 2024-05-08
+ * @FilePath: /caffeinix/kernel/syscall.c
+ * @Description: 
+ * Words are cheap so I do.
+ * Copyright (c) 2024 by TroyMitchell, All Rights Reserved. 
+ */
 #include <syscall.h>
 #include <scheduler.h>
 #include <debug.h>
 #include <mystring.h>
 #include <vm.h>
+#include <printf.h>
 
 static uint64 argraw(int n)
 {
@@ -51,4 +62,33 @@ int argstr(int n, char *buf, int max)
         /* Get the address of string */
         argaddr(n, &addr);
         return fetch_str_from_user(addr, buf, max);
+}
+
+extern uint64 sys_open(void);
+extern uint64 sys_close(void);
+extern uint64 sys_read(void);
+extern uint64 sys_exec(void);
+
+typedef uint64 (*syscall_t)(void);
+
+syscall_t syscalls[] = {
+        [SYS_close] = sys_close,
+        [SYS_open] = sys_open,
+        [SYS_read] = sys_read,
+        [SYS_exec] = sys_exec,
+};
+
+void syscall(void)
+{
+        int syscall_num;
+        process_t p = cur_proc();
+
+        syscall_num = p->trapframe->a7;
+        if(syscall_num > 0 && syscall_num < NELEM(syscalls) && syscalls[syscall_num]) {
+                p->trapframe->a0 = syscalls[syscall_num]();
+        } else {
+                p->trapframe->a0 = -1;
+                printf("Unknown syscall number %d from this process-> pid:%d name:%s\n", 
+                        syscall_num, p->pid, p->name);
+        }
 }

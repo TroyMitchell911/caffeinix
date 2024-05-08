@@ -9,6 +9,7 @@
 
 extern void kernel_vec(void);
 extern char trampoline[], user_vec[], user_ret[];
+extern void syscall(void);
 
 static struct spinlock tick_lock;
 /* For test */
@@ -95,11 +96,10 @@ void user_trap_entry(void)
         p->trapframe->epc = sepc_r();
 
         if(scause_r() == 8) {
-                PANIC("SYSCALL");
                 /* System call */
-                // p->trapframe->epc += 4;
-                // intr_on();
-                // syscall();
+                p->trapframe->epc += 4;
+                intr_on();
+                syscall();
         }
 }
 

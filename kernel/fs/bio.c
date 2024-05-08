@@ -39,7 +39,6 @@ bio_t bget(uint16 dev, uint16 block)
         /* Find a bio that the bnum equals block */
         for(b = bio_table.head.next; b->next != &bio_table.head; b = b->next) {
                 if(b->bnum == block) {
-                        printf("bget found it\n");
                         b->ref ++;
                         spinlock_release(&bio_table.lk);
                         sleeplock_acquire(&b->lk);
@@ -50,7 +49,6 @@ bio_t bget(uint16 dev, uint16 block)
         /* LRU */
         for(b = bio_table.head.prev; b->prev != &bio_table.head; b = b->prev) {
                 if(b->ref == 0) {
-                        printf("bget created it\n");
                         b->dev = dev;
                         b->bnum = block;
                         b->ref = 1;
@@ -83,7 +81,6 @@ void brelse(bio_t bio)
 
         spinlock_acquire(&bio_table.lk);
         if(bio->ref == 1) {
-                printf("release\n");
                 /* Remove */
                 bio->next->prev = bio->prev;
                 bio->prev->next = bio->next;
@@ -117,7 +114,6 @@ void bwrite(bio_t bio)
 
 void bpin(bio_t bio)
 {
-        printf("bpin\n");
         spinlock_acquire(&bio_table.lk);
         bio->ref ++;
         spinlock_release(&bio_table.lk);
@@ -125,7 +121,6 @@ void bpin(bio_t bio)
 
 void bunpin(bio_t bio)
 {
-        printf("bunpin\n");
         spinlock_acquire(&bio_table.lk);
         bio->ref --;
         spinlock_release(&bio_table.lk);

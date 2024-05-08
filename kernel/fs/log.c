@@ -101,7 +101,6 @@ static void commit(void)
 static void recover(void)
 {
         log_head_read();
-        printf("recover: %d\n", log.info.n);
         if(log.info.n > 0) {
                 log_trans(1);
                 spinlock_acquire(&log.lk);

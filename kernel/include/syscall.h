@@ -31,5 +31,4 @@ void argint(int n, int *ip);
 void argaddr(int n, uint64 *ap);
 int argstr(int n, char *buf, int max);
 
-
 #endif

@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-30 06:23
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-07
+ * @LastEditTime: 2024-05-08
  * @FilePath: /caffeinix/kernel/process.c
  * @Description: 
  * Words are cheap so I do.
@@ -25,7 +25,7 @@ static struct spinlock pid_lock;
 struct process proc[NPROC];
 static int next_pid = 1;
 
-static pagedir_t proc_pagedir(process_t p)
+pagedir_t proc_pagedir(process_t p)
 {
         int ret;
         pagedir_t pgdir;
@@ -45,6 +45,14 @@ static pagedir_t proc_pagedir(process_t p)
                 pagedir_free(pgdir);
         }
         return pgdir;
+}
+
+void proc_freepagedir(pagedir_t pgdir, uint64 sz)
+{
+        vm_unmap(pgdir, TRAPFRAME, 1, 0);
+        vm_unmap(pgdir, TRAMPOLINE, 1, 0);
+        vm_unmap(pgdir, 0, PGROUNDUP(sz) / PGSIZE, 1);
+        pagedir_free(pgdir);
 }
 
 /* This function is the first when a process first start */
