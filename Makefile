@@ -56,6 +56,10 @@ obj-y += kernel/fs/
 obj-y += kernel/
 obj-y += arch/riscv/
 
+UPROGS = \
+	$(TOPDIR)/user/_init
+export UPROGS
+
 TARGET := $(OUTPUT)/kernel
 
 build:
@@ -64,8 +68,8 @@ build:
 mkfs/mkfs: mkfs/mkfs.c ./kernel/include/file.h ./kernel/include/inode.h
 	gcc -Werror -Wall -I./kernel/include -I./include -I./arch/riscv/include -o mkfs/mkfs mkfs/mkfs.c
 
-fs.img: mkfs/mkfs .github/README.md
-	mkfs/mkfs mkfs/fs.img LICENSE
+fs.img: mkfs/mkfs LICENSE $(UPROGS)
+	mkfs/mkfs mkfs/fs.img LICENSE $(UPROGS)
 
 all : start_recursive_build $(TARGET)
 	@echo $(TARGET) has been built!
@@ -73,7 +77,10 @@ all : start_recursive_build $(TARGET)
 start_recursive_build:
 	make -C ./ -f $(TOPDIR)/Makefile.build
 
-$(TARGET) : built-in.o user/initcode
+user_build:
+	make -C ./user/ all
+
+$(TARGET) : built-in.o user_build
 	@if [ ! -d $(OUTPUT) ]; then \
         	mkdir $(OUTPUT); \
     	fi
@@ -81,12 +88,6 @@ $(TARGET) : built-in.o user/initcode
 	$(OBJDUMP) -S $(TARGET) > $(TARGET).asm
 	$(OBJDUMP) -t $(TARGET) | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $(TARGET).sym
 	@rm -f $(shell find -name "*.o")
-
-user/initcode: user/initcode.S 
-	$(CC) $(CFLAGS) -march=rv64g -nostdinc -I ./kernel/include/ -c user/initcode.S -o user/initcode.o
-	$(LD) $(LDFLAGS) -N -e start -Ttext 0 -o user/initcode.out user/initcode.o
-	$(OBJCOPY) -S -O binary user/initcode.out user/initcode
-	$(OBJDUMP) -S user/initcode.o > user/initcode.asm
 
 QEMU = qemu-system-riscv64
 QEMUOPTS = -machine virt -bios none -kernel $(TARGET) -m 128M -smp $(CPUS) -nographic
@@ -119,6 +120,7 @@ clean:
 	@rm -f $(shell find -name "*.sym")
 	@rm -f $(shell find -name "*.d")
 	@rm -f output/*
+	@make -C ./user/ clean
 
 distclean: clean
 	@rm -f compile_commands.json
