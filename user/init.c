@@ -10,6 +10,7 @@
  */
 #include "user.h"
 int main(int argc, char** argv){
+        asm volatile("li a7, 15; ecall");
         while(1);
         return 0;
 }
