@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-05-08
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-08
+ * @LastEditTime: 2024-05-09
  * @FilePath: /caffeinix/user/init.c
  * @Description: 
  * Words are cheap so I do.
@@ -10,6 +10,6 @@
  */
 #include "user.h"
 int main(int argc, char** argv){
-        // open("123", 1);
+        while(1);
         return 0;
 }

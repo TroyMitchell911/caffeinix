@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-30 06:23
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-08
+ * @LastEditTime: 2024-05-09
  * @FilePath: /caffeinix/arch/riscv/vm.c
  * @Description: This file about all virtual address
  * Words are cheap so I do.
@@ -227,6 +227,7 @@ uint64 vm_alloc(pagedir_t pgdir, uint64 oldsz, uint64 newsz, int eperm)
                 }
                 memset(mem, 0, PGSIZE);
                 if(vm_map(pgdir, (uint64)addr, (uint64)mem, PGSIZE, PTE_R | PTE_U | eperm) != 0) {
+                        printf("???\n");
                         pfree(mem);
                         vm_dealloc(pgdir, addr, oldsz);
                         return 0;

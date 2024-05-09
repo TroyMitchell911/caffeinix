@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-05-07
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-08
+ * @LastEditTime: 2024-05-09
  * @FilePath: /caffeinix/kernel/exec.c
  * @Description: 
  * Words are cheap so I do.
@@ -54,7 +54,7 @@ int exec(char* path, char** argv)
         inode_t ip;
         struct elfhdr elf;
         struct proghdr ph;
-        pagedir_t oldpgdir, pgdir;
+        pagedir_t oldpgdir, pgdir = 0;
         process_t p = cur_proc();   
         
         log_begin();
@@ -78,14 +78,17 @@ int exec(char* path, char** argv)
         pgdir = proc_pagedir(p);
         if(!pgdir)
                 goto fail;
-        
+        printf("elf.phoff = %d; elf.phnum = %d\n", elf.phoff, elf.phnum);
         for(i = 0, off = elf.phoff; i < elf.phnum; i++, off += sizeof(ph)) {
-                if(readi(ip, 0, (uint64)&ph, sz, sizeof(ph)) != sizeof(ph))
+                if(readi(ip, 0, (uint64)&ph, off, sizeof(ph)) != sizeof(ph))
                         goto fail;
+                printf("ph.type = %d\n", ph.type);
                 if(ph.type != ELF_PROG_LOAD)
                         continue;
+                        
                 /* Overflow */
-                if(ph.vaddr + ph.memsz > ph.vaddr)
+                /* 2024-05-09 Fixed a overflow bug by TroyMitchell */
+                if(ph.vaddr + ph.memsz < ph.vaddr)
                         goto fail;
                 if(ph.memsz < ph.filesz)
                         goto fail;
@@ -93,6 +96,7 @@ int exec(char* path, char** argv)
                 if(ph.vaddr % PGSIZE != 0)
                         goto fail;
                 /* Extend virtual address and alloc physical memory */
+                printf("vm_alloc: %x->%x\n",sz, ph.vaddr + ph.memsz);
                 if((sz1 = vm_alloc(pgdir, sz, ph.vaddr + ph.memsz, flags2perm(ph.flags))) == 0)
                         goto fail;
                 sz = sz1;
@@ -139,6 +143,7 @@ int exec(char* path, char** argv)
         /* Save page-table */
         oldpgdir = p->pagetable;
         oldsz = p->sz;
+        
         p->pagetable = pgdir;
         p->sz = sz;
         /* 
@@ -148,12 +153,15 @@ int exec(char* path, char** argv)
         p->trapframe->a1 = sp;
         p->trapframe->sp = sp;
         p->trapframe->epc = elf.entry;
-        printf("%d\n", elf.entry);
+        printf("%x\n", elf.entry);
         proc_freepagedir(oldpgdir, oldsz);
-
+        
         /* Rid of the last element (ustack[argc ++] = 0;) */
         return --argc;
 fail:
+        if(pgdir) {
+                proc_freepagedir(pgdir, sz);
+        }
         if(ip) {
                 iunlockput(ip);
         }
