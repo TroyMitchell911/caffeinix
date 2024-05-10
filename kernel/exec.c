@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-05-07
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-09
+ * @LastEditTime: 2024-05-10
  * @FilePath: /caffeinix/kernel/exec.c
  * @Description: 
  * Words are cheap so I do.
@@ -34,7 +34,7 @@ static int loadseg(pagedir_t pgdir, uint64 va, inode_t ip, uint32 offset, uint32
         uint64 pa;
 
         for(i = 0; i < sz; i += PGSIZE) {
-                pa = va2pa(pgdir, va);
+                pa = va2pa(pgdir, va + i);
                 if(pa == 0)
                         PANIC("load_seg");
                 if(sz - i < PGSIZE)
@@ -80,9 +80,11 @@ int exec(char* path, char** argv)
                 goto fail;
         printf("elf.phoff = %d; elf.phnum = %d\n", elf.phoff, elf.phnum);
         for(i = 0, off = elf.phoff; i < elf.phnum; i++, off += sizeof(ph)) {
+                
                 if(readi(ip, 0, (uint64)&ph, off, sizeof(ph)) != sizeof(ph))
                         goto fail;
                 printf("ph.type = %d\n", ph.type);
+                printf("ph.off = %x; ph.filesize:%x\n", ph.off, ph.filesz);
                 if(ph.type != ELF_PROG_LOAD)
                         continue;
                         
