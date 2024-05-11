@@ -142,8 +142,9 @@ void itrunc(inode_t ip)
                 brelse(b);
                 bfree(ip->dev, ip->d.addrs[NDIRECT]);
         }
-        memmove(ip->d.addrs, 0, NDIRECT + 1);
+        memset(ip->d.addrs, 0, NDIRECT + 1);
         ip->d.size = 0;
+        iupdate(ip);
         spinlock_release(&inodes.lk);
 }
 
