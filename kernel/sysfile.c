@@ -95,7 +95,6 @@ fail:
 
 uint64 sys_open(void)
 {
-        PANIC("sys_open");
         inode_t ip;
         char path[MAXPATH];
         int fd, flag;

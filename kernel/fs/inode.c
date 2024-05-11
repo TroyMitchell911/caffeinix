@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-30 06:23
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-07
+ * @LastEditTime: 2024-05-11
  * @FilePath: /caffeinix/kernel/fs/inode.c
  * @Description: This file for inode layer of file-system
  * Words are cheap so I do.
@@ -14,7 +14,7 @@
 #include <balloc.h>
 #include <process.h>
 
-#define min(x1, x2)     x1 > x2 ? x2 : x1
+#define min(x1, x2)     (x1) > (x2) ? (x2) : (x1)
 
 extern struct superblock sb;
 
@@ -360,7 +360,7 @@ int writei(inode_t ip, int user_src, uint64 src, uint32 off, uint32 n)
                 if(!b) 
                         return 0;
                 /* Let's determine how many bytes we need to read */
-                rn = min(n - off, BSIZE - off % BSIZE);
+                rn = min(n - tot, BSIZE - off % BSIZE);
 
                 if(either_copyin(b->buf + off % BSIZE, user_src, src, rn) == -1) {
                         brelse(b);
