@@ -1,9 +1,22 @@
+/*
+ * @Author: TroyMitchell
+ * @Date: 2024-04-25 09:22
+ * @LastEditors: TroyMitchell
+ * @LastEditTime: 2024-05-08
+ * @FilePath: /caffeinix/kernel/include/process.h
+ * @Description: 
+ * Words are cheap so I do.
+ * Copyright (c) 2024 by ${TroyMitchell}, All Rights Reserved. 
+ */
 #ifndef __CAFFEINIX_KERNEL_PROCESS_H
 #define __CAFFEINIX_KERNEL_PROCESS_H
 
 #include <thread.h>
 #include <spinlock.h>
 #include <riscv.h>
+#include <file.h>
+
+typedef struct inode *inode_t;
 
 typedef struct trapframe {
         /* kernel page table */
@@ -68,15 +81,21 @@ typedef struct process{
         pagedir_t pagetable;
         trapframe_t trapframe;
         struct context context;
+        inode_t cwd;
+        file_t ofile[NOFILE];
         void* sleep_chan;
 }*process_t;
 
 void process_map_kernel_stack(pagedir_t pgdir);
 void process_init(void);
+pagedir_t proc_pagedir(process_t p);
+void proc_freepagedir(pagedir_t pgdir, uint64 sz);
 
 void sleep(void* chan, spinlock_t lk);
 void wakeup(void* chan);
 
+int either_copyout(int user_dst, uint64 dst, void* src, uint64 len);
+int either_copyin(void *dst, int user_src, uint64 src, uint64 len);
 /* User init for first process */
 void userinit(void);
 #endif

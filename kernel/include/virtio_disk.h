@@ -4,6 +4,9 @@
 #include <riscv.h>
 #include <typedefs.h>
 
+/* Block size */
+#define BSIZE                           1024
+
 #define VIRTIO_MMIO_MAGIC_VALUE		0x000 // 0x74726976
 #define VIRTIO_MMIO_VERSION		0x004 // version; should be 2
 #define VIRTIO_MMIO_DEVICE_ID		0x008 // device type; 1 is net, 2 is disk
@@ -88,8 +91,10 @@ struct virtio_blk_req {
         uint64 sector;
 };
 
-void virtio_disk_rw(void* buf, uint16 block,  int write);
-void virtio_disk_init(void);
+struct bio;
 
+void virtio_disk_rw(struct bio *b, int write);
+void virtio_disk_init(void);
+void virtio_disk_intr(void);
 
 #endif

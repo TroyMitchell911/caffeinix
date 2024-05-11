@@ -52,16 +52,24 @@ export TOPDIR
 # Define the subdirectory to be searched for 
 # variable records (the subdirectory must contain a makefile)
 obj-y += arch/riscv/boot/
+obj-y += kernel/fs/
 obj-y += kernel/
 obj-y += arch/riscv/
+
+UPROGS = \
+	$(TOPDIR)/user/_init
+export UPROGS
 
 TARGET := $(OUTPUT)/kernel
 
 build:
 	bear -- make all
 
-fsimg: 
-	qemu-img create -f raw ./mkfs/fsimg.img 16M
+mkfs/mkfs: mkfs/mkfs.c ./kernel/include/file.h ./kernel/include/inode.h
+	gcc -Werror -Wall -I./kernel/include -I./include -I./arch/riscv/include -o mkfs/mkfs mkfs/mkfs.c
+
+fs.img: mkfs/mkfs LICENSE $(UPROGS)
+	mkfs/mkfs mkfs/fs.img LICENSE $(UPROGS)
 
 all : start_recursive_build $(TARGET)
 	@echo $(TARGET) has been built!
@@ -69,25 +77,21 @@ all : start_recursive_build $(TARGET)
 start_recursive_build:
 	make -C ./ -f $(TOPDIR)/Makefile.build
 
-$(TARGET) : built-in.o user/initcode fsimg
+user_build:
+	make -C ./user/ all
+
+$(TARGET) : built-in.o user_build
 	@if [ ! -d $(OUTPUT) ]; then \
         	mkdir $(OUTPUT); \
     	fi
 	$(LD) $(LDFLAGS) -T kernel/kernel.ld -o $(TARGET) built-in.o
 	$(OBJDUMP) -S $(TARGET) > $(TARGET).asm
 	$(OBJDUMP) -t $(TARGET) | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $(TARGET).sym
-	@rm -f $(shell find -name "*.o")
-
-user/initcode: user/initcode.S 
-	$(CC) $(CFLAGS) -march=rv64g -nostdinc -I ./kernel/include/ -c user/initcode.S -o user/initcode.o
-	$(LD) $(LDFLAGS) -N -e start -Ttext 0 -o user/initcode.out user/initcode.o
-	$(OBJCOPY) -S -O binary user/initcode.out user/initcode
-	$(OBJDUMP) -S user/initcode.o > user/initcode.asm
 
 QEMU = qemu-system-riscv64
 QEMUOPTS = -machine virt -bios none -kernel $(TARGET) -m 128M -smp $(CPUS) -nographic
 QEMUOPTS += -global virtio-mmio.force-legacy=false
-QEMUOPTS += -drive file=./mkfs/fsimg.img,if=none,format=raw,id=x0
+QEMUOPTS += -drive file=./mkfs/fs.img,if=none,format=raw,id=x0
 QEMUOPTS += -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
 ifndef CPUS
 CPUS := 1
@@ -99,13 +103,13 @@ QEMUGDB = $(shell if $(QEMU) -help | grep -q '^-gdb'; \
 	then echo "-gdb tcp::$(GDBPORT)"; \
 	else echo "-s -p $(GDBPORT)"; fi)
 
-qemu: all
+qemu: all fs.img
 	$(QEMU) $(QEMUOPTS)
 
 .gdbinit: .gdbinit.tmpl-riscv
 	@sed "s/:1234/:$(GDBPORT)/" < $^ > $@
 
-qemu-gdb: all .gdbinit
+qemu-gdb: all .gdbinit fs.img
 	$(QEMU) $(QEMUOPTS) -S $(QEMUGDB)
 	@echo "*** Now run 'gdb' in another window." 1>&2
 
@@ -114,7 +118,9 @@ clean:
 	@rm -f $(shell find -name "*.asm")
 	@rm -f $(shell find -name "*.sym")
 	@rm -f $(shell find -name "*.d")
+	@rm -f output/*
+	@make -C ./user/ clean
 
 distclean: clean
-	@rm -f $(shell find -name "compile_commands.json")
-	@rm -f $(TARGET)
+	@rm -f compile_commands.json
+	@rm -f ./mkfs/mkfs ./mkfs/fs.img

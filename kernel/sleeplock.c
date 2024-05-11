@@ -39,10 +39,10 @@ void sleeplock_acquire(sleeplock_t lk)
 
 void sleeplock_release(sleeplock_t lk)
 {
-        spinlock_acquire(&lk->lk);
         if(!sleeplock_holding(lk)) {
                 PANIC("sleeplock_release");
         }
+        spinlock_acquire(&lk->lk);
         lk->locked = 0;
         lk->p = 0;
         wakeup(lk);

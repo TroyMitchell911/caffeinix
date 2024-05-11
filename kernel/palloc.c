@@ -1,6 +1,6 @@
 #include <palloc.h>
 #include <mem_layout.h>
-#include <string.h>
+#include <mystring.h>
 
 struct pmem_free_list {
         struct pmem_free_list *next;

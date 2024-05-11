@@ -1,7 +1,17 @@
+/*
+ * @Author: TroyMitchell
+ * @Date: 2024-04-30 06:23
+ * @LastEditors: TroyMitchell
+ * @LastEditTime: 2024-05-09
+ * @FilePath: /caffeinix/arch/riscv/vm.c
+ * @Description: This file about all virtual address
+ * Words are cheap so I do.
+ * Copyright (c) 2024 by TroyMitchell, All Rights Reserved. 
+ */
 #include <palloc.h>
 #include <mem_layout.h>
 #include <vm.h>
-#include <string.h>
+#include <mystring.h>
 #include <debug.h>
 #include <process.h>
 #include <printf.h>
@@ -43,6 +53,25 @@ pte_t *PTE(pagedir_t pgdir, uint64 va, int flag)
         }
         /* Return the lowest level of pte */
         return (pte_t*)&pgdir[PTEX(0, va)];
+}
+
+uint64 va2pa(pagedir_t pgdir, uint64 va)
+{
+        pte_t *pte;
+        uint64 pa;
+
+        if(va >= MAXVA)
+                return 0;
+
+        pte = PTE(pgdir, va, 0);
+        if(pte == 0)
+                return 0;
+        if((*pte & PTE_V) == 0)
+                return 0;
+        if((*pte & PTE_U) == 0)
+                return 0;
+        pa = PTE2PA(*pte);
+                return pa;
 }
 
 int vm_map(pagedir_t pgdir, uint64 va, uint64 pa, uint64 size, int perm)
@@ -145,7 +174,10 @@ void vm_unmap(pagedir_t pgdir, uint64 va, uint64 npages, int do_free)
         pte_t* pte;
         uint64 pa;
 
-        for(addr = va; addr <= va + npages * PGSIZE; addr += PGSIZE) {
+        if((va % PGSIZE) != 0)
+                panic("uvmunmap: not aligned");
+
+        for(addr = va; addr < va + npages * PGSIZE; addr += PGSIZE) {
                 pte = PTE(pgdir, addr, 0);
                 if(pte == 0) {
                         PANIC("vm_unmap PTE");
@@ -164,6 +196,137 @@ void vm_unmap(pagedir_t pgdir, uint64 va, uint64 npages, int do_free)
                 *pte = 0;
         }
 }
+
+/* Free page-table from oldsz to newsz */
+uint64 vm_dealloc(pagedir_t pgdir, uint64 oldsz, uint64 newsz)
+{
+        if(newsz >= oldsz)
+                return oldsz;
+
+        if(PGROUNDUP(newsz) < PGROUNDUP(oldsz)){
+                int npages = (PGROUNDUP(oldsz) - PGROUNDUP(newsz)) / PGSIZE;
+                vm_unmap(pgdir, PGROUNDUP(newsz), npages, 1);
+        }
+        return newsz;
+}
+
+
+uint64 vm_alloc(pagedir_t pgdir, uint64 oldsz, uint64 newsz, int eperm)
+{
+        uint64 addr;
+        void* mem;
+        if(newsz <= oldsz)
+                return oldsz;
+
+        oldsz = PGROUNDUP(oldsz);
+        for(addr = oldsz; addr < newsz;addr += PGSIZE) {
+                mem = palloc();
+                if(!mem) {
+                        vm_dealloc(pgdir, addr, oldsz);
+                        return 0;
+                }
+                memset(mem, 0, PGSIZE);
+                if(vm_map(pgdir, (uint64)addr, (uint64)mem, PGSIZE, PTE_R | PTE_U | eperm) != 0) {
+                        printf("???\n");
+                        pfree(mem);
+                        vm_dealloc(pgdir, addr, oldsz);
+                        return 0;
+                }
+        }
+
+        return newsz;
+}
+
+void vm_clear(pagedir_t pgdir, uint64 va)
+{
+        pte_t* pte = PTE(pgdir, va, 0);
+        if(!pte) {
+                PANIC("vm_clear");
+        } else {
+                *pte &= ~PTE_U;
+        }
+}
+
+int copyout(pagedir_t pgdir, uint64 dstva, char* src, uint64 len)
+{
+        uint64 n, va0, pa0;
+
+        while(len > 0){
+                va0 = PGROUNDDOWN(dstva);
+                pa0 = va2pa(pgdir, va0);
+                if(pa0 == 0)
+                        return -1;
+                n = PGSIZE - (dstva - va0);
+                if(n > len)
+                        n = len;
+                memmove((void *)(pa0 + (dstva - va0)), src, n);
+
+                len -= n;
+                src += n;
+                dstva = va0 + PGSIZE;
+        }
+        return 0;
+}
+
+int copyin(pagedir_t pgdir, char* dst, uint64 srcva, uint64 len)
+{
+         uint64 n, va0, pa0;
+
+        while(len > 0){
+                va0 = PGROUNDDOWN(srcva);
+                pa0 = va2pa(pgdir, va0);
+                if(pa0 == 0)
+                        return -1;
+                n = PGSIZE - (srcva - va0);
+                if(n > len)
+                        n = len;
+                memmove(dst, (void *)(pa0 + (srcva - va0)),n);
+
+                len -= n;
+                dst += n;
+                srcva = va0 + PGSIZE;
+        }
+        return 0;
+}
+
+int copyinstr(pagedir_t pgdir, char *dst, uint64 srcva, uint64 max)
+{
+        uint64 n, va0, pa0;
+        int got_null = 0;
+
+        while(got_null == 0 && max > 0) {
+                va0 = PGROUNDDOWN(srcva);
+                pa0 = va2pa(pgdir, va0);
+                if(pa0 == 0)
+                        return -1;
+                n = PGSIZE - (srcva - va0);
+                if(n > max)
+                        n = max;
+
+                char *p = (char *) (pa0 + (srcva - va0));
+                while(n > 0) {
+                        if(*p == '\0') {
+                                *dst = '\0';
+                                got_null = 1;
+                                break;
+                        } else {
+                                *dst = *p;
+                        }
+                        --n;
+                        --max;
+                        p++;
+                        dst++;
+                }
+
+                srcva = va0 + PGSIZE;
+        }
+        if(got_null) {
+                return 0;
+        } else {
+                return -1;
+        }
+}
+
 
 void kvm_create(void)
 {

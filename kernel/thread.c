@@ -1,6 +1,6 @@
 #include <thread.h>
 #include <palloc.h>
-#include <string.h>
+#include <mystring.h>
 #include <uart.h>
 #include <printf.h>
 

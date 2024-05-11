@@ -1,3 +1,13 @@
+/*
+ * @Author: TroyMitchell
+ * @Date: 2024-04-30 06:23
+ * @LastEditors: TroyMitchell
+ * @LastEditTime: 2024-05-07
+ * @FilePath: /caffeinix/kernel/main.c
+ * @Description: 
+ * Words are cheap so I do.
+ * Copyright (c) 2024 by TroyMitchell, All Rights Reserved. 
+ */
 #include <mem_layout.h>
 #include <vm.h>
 #include <console.h>
@@ -9,6 +19,10 @@
 #include <plic.h>
 #include <process.h>
 #include <virtio_disk.h>
+#include <bio.h>
+#include <log.h>
+#include <inode.h>
+#include <file.h>
 
 volatile static uint8 start = 0;
 extern char end[];
@@ -28,13 +42,10 @@ void main(void)
                 trap_init();
                 process_init();
                 userinit();
+                binit();
+                iinit();
+                file_init();
                 virtio_disk_init();
-                char buf1[1024] = {"test"};
-                char buf2[1024] = {0};
-                virtio_disk_rw(buf1, 0, 1);
-                virtio_disk_rw(buf2, 0, 0);
-                printf("virtio_disk: %s\n", buf2);
-                
 
                 printf("Hello! Caffeinix\n");
 

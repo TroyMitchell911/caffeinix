@@ -1,4 +1,14 @@
-#include <string.h>
+/*
+ * @Author: TroyMitchell
+ * @Date: 2024-04-30
+ * @LastEditors: TroyMitchell
+ * @LastEditTime: 2024-05-07
+ * @FilePath: /caffeinix/kernel/string.c
+ * @Description: 
+ * Words are cheap so I do.
+ * Copyright (c) 2024 by TroyMitchell, All Rights Reserved. 
+ */
+#include <mystring.h>
 
 /* Clear n bytes of memory pointing to dst as c */
 void* memset(void* dst, char c, uint32 n)
@@ -71,4 +81,13 @@ void* memmove(void *dst, const void *src, uint16 n)
 void* memcpy(void* dst, const void* src, uint16 n)
 {
         return memmove(dst, src, n);
+}
+
+int strncmp(const char *p, const char *q, uint32 n)
+{
+        while(n > 0 && *p && *p == *q)
+                n--, p++, q++;
+        if(n == 0)
+                return 0;
+        return (uint8)*p - (uint8)*q;
 }

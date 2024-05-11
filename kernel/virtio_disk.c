@@ -1,10 +1,11 @@
 #include <virtio_disk.h>
 #include <spinlock.h>
 #include <debug.h>
-#include <string.h>
+#include <mystring.h>
 #include <palloc.h>
 #include <mem_layout.h>
 #include <process.h>
+#include <bio.h>
 
 #define BSIZE                   1024
 
@@ -46,8 +47,8 @@ static struct disk {
         // for use when completion interrupt arrives.
         // indexed by first descriptor index of chain.
         struct {
-        struct buf *b;
-        char status;
+                bio_t b;
+                char status;
         } info[VIRTIO_DES_NUM];
 
         // disk command headers.
@@ -205,10 +206,10 @@ static int alloc3_desc(int *idx)
         return 0;
 }
 
-void virtio_disk_rw(void* buf, uint16 block,  int write)
+void virtio_disk_rw(struct bio *b, int write)
 {
-        // uint64 sector = b->blockno * (BSIZE / 512);
-        uint64 sector = block * (BSIZE / 512);
+        uint64 sector = b->bnum * (BSIZE / 512);
+        // uint64 sector = block * (BSIZE / 512);
 
         acquire(&disk.vdisk_lock);
 
@@ -219,10 +220,10 @@ void virtio_disk_rw(void* buf, uint16 block,  int write)
         // allocate the three descriptors.
         int idx[3];
         while(1){
-        if(alloc3_desc(idx) == 0) {
-        break;
-        }
-        sleep(&disk.free[0], &disk.vdisk_lock);
+                if(alloc3_desc(idx) == 0) {
+                        break;
+                }
+                sleep(&disk.free[0], &disk.vdisk_lock);
         }
 
         // format the three descriptors.
@@ -231,9 +232,9 @@ void virtio_disk_rw(void* buf, uint16 block,  int write)
         struct virtio_blk_req *buf0 = &disk.ops[idx[0]];
 
         if(write)
-        buf0->type = VIRTIO_BLK_T_OUT; // write the disk
+                buf0->type = VIRTIO_BLK_T_OUT; // write the disk
         else
-        buf0->type = VIRTIO_BLK_T_IN; // read the disk
+                buf0->type = VIRTIO_BLK_T_IN; // read the disk
         buf0->reserved = 0;
         buf0->sector = sector;
 
@@ -243,12 +244,12 @@ void virtio_disk_rw(void* buf, uint16 block,  int write)
         disk.desc[idx[0]].next = idx[1];
 
         // disk.desc[idx[1]].addr = (uint64) b->data;
-        disk.desc[idx[1]].addr = (uint64) buf;
+        disk.desc[idx[1]].addr = (uint64) b->buf;
         disk.desc[idx[1]].len = BSIZE;
         if(write)
-        disk.desc[idx[1]].flags = 0; // device reads b->data
+                disk.desc[idx[1]].flags = 0; // device reads b->data
         else
-        disk.desc[idx[1]].flags = VRING_DESC_F_WRITE; // device writes b->data
+                disk.desc[idx[1]].flags = VRING_DESC_F_WRITE; // device writes b->data
         disk.desc[idx[1]].flags |= VRING_DESC_F_NEXT;
         disk.desc[idx[1]].next = idx[2];
 
@@ -259,8 +260,8 @@ void virtio_disk_rw(void* buf, uint16 block,  int write)
         disk.desc[idx[2]].next = 0;
 
         // record struct buf for virtio_disk_intr().
-        // b->disk = 1;
-        // disk.info[idx[0]].b = b;
+        b->disking = 1;
+        disk.info[idx[0]].b = b;
 
         // tell the device the first index in our chain of descriptors.
         disk.avail->ring[disk.avail->idx % NUM] = idx[0];
@@ -275,12 +276,48 @@ void virtio_disk_rw(void* buf, uint16 block,  int write)
         *R(VIRTIO_MMIO_QUEUE_NOTIFY) = 0; // value is queue number
 
         // Wait for virtio_disk_intr() to say request has finished.
-        // while(b->disk == 1) {
-        //         sleep(b, &disk.vdisk_lock);
-        // }
+        release(&disk.vdisk_lock);
+        while(b->disking == 1) {
+                sleep(b, &disk.vdisk_lock);
+        }
+        acquire(&disk.vdisk_lock);
 
         disk.info[idx[0]].b = 0;
         free_chain(idx[0]);
+
+        release(&disk.vdisk_lock);
+}
+
+void virtio_disk_intr(void)
+{
+        acquire(&disk.vdisk_lock);
+
+        // the device won't raise another interrupt until we tell it
+        // we've seen this interrupt, which the following line does.
+        // this may race with the device writing new entries to
+        // the "used" ring, in which case we may process the new
+        // completion entries in this interrupt, and have nothing to do
+        // in the next interrupt, which is harmless.
+        *R(VIRTIO_MMIO_INTERRUPT_ACK) = *R(VIRTIO_MMIO_INTERRUPT_STATUS) & 0x3;
+
+        __sync_synchronize();
+
+        // the device increments disk.used->idx when it
+        // adds an entry to the used ring.
+
+        while(disk.used_idx != disk.used->idx){
+                __sync_synchronize();
+                int id = disk.used->ring[disk.used_idx % NUM].id;
+
+                if(disk.info[id].status != 0)
+                        panic("virtio_disk_intr status");
+
+                bio_t b = disk.info[id].b;
+                b->disking = 0;   // disk is done with buf
+                wakeup(b);
+
+                disk.used_idx += 1;
+        }
 
         release(&disk.vdisk_lock);
 }
