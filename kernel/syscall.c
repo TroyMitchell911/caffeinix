@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-05-07
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-09
+ * @LastEditTime: 2024-05-11
  * @FilePath: /caffeinix/kernel/syscall.c
  * @Description: 
  * Words are cheap so I do.
@@ -68,6 +68,7 @@ extern uint64 sys_open(void);
 extern uint64 sys_close(void);
 extern uint64 sys_read(void);
 extern uint64 sys_exec(void);
+extern uint64 sys_mknod(void);
 
 typedef uint64 (*syscall_t)(void);
 
@@ -76,6 +77,7 @@ syscall_t syscalls[] = {
         [SYS_open] = sys_open,
         [SYS_read] = sys_read,
         [SYS_exec] = sys_exec,
+        [SYS_mknod] = sys_mknod,
 };
 
 void syscall(void)

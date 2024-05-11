@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-05-07
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-08
+ * @LastEditTime: 2024-05-11
  * @FilePath: /caffeinix/kernel/sysfile.c
  * @Description: 
  * Words are cheap so I do.
@@ -103,6 +103,35 @@ fail2:
 fail1:
         log_end();
         return -1;
+}
+
+uint64 sys_mknod(void)
+{
+        int ret = -1;
+        char path[MAXPATH];
+        int major, minor;
+        inode_t ip;
+
+        log_begin();
+
+        /* Get major and minor from user */
+        argint(1, &major);
+        argint(2, &minor);
+        if(major < 0 || minor < 0)
+                goto fail;
+        /* Get the path from user */
+        if(argstr(0, path, MAXPATH) == -1)
+                goto fail;
+        /* Create a device file that be filled major and minor */
+        ip = create(path, T_DEVICE, major, minor);
+        if(!ip)
+                goto fail;
+        /* Bcs the function 'create' will return a inode that be locked and got */
+        iunlockput(ip);
+        ret = 0;
+fail:
+        log_end();
+        return ret;
 }
 
 uint64 sys_read(void)
