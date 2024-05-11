@@ -37,6 +37,59 @@ static int fdalloc(file_t f)
 
 static inode_t create(char* path, short type, short major, short minor)
 {
+        inode_t dp, ip;
+        char name[DIRSIZ];
+        dp = nameiparent(path, name);
+        if(!dp) {
+                return 0;
+        }
+
+        ilock(dp);
+        ip = dirlookup(dp, name, 0);
+        /* If we have found this name in the dirent */
+        if(ip) {
+                iunlockput(dp);
+                ilock(ip); 
+                /* If we wanna create a file and this existing name is file or device so we can return this inode */
+                if(type == T_FILE && (ip->d.type == T_FILE || ip->d.type == T_DEVICE))
+                        return ip;
+                iunlockput(ip);
+                return 0;
+        }
+
+        ip = ialloc(dp->dev, type);
+        if(!ip) {
+                iunlockput(dp);
+                return 0;
+        }
+
+        ilock(ip);
+        ip->d.nlink = 1;
+        if(type == T_DEVICE) {
+                ip->d.major = major;
+                ip->d.minor = minor;
+        }
+        iupdate(ip);
+
+        /* Create the local reference and the previous reference */
+        if(type == T_DIR) {
+                if(dirlink(ip, ".", ip->inum) ||
+                   dirlink(ip, "..", dp->inum)) {
+                        goto fail;
+                }
+        }
+
+        if(dirlink(dp, name, ip->inum) == 0)
+                goto fail;
+
+        iunlockput(dp);
+        return ip;
+
+fail:
+        ip->d.nlink = 0;
+        iupdate(ip);
+        iunlockput(dp);
+        iunlockput(ip);
         return 0;
 }
 
