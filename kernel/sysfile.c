@@ -245,8 +245,8 @@ uint64 sys_exec(void)
 
         ret = exec(path, argv);
 
-        // for(i = 0; i < NELEM(argv) && argv[i] != 0; i++)
-        //         pfree(argv[i]);
+        for(i = 0; i < NELEM(argv) && argv[i] != 0; i++)
+                pfree(argv[i]);
 
         return ret;
 fail:
