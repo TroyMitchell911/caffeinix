@@ -1,5 +1,16 @@
+/*
+ * @Author: TroyMitchell
+ * @Date: 2024-04-26
+ * @LastEditors: TroyMitchell
+ * @LastEditTime: 2024-05-12
+ * @FilePath: /caffeinix/kernel/console.c
+ * @Description: 
+ * Words are cheap so I do.
+ * Copyright (c) 2024 by TroyMitchell, All Rights Reserved. 
+ */
 #include <console.h>
 #include <spinlock.h>
+#include <driver.h>
 
 static struct {
         struct spinlock lock;
@@ -52,11 +63,27 @@ void console_putc(int c)
         }
 }
 
+#include <debug.h>
 
+int console_read(uint64 dst, int n)
+{
+        PANIC("console_read");
+        return 0;
+}
+
+int console_write(uint64 src, int n)
+{
+        PANIC("console_read");
+        return 0;
+}
 
 void console_init(void)
 {
         spinlock_init(&console.lock, "console");
         uart_init();
         uart_register_rx_callback(console_intr);
+
+        /* Set the operating function */
+        dev[CONSOLE].write = console_write;
+        dev[CONSOLE].read = console_read;
 }

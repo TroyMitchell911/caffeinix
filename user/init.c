@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-05-08
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-11
+ * @LastEditTime: 2024-05-12
  * @FilePath: /caffeinix/user/init.c
  * @Description: 
  * Words are cheap so I do.
@@ -13,14 +13,17 @@
 
 #define CONSOLE                 1  
 int main(void){
-        int ret;
-        ret = open("console", O_RDWR);
-        if(ret == -1) {
+        int ret, fd;
+        char buf[1024];
+        fd = open("console", O_RDWR);
+        if(fd == -1) {
                 ret = mknod("console", 1, 0);
                 if(ret == 0) {
-                        ret = open("console", O_RDWR);
+                        fd = open("console", O_RDWR);
+                        ret = read(fd, buf, 1024); 
                 }
         }
+        ret = read(fd, buf, 1024); 
         for(;;);
         return 0;
 }
