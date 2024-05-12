@@ -14,6 +14,7 @@
 #define CONSOLE                 1  
 int main(void){
         int ret, fd;
+        char buf[5];
         fd = open("console", O_RDWR);
         if(fd == -1) {
                 ret = mknod("console", 1, 0);
@@ -22,7 +23,10 @@ int main(void){
                 }
         }
         if(fd != -1) {
-                ret = write(fd, "test\n", 5);
+                ret = read(fd, buf, 5);
+                if(ret == 5) {
+                        ret = write(fd, buf, 5);
+                }
         }
         for(;;);
         return 0;

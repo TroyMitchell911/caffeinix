@@ -8,10 +8,12 @@
  * Words are cheap so I do.
  * Copyright (c) 2024 by TroyMitchell, All Rights Reserved. 
  */
+#include "process.h"
 #include <console.h>
 #include <spinlock.h>
 #include <driver.h>
 #include <process.h>
+#include <mystring.h>
 
 static struct {
         struct spinlock lock;
@@ -68,8 +70,29 @@ void console_putc(int c)
 
 int console_read(uint64 dst, int n)
 {
+        char c;
+        int ret, target;
 
-        return 0;
+        target = n;
+
+        while(n > 0) {
+                /* TODO: Preventing overflow */
+
+
+                c = console.buf[console.r++ % INPUT_BUF_SIZE];
+
+                /* TODO: other character */
+
+                ret = either_copyout(1, dst, &c, 1);
+                if(ret != 0) {
+                        break;
+                }
+
+                /* TODO: '\n' */
+                n --;
+                dst ++;
+        }
+        return target - n;
 }
 
 int console_write(uint64 src, int n)
@@ -95,4 +118,6 @@ void console_init(void)
         /* Set the operating function */
         dev[CONSOLE].write = console_write;
         dev[CONSOLE].read = console_read;
+
+        memmove(console.buf, "test\n", 5);
 }
