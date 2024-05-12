@@ -8,6 +8,7 @@
  * Words are cheap so I do.
  * Copyright (c) 2024 by TroyMitchell, All Rights Reserved. 
  */
+#include "typedefs.h"
 #include <syscall.h>
 #include <scheduler.h>
 #include <debug.h>
@@ -70,6 +71,7 @@ extern uint64 sys_read(void);
 extern uint64 sys_exec(void);
 extern uint64 sys_mknod(void);
 extern uint64 sys_write(void);
+extern uint64 sys_dup(void);
 
 typedef uint64 (*syscall_t)(void);
 
@@ -80,7 +82,8 @@ syscall_t syscalls[] = {
         [SYS_exec] = sys_exec,
         [SYS_mknod] = sys_mknod,
         [SYS_write] = sys_write,
-};
+        [SYS_dup] = sys_dup,
+};      
 
 void syscall(void)
 {

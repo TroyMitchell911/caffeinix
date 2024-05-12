@@ -105,8 +105,13 @@ file_t file_dup(file_t f)
                 PANIC("file_dup");
         }
         f->ref ++;
-        return f;
+        /* 
+                2024-05-12: Fixed a bug, which is that forgot relese this lock
+                before return the file descriptor
+                By: GoKo-Son626
+        */
         spinlock_release(&ftable.lk);
+        return f;
 }
 
 void file_close(file_t f)
