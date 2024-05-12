@@ -95,6 +95,6 @@ void syscall(void)
                 p->trapframe->a0 = -1;
                 printf("Unknown syscall number %d from this process-> pid:%d name:%s\n", 
                         syscall_num, p->pid, p->name);
-                PANIC("unknow");
+                PANIC("unknown");
         }
 }

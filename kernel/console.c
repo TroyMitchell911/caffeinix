@@ -66,8 +66,6 @@ void console_putc(int c)
         }
 }
 
-#include <debug.h>
-
 int console_read(uint64 dst, int n)
 {
         char c;
