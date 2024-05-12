@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-05-07
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-11
+ * @LastEditTime: 2024-05-12
  * @FilePath: /caffeinix/kernel/sysfile.c
  * @Description: 
  * Words are cheap so I do.
@@ -79,7 +79,7 @@ static inode_t create(char* path, short type, short major, short minor)
                 }
         }
 
-        if(dirlink(dp, name, ip->inum) == 0)
+        if(dirlink(dp, name, ip->inum) != 0)
                 goto fail;
 
         iunlockput(dp);
@@ -136,6 +136,9 @@ uint64 sys_open(void)
         if(ip->d.type == T_FILE) {
                 f->type = FD_INODE;
                 f->off = 0;
+        } else if(ip->d.type == T_DEVICE) {
+                f->type = FD_DEVICE;
+                f->major = ip->d.major;
         }
 
         f->ip = ip;

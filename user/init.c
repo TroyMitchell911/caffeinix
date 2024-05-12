@@ -22,8 +22,9 @@ int main(void){
                         fd = open("console", O_RDWR);
                         ret = read(fd, buf, 1024); 
                 }
+        } else {
+                ret = read(fd, buf, 1024); 
         }
-        ret = read(fd, buf, 1024); 
         for(;;);
         return 0;
 }

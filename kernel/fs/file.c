@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-30 06:23
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-08
+ * @LastEditTime: 2024-05-12
  * @FilePath: /caffeinix/kernel/fs/file.c
  * @Description: This file for file-system operation
  * Words are cheap so I do.
@@ -13,6 +13,7 @@
 #include <debug.h>
 #include <printf.h>
 #include <sysfile.h>
+#include <driver.h>
 
 #define TEST_W          0
 #define TEST_R          0
@@ -148,7 +149,12 @@ int file_read(file_t f, uint64 addr, int n)
                 if(ret > 0)
                         f->off += ret;
                 iunlock(f->ip);
+        } else if(f->type == FD_DEVICE) {
+                if(f->ip->d.major < 0 || dev[f->ip->d.major].read == 0)
+                        ret = -1;
+                ret = dev[f->ip->d.major].read(addr, n);
         } else {
+                printf("f->type = %d;", f->type);
                 PANIC("file_read");
         }
 
@@ -184,6 +190,13 @@ int file_write(file_t f, uint64 addr, int n)
                         i += w_n;
                 }
                 ret = (i == n ? n : -1);
+        } else if(f->type == FD_DEVICE) {
+                if(f->ip->d.major < 0 || dev[f->ip->d.major].write == 0)
+                        ret = -1;
+                ret = dev[f->ip->d.major].write(addr, n);
+        } else {
+                printf("f->type = %d;", f->type);
+                PANIC("file_write");
         }
 
         return ret;
