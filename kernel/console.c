@@ -11,6 +11,7 @@
 #include <console.h>
 #include <spinlock.h>
 #include <driver.h>
+#include <process.h>
 
 static struct {
         struct spinlock lock;
@@ -67,14 +68,22 @@ void console_putc(int c)
 
 int console_read(uint64 dst, int n)
 {
-        PANIC("console_read");
+
         return 0;
 }
 
 int console_write(uint64 src, int n)
 {
-        PANIC("console_read");
-        return 0;
+        int i, ret;
+        char c;
+        for(i = 0; i < n; i++) {
+                ret = either_copyin(&c, 1, src + i, 1);
+                if(ret != 0) {
+                        break;
+                }
+                uart_putc(c);
+        }
+        return i;
 }
 
 void console_init(void)

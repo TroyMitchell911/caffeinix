@@ -205,6 +205,22 @@ uint64 sys_read(void)
         return -1;
 }
 
+uint64 sys_write(void)
+{
+        file_t f;
+        int fd, n;
+        uint64 src;
+
+        argint(0, &fd);
+        argint(2, &n);
+        argaddr(1, &src);
+
+        f = cur_proc()->ofile[fd];
+        if(f)
+                return file_write(f, src, n); 
+        return -1;
+}
+
 uint64 sys_close(void)
 {
         file_t f;

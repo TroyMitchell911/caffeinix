@@ -14,16 +14,15 @@
 #define CONSOLE                 1  
 int main(void){
         int ret, fd;
-        char buf[1024];
         fd = open("console", O_RDWR);
         if(fd == -1) {
                 ret = mknod("console", 1, 0);
                 if(ret == 0) {
                         fd = open("console", O_RDWR);
-                        ret = read(fd, buf, 1024); 
                 }
-        } else {
-                ret = read(fd, buf, 1024); 
+        }
+        if(fd != -1) {
+                ret = write(fd, "test\n", 5);
         }
         for(;;);
         return 0;
