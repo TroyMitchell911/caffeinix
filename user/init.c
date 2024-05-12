@@ -23,9 +23,12 @@ int main(void){
                 }
         }
         if(fd != -1) {
-                ret = read(fd, buf, 5);
-                if(ret == 5) {
-                        ret = write(fd, buf, 5);
+                fd = dup(fd);
+                if(fd != -1) {
+                        ret = read(fd, buf, 5);
+                        if(ret == 5) {
+                                ret = write(fd, buf, 5);
+                        }
                 }
         }
         for(;;);

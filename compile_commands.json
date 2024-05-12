@@ -21,14 +21,14 @@
       "../arch/riscv/include",
       "-I",
       "../include",
-      "-Wp,-MD,.syscall.o.d",
+      "-Wp,-MD,.sysfile.o.d",
       "-c",
       "-o",
-      "syscall.o",
-      "syscall.c"
+      "sysfile.o",
+      "sysfile.c"
     ],
     "directory": "/root/caffeinix/kernel",
-    "file": "/root/caffeinix/kernel/syscall.c",
-    "output": "/root/caffeinix/kernel/syscall.o"
+    "file": "/root/caffeinix/kernel/sysfile.c",
+    "output": "/root/caffeinix/kernel/sysfile.o"
   }
 ]

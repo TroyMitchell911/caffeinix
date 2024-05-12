@@ -8,6 +8,7 @@
  * Words are cheap so I do.
  * Copyright (c) 2024 by TroyMitchell, All Rights Reserved. 
  */
+#include "typedefs.h"
 #include <sysfile.h>
 #include <inode.h>
 #include <file.h>
@@ -92,6 +93,28 @@ fail:
         iunlockput(ip);
         return 0;
 }
+
+uint64 sys_dup(void)
+{
+        file_t f;
+        int fd;
+
+        argint(0, &fd);
+
+        f = cur_proc()->ofile[fd];
+        if(f) {
+                /* Alloc a fd number */
+                fd = fdalloc(f);
+                if (fd < 0) {
+                        return -1;
+                }
+                /* Execute this function 'file_dup' to increase reference of file descriptor*/
+                file_dup(f);
+                return fd;
+        }
+        return -1;
+}
+
 
 uint64 sys_open(void)
 {
