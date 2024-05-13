@@ -98,7 +98,7 @@ void uart_start(void)
                 uart_tx_r += 1;
 
                 /* Wake up tasks that are sleeping because uart_putc */
-                wakeup(&uart_tx_r);
+                wakeup_(&uart_tx_r);
 
                 REG_W(THR, c);
         }  
@@ -119,7 +119,7 @@ void uart_putc(int c)
 
         while(uart_tx_w == uart_tx_r + UART_TX_BUF_SIZE){
                 /* Buffer is full. Wait for uart_start() to open up space in the buffer. */
-                sleep(&uart_tx_r, &lock);
+                sleep_(&uart_tx_r, &lock);
         }
         uart_tx_buf[uart_tx_w % UART_TX_BUF_SIZE] = c;
         uart_tx_w += 1;

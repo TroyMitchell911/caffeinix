@@ -88,6 +88,7 @@ void kernel_trap(void)
 
 void user_trap_entry(void)
 {
+        int which_dev;
         process_t p = cur_proc();
         uint64 cause = scause_r();
 
@@ -105,9 +106,11 @@ void user_trap_entry(void)
                 intr_on();
                 syscall();
         } else {
-                printf("scause %p\n", cause);
-                printf("sepc=%p stval=%p\n", p->trapframe->epc, stval_r());
-                PANIC("user_trap_entry");
+                if((which_dev = dev_intr(cause)) == 0) {
+                        printf("scause %p\n", cause);
+                        printf("sepc=%p stval=%p\n", p->trapframe->epc, stval_r());
+                        PANIC("user_trap_entry");
+                }
         }
         user_trap_ret();
 }

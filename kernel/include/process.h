@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-25 09:22
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-08
+ * @LastEditTime: 2024-05-13
  * @FilePath: /caffeinix/kernel/include/process.h
  * @Description: 
  * Words are cheap so I do.
@@ -15,6 +15,9 @@
 #include <spinlock.h>
 #include <riscv.h>
 #include <file.h>
+
+/* TODO:Delete this macro */
+#define PROCESS_NO_SCHED                1
 
 typedef struct inode *inode_t;
 
@@ -93,7 +96,10 @@ void proc_freepagedir(pagedir_t pgdir, uint64 sz);
 
 void sleep(void* chan, spinlock_t lk);
 void wakeup(void* chan);
-
+#ifdef PROCESS_NO_SCHED
+void sleep_(void* chan, spinlock_t lk);
+void wakeup_(void* chan);
+#endif
 int either_copyout(int user_dst, uint64 dst, void* src, uint64 len);
 int either_copyin(void *dst, int user_src, uint64 src, uint64 len);
 /* User init for first process */
