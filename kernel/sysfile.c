@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-05-07
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-12
+ * @LastEditTime: 2024-05-13
  * @FilePath: /caffeinix/kernel/sysfile.c
  * @Description: 
  * Words are cheap so I do.
@@ -115,6 +115,10 @@ uint64 sys_dup(void)
         return -1;
 }
 
+uint64 sys_getpid(void)
+{
+        return cur_proc()->pid;
+}
 
 uint64 sys_open(void)
 {

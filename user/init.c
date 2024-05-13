@@ -13,7 +13,7 @@
 
 #define CONSOLE                 1  
 int main(void){
-        int ret, fd, buf2len, i;
+        int ret, fd, buf2len, i, pid;
         char buf1[128];
         char buf2[256];
         buf2[0] = 'F';
@@ -38,7 +38,16 @@ int main(void){
         }
         if(fd != -1)
                 fd = dup(fd);
-        
+
+        /* For pid test */
+        pid = getpid();
+        buf1[0] = 'p';
+        buf1[1] = 'i';
+        buf1[2] = 'd';
+        buf1[3] = ':';
+        buf1[4] = pid + '0';
+        buf1[5] = '\n';
+        write(fd, buf1, 6);
         for(;;) {
                 if(fd != -1) {
                         ret = read(fd, buf1, 128);

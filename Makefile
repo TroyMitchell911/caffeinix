@@ -119,6 +119,7 @@ clean:
 	@rm -f $(shell find -name "*.sym")
 	@rm -f $(shell find -name "*.d")
 	@rm -f output/*
+	@rm -rf .cache/*
 	@make -C ./user/ clean
 
 distclean: clean
