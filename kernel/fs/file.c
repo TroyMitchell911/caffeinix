@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-30 06:23
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-12
+ * @LastEditTime: 2024-05-13
  * @FilePath: /caffeinix/kernel/fs/file.c
  * @Description: This file for file-system operation
  * Words are cheap so I do.
@@ -106,7 +106,7 @@ file_t file_dup(file_t f)
         }
         f->ref ++;
         /* 
-                2024-05-12: Fixed a bug, which is that forgot relese this lock
+                2024-05-12: Fixed a bug, which is that forgot release this lock
                 before return the file descriptor
                 By: GoKo-Son626
         */

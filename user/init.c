@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-05-08
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-12
+ * @LastEditTime: 2024-05-13
  * @FilePath: /caffeinix/user/init.c
  * @Description: 
  * Words are cheap so I do.
@@ -13,8 +13,22 @@
 
 #define CONSOLE                 1  
 int main(void){
-        int ret, fd;
-        char buf[5];
+        int ret, fd, buf2len, i;
+        char buf1[128];
+        char buf2[256];
+        buf2[0] = 'F';
+        buf2[1] = 'r';
+        buf2[2] = 'o';
+        buf2[3] = 'm';
+        buf2[4] = ' ';
+        buf2[5] = 'u';
+        buf2[6] = 's';
+        buf2[7] = 'e';
+        buf2[8] = 'r';
+        buf2[9] = ':';
+        buf2[10] = ' ';
+        buf2[11] = '\0';
+        buf2len = 11;
         fd = open("console", O_RDWR);
         if(fd == -1) {
                 ret = mknod("console", 1, 0);
@@ -22,15 +36,20 @@ int main(void){
                         fd = open("console", O_RDWR);
                 }
         }
-        if(fd != -1) {
+        if(fd != -1)
                 fd = dup(fd);
+        
+        for(;;) {
                 if(fd != -1) {
-                        ret = read(fd, buf, 5);
-                        if(ret == 5) {
-                                ret = write(fd, buf, 5);
+                        ret = read(fd, buf1, 128);
+                        for(i = buf2len; i < ret + buf2len; i++) {
+                                buf2[i] = buf1[i - buf2len];
                         }
-                }
+                        buf2[i] = '\0';
+                        if(ret != 0) {
+                                ret = write(fd, buf2, i);
+                        }
+                }  
         }
-        for(;;);
         return 0;
 }

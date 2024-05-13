@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-26
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-12
+ * @LastEditTime: 2024-05-13
  * @FilePath: /caffeinix/kernel/console.c
  * @Description: 
  * Words are cheap so I do.
@@ -42,10 +42,10 @@ static void console_intr(int c)
                                 /* Echo */
                                 console_putc(c);
                                 console.buf[console.e++ % INPUT_BUF_SIZE] = c;
-
+                                /* We can wakeup the blocked process by read if the user input '\n' */
                                 if(c == '\n' || console.e - console.r == INPUT_BUF_SIZE) {
                                         console.w = console.e;
-                                        /* wakeup something */
+                                        wakeup_(&console.r);
                                 }
                         }
                         break;
@@ -73,9 +73,15 @@ int console_read(uint64 dst, int n)
 
         target = n;
 
-        while(n > 0) {
-                /* TODO: Preventing overflow */
+        spinlock_acquire(&console.lock);
 
+        while(n > 0) {
+                /* Wait until the interrupt handler put some data into console */
+                while(console.r == console.w) {
+                        /* TODO: If this process is killed */
+
+                        sleep_(&console.r, &console.lock);
+                }
 
                 c = console.buf[console.r++ % INPUT_BUF_SIZE];
 
@@ -86,10 +92,16 @@ int console_read(uint64 dst, int n)
                         break;
                 }
 
-                /* TODO: '\n' */
                 n --;
                 dst ++;
+
+                if(c == '\n') {
+                        break;
+                }
         }
+
+        spinlock_release(&console.lock);
+
         return target - n;
 }
 
@@ -116,6 +128,4 @@ void console_init(void)
         /* Set the operating function */
         dev[CONSOLE].write = console_write;
         dev[CONSOLE].read = console_read;
-
-        memmove(console.buf, "test\n", 5);
 }

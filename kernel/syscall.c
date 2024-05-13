@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-05-07
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-12
+ * @LastEditTime: 2024-05-13
  * @FilePath: /caffeinix/kernel/syscall.c
  * @Description: 
  * Words are cheap so I do.
@@ -92,7 +92,7 @@ void syscall(void)
 
         syscall_num = p->trapframe->a7;
         if(syscall_num > 0 && syscall_num < NELEM(syscalls) && syscalls[syscall_num]) {
-                printf("syscall_num: %d\n", syscall_num);
+                // printf("syscall_num: %d\n", syscall_num);
                 p->trapframe->a0 = syscalls[syscall_num]();
         } else {
                 p->trapframe->a0 = -1;

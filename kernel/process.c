@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-30 06:23
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-08
+ * @LastEditTime: 2024-05-13
  * @FilePath: /caffeinix/kernel/process.c
  * @Description: 
  * Words are cheap so I do.
@@ -78,7 +78,7 @@ static int pid_alloc(void)
         spinlock_release(&pid_lock);
         return pid;
 }
-#if 0
+#ifndef PROCESS_NO_SCHED
 void sleep(void* chan, spinlock_t lk)
 {
         process_t p = cur_proc();
@@ -112,9 +112,23 @@ void wakeup(void* chan)
 }
 #else
 /* TODO */
+static volatile uint8 test_flag = 0;
+void sleep_(void* chan, spinlock_t lk)
+{
+        test_flag = 1;
+        spinlock_release(lk);
+        intr_on();
+        while(test_flag);
+        spinlock_acquire(lk);
+}
+
+void wakeup_(void* chan)
+{
+        test_flag = 0;
+}
 void sleep(void* chan, spinlock_t lk)
 {
-
+ 
 }
 
 void wakeup(void* chan)
