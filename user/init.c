@@ -31,6 +31,7 @@ int main(void){
                         }
                 }
         }
+        getpid();
         for(;;);
         return 0;
 }

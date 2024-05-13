@@ -114,7 +114,17 @@ uint64 sys_dup(void)
         }
         return -1;
 }
+/*
+The system call function of gitpid has been completed .
+(tested: In init.c)
+The code is as follows
 
+GoKo-Son626
+*/
+uint64 sys_getpid(void)
+{
+        return cur_proc()->pid;
+}
 
 uint64 sys_open(void)
 {
