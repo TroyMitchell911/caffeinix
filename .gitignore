@@ -1,8 +1,10 @@
-./output
+/output
 **/*.o
 **/*.asm
 **/*.sym
 **/*.o.d
 .gdbinit
-./output/kernel
+/output/kernel
+/.cache
+compile_commands.json
 
