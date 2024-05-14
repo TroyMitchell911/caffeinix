@@ -1,6 +1,6 @@
 
 
-ULIB = usys.o
+ULIB = usys.o ulib.o
 
 usys.S : usys.pl
 	perl usys.pl > usys.S
