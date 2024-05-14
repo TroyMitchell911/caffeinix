@@ -13,10 +13,8 @@
 
 #define CONSOLE                 1  
 int main(void){
-        int ret, fd, buf2len, i, pid;
-        char buf1[128] = "pid: ";
-        char buf2[256] = "From user: ";
-        buf2len = strlen(buf2);
+        int ret, fd, pid;
+        char buf[128];
         
         fd = open("console", O_RDWR);
         if(fd == -1) {
@@ -30,19 +28,13 @@ int main(void){
 
         /* For pid test */
         pid = getpid();
-        i = strlen(buf1);
-        buf1[i] = pid + '0';
-        strcpy(&buf1[i+1], "\n");
-        write(fd, buf1, strlen(buf1));
+        printf("Get pid: %d\n", pid);
         for(;;) {
                 if(fd != -1) {
-                        ret = read(fd, buf1, 128);
-                        for(i = buf2len; i < ret + buf2len; i++) {
-                                buf2[i] = buf1[i - buf2len];
-                        }
-                        buf2[i] = '\0';
+                        ret = read(fd, buf, 128);
+                        buf[ret] = '\0';
                         if(ret != 0) {
-                                ret = write(fd, buf2, i);
+                                fprintf(fd, "From user: %s", buf);
                         }
                 }  
         }
