@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-30 06:23
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-09
+ * @LastEditTime: 2024-05-14
  * @FilePath: /caffeinix/arch/riscv/vm.c
  * @Description: This file about all virtual address
  * Words are cheap so I do.
@@ -245,6 +245,36 @@ void vm_clear(pagedir_t pgdir, uint64 va)
         } else {
                 *pte &= ~PTE_U;
         }
+}
+
+int vm_copy(pagedir_t old, pagedir_t new, uint64 sz)
+{
+        int addr;
+        pte_t *pte;
+        uint64 mem, pa;
+
+        sz = PGROUNDUP(sz);
+
+        for(addr = 0; addr < sz; addr += PGSIZE) {
+                pte = PTE(old, addr, 0);
+                if(!pte)
+                        PANIC("vm_copy pte");
+                if(((*pte) & PTE_V) == 0) 
+                        PANIC("vm_copy PTE_V");
+                pa = PTE2PA(*pte);
+                mem = (uint64)palloc();
+                if(!mem)
+                        goto fail;
+                memmove((char*)mem, (char*)pa, PGSIZE);
+                if(vm_map(new, addr, mem, PGSIZE, *pte & 0x3ff) != 0) {
+                        pfree((void*)mem);
+                        goto fail;
+                }
+        }
+        return 0;
+fail:
+        vm_unmap(new, 0, addr, 1);
+        return -1;
 }
 
 int copyout(pagedir_t pgdir, uint64 dstva, char* src, uint64 len)

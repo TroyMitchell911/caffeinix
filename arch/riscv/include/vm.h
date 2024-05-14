@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-23
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-08
+ * @LastEditTime: 2024-05-14
  * @FilePath: /caffeinix/arch/riscv/include/vm.h
  * @Description: 
  * Words are cheap so I do.
@@ -24,6 +24,7 @@ uint64 va2pa(pagedir_t pgdir, uint64 va);
 uint64 vm_alloc(pagedir_t pgdir, uint64 oldsz, uint64 newsz, int eperm);
 uint64 vm_dealloc(pagedir_t pgdir, uint64 oldsz, uint64 newsz);
 void vm_clear(pagedir_t pgdir, uint64 va);
+int vm_copy(pagedir_t old, pagedir_t new, uint64 sz);
 /* For page-table */
 pagedir_t pagedir_alloc(void);
 void pagedir_free(pagedir_t pgdir);

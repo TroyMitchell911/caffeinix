@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-30 06:23
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-13
+ * @LastEditTime: 2024-05-14
  * @FilePath: /caffeinix/kernel/process.c
  * @Description: 
  * Words are cheap so I do.
@@ -260,6 +260,20 @@ void userinit(void)
 
         /* The lock will be held in process_alloc */
         spinlock_release(&p->lock);
+
+        /* Test vm_copy */
+        process_t pp = process_alloc();
+        if(pp) {
+                pp->name = "vm_copy";
+                spinlock_acquire(&p->lock);
+                *pp->trapframe = *p->trapframe;
+                pfree(p->trapframe);
+                p->trapframe = pp->trapframe;
+                vm_copy(p->pagetable, pp->pagetable, p->sz);
+                p->pagetable = pp->pagetable;
+                spinlock_release(&p->lock);
+                spinlock_release(&pp->lock);
+        }
 }
 
 int either_copyout(int user_dst, uint64 dst, void* src, uint64 len)
