@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-25 09:22
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-14
+ * @LastEditTime: 2024-05-13
  * @FilePath: /caffeinix/kernel/include/process.h
  * @Description: 
  * Words are cheap so I do.
@@ -86,14 +86,13 @@ typedef struct process{
         struct context context;
         inode_t cwd;
         file_t ofile[NOFILE];
-        void *sleep_chan;
-        struct process *parent;
+        void* sleep_chan;
 }*process_t;
 
 void process_map_kernel_stack(pagedir_t pgdir);
 void process_init(void);
-pagedir_t process_pagedir(process_t p);
-void process_freepagedir(pagedir_t pgdir, uint64 sz);
+pagedir_t proc_pagedir(process_t p);
+void proc_freepagedir(pagedir_t pgdir, uint64 sz);
 
 void sleep(void* chan, spinlock_t lk);
 void wakeup(void* chan);

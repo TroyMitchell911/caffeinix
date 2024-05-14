@@ -152,7 +152,7 @@ void pagedir_free(pagedir_t pgdir)
         /* Any PTE occupies 8 bytes */
         for(i = 0; i < PGSIZE / 8; i ++) {
                 pte = pgdir[i];
-                if((pte & PTE_V) && ((pte & (PTE_R|PTE_W|PTE_X)) == 0)) {
+                if(((pte & PTE_V) && (pte & (PTE_R | PTE_W | PTE_X))) == 0) {
                         sub_pgdir_pa = PTE2PA(pte);
                         pagedir_free((pagedir_t)sub_pgdir_pa);
                         pgdir[i] = 0;
@@ -161,6 +161,7 @@ void pagedir_free(pagedir_t pgdir)
                                 We can't accept a PTE has the flag 'V'.
                                 To ensure this, we should cancel V in the unmap function.
                         */
+                        printf("%d\n", pte);
                         PANIC("pagedir_free");
                 }
         }

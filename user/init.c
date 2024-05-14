@@ -29,8 +29,6 @@ int main(void){
         /* For pid test */
         pid = getpid();
         printf("Get pid: %d\n", pid);
-        ret = fork();
-        printf("Result from fork: %d\n", ret);
         for(;;) {
                 if(fd != -1) {
                         ret = read(fd, buf, 128);

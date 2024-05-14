@@ -21,11 +21,11 @@
 /* From trampoline.S */
 extern char trampoline[];
 
-static struct spinlock pid_lock, wait_lock;
+static struct spinlock pid_lock;
 struct process proc[NPROC];
 static int next_pid = 1;
 
-pagedir_t process_pagedir(process_t p)
+pagedir_t proc_pagedir(process_t p)
 {
         int ret;
         pagedir_t pgdir;
@@ -47,12 +47,12 @@ pagedir_t process_pagedir(process_t p)
         return pgdir;
 }
 
-void process_freepagedir(pagedir_t pgdir, uint64 sz)
+void proc_freepagedir(pagedir_t pgdir, uint64 sz)
 {
         vm_unmap(pgdir, TRAPFRAME, 1, 0);
         vm_unmap(pgdir, TRAMPOLINE, 1, 0);
         vm_unmap(pgdir, 0, PGROUNDUP(sz) / PGSIZE, 1);
-        pagedir_free(pgdir);
+        // pagedir_free(pgdir);
 }
 
 /* This function is the first when a process first start */
@@ -137,7 +137,7 @@ void wakeup(void* chan)
 }
 #endif
 /* Alloc a process */
-static process_t process_alloc(void)
+process_t process_alloc(void)
 {
         process_t process;
         for(process = proc; process != &proc[NPROC - 1]; process++) {
@@ -154,7 +154,7 @@ found:
                 goto r1;
         }
         /* Alloc memory for page-table */
-        process->pagetable = process_pagedir(process);
+        process->pagetable = proc_pagedir(process);
         if(!process->pagetable) {
                 goto r2;
         }
@@ -176,22 +176,6 @@ r2:
 r1:
         spinlock_release(&process->lock);
         return 0;
-}
-
-static void process_free(process_t p)
-{
-        if(p->pagetable) {
-                process_freepagedir(p->pagetable, p->sz);
-        }
-        if(p->trapframe)
-                pfree(p->trapframe);
-        p->trapframe = 0;
-        p->pid = 0;
-        p->sz = 0;
-        p->state = UNUSED;
-        p->parent = 0;
-        p->sleep_chan = 0;
-        p->name = 0;
 }
 
 /* Be called by vm_create */
@@ -216,7 +200,6 @@ void process_init(void)
         process_t p = proc;
         /* Init the spinlock */
         spinlock_init(&pid_lock, "pid_lock");
-        spinlock_init(&wait_lock, "wait_lock");
         /* Set the state and starting kernel stack address of each process */
         for(; p <= &proc[NCPU - 1]; p++) {
                 spinlock_init(&p->lock, "proc");
@@ -277,6 +260,20 @@ void userinit(void)
 
         /* The lock will be held in process_alloc */
         spinlock_release(&p->lock);
+
+        /* Test vm_copy */
+        process_t pp = process_alloc();
+        if(pp) {
+                pp->name = "vm_copy";
+                spinlock_acquire(&p->lock);
+                *pp->trapframe = *p->trapframe;
+                pfree(p->trapframe);
+                p->trapframe = pp->trapframe;
+                vm_copy(p->pagetable, pp->pagetable, p->sz);
+                p->pagetable = pp->pagetable;
+                spinlock_release(&p->lock);
+                spinlock_release(&pp->lock);
+        }
 }
 
 int either_copyout(int user_dst, uint64 dst, void* src, uint64 len)
@@ -301,48 +298,4 @@ int either_copyin(void *dst, int user_src, uint64 src, uint64 len)
                 memmove(dst, (char*)src, len);
                 return 0;
         }
-}
-
-/* TODO: test */
-int fork(void)
-{
-        int pid, i;
-        process_t oldp, newp;
-
-        oldp = cur_proc();
-        newp = process_alloc();
-
-        if(!newp)
-                return -1;
-        if(vm_copy(oldp->pagetable, newp->pagetable, oldp->sz) != 0) {
-                process_free(newp);
-                spinlock_release(&newp->lock);
-                return -1;
-        }
-
-        newp->sz = oldp->sz;
-        *newp->trapframe = *oldp->trapframe;
-
-        pid = newp->pid;
-
-        for(i = 0; i < NOFILE; i++) {
-                if(oldp->ofile[i] == 0)
-                        break;
-                newp->ofile[i] = file_dup(oldp->ofile[i]);
-        }
-        newp->cwd = idup(oldp->cwd);
-
-        spinlock_release(&newp->lock);
-
-        spinlock_acquire(&wait_lock);
-        newp->parent = oldp;
-        spinlock_release(&wait_lock);
-
-        spinlock_acquire(&newp->lock);
-        newp->state = RUNNABLE;
-        spinlock_release(&newp->lock);
-
-        /* Return for parent process */
-        return pid;
-
 }
