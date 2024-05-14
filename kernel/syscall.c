@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-05-07
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-13
+ * @LastEditTime: 2024-05-14
  * @FilePath: /caffeinix/kernel/syscall.c
  * @Description: 
  * Words are cheap so I do.
@@ -73,6 +73,7 @@ extern uint64 sys_mknod(void);
 extern uint64 sys_write(void);
 extern uint64 sys_dup(void);
 extern uint64 sys_getpid(void);
+extern uint64 sys_fork(void);
 
 typedef uint64 (*syscall_t)(void);
 
@@ -85,6 +86,7 @@ syscall_t syscalls[] = {
         [SYS_write] = sys_write,
         [SYS_dup] = sys_dup,
         [SYS_getpid] = sys_getpid,
+        [SYS_fork] = sys_fork,
 };      
 
 void syscall(void)

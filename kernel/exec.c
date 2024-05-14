@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-05-07
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-10
+ * @LastEditTime: 2024-05-14
  * @FilePath: /caffeinix/kernel/exec.c
  * @Description: 
  * Words are cheap so I do.
@@ -75,7 +75,7 @@ int exec(char* path, char** argv)
                 Create a page-table that has trapframe and trampoline.
                 The trampoline follow previous process instead of new.
         */
-        pgdir = proc_pagedir(p);
+        pgdir = process_pagedir(p);
         if(!pgdir)
                 goto fail;
         printf("elf.phoff = %d; elf.phnum = %d\n", elf.phoff, elf.phnum);
@@ -155,14 +155,13 @@ int exec(char* path, char** argv)
         p->trapframe->a1 = sp;
         p->trapframe->sp = sp;
         p->trapframe->epc = elf.entry;
-        printf("%x\n", elf.entry);
-        proc_freepagedir(oldpgdir, oldsz);
+        process_freepagedir(oldpgdir, oldsz);
         
         /* Rid of the last element (ustack[argc ++] = 0;) */
         return --argc;
 fail:
         if(pgdir) {
-                proc_freepagedir(pgdir, sz);
+                process_freepagedir(pgdir, sz);
         }
         if(ip) {
                 iunlockput(ip);

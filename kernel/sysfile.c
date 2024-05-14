@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-05-07
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-13
+ * @LastEditTime: 2024-05-14
  * @FilePath: /caffeinix/kernel/sysfile.c
  * @Description: 
  * Words are cheap so I do.
@@ -299,4 +299,10 @@ fail:
         for(i = 0; i < NELEM(argv) && argv[i] != 0; i++)
                 pfree(argv[i]);
         return -1;
+}
+
+extern int fork(void);
+uint64 sys_fork(void)
+{
+        return fork();
 }
