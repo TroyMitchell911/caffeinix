@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-30 06:23
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-11
+ * @LastEditTime: 2024-05-15
  * @FilePath: /caffeinix/kernel/fs/inode.c
  * @Description: This file for inode layer of file-system
  * Words are cheap so I do.
@@ -85,8 +85,9 @@ uint32 imap(inode_t ip, uint32 vblock)
                 if(pblock == 0) {
                         /* Alloc a block */
                         pblock = balloc(ip->dev);
+                        if(pblock == 0)
+                                return 0;
                         ip->d.addrs[vblock] = pblock;
-                        return 0;
                 }
                 /* return the physical block number */
                 return pblock;
@@ -95,6 +96,8 @@ uint32 imap(inode_t ip, uint32 vblock)
         if(vblock < NINDIRECT) {
                 if(ip->d.addrs[NDIRECT] == 0) {
                         ip->d.addrs[NDIRECT] = balloc(ip->dev);
+                        if(ip->d.addrs[NDIRECT] == 0)
+                                return 0;
                 }
                 b = bread(ip->dev, ip->d.addrs[NDIRECT]);
                 indirect = (uint32*)b->buf;
@@ -103,6 +106,8 @@ uint32 imap(inode_t ip, uint32 vblock)
                 if(pblock == 0) {
                         /* Alloc a block */
                         pblock = balloc(ip->dev);
+                        if(pblock == 0)
+                                return 0;
                         indirect[vblock] = pblock;
                         log_write(b);
                 }

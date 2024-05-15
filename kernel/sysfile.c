@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-05-07
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-14
+ * @LastEditTime: 2024-05-15
  * @FilePath: /caffeinix/kernel/sysfile.c
  * @Description: 
  * Words are cheap so I do.
@@ -306,21 +306,28 @@ fail:
 Added a system call function sys_mkdir
 test in user/init.c, but it's not succeed
 
-GoKo-Son626
+2024-05-15 create by GoKo-Son626 
+2024-05-15 fix by TroyMitchell
 */
 uint64 sys_mkdir(void)
 {
+        int ret;
         char path[MAXPATH];
         struct inode *ip;
 
         log_begin();
-        if (argstr(0, path, MAXPATH) < 0 || (ip = create(path, T_DIR, 0, 0)) == 0) {
-                log_end();
-                return -1;
-        }
+        ret = argstr(0, path, MAXPATH);
+        if(ret < 0) 
+                goto fail;
+        ip = create(path, T_DIR, 0, 0);
+        if(ip == 0)
+                goto fail;
         iunlockput(ip);
         log_end();
         return 0;
+fail:
+        log_end();
+        return -1;
 }
 
 extern int fork(void);
