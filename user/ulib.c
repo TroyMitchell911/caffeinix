@@ -57,6 +57,14 @@ void* memmove(void *dst, const void *src, uint16 n)
 
 char* strchr(const char* s, char c)
 {
+   while(*s !='\0')
+  {    
+       if(*s==c )
+      {
+         return(char*)s;       
+	  }
+	   s++;
+  }
         return 0;
 }
 
@@ -87,7 +95,7 @@ size_t strlen(const char* s)
 {
         char* p = (char*)s;
         while((*p++) != '\0');
-        return (p - s - 1);
+        return (p - s - 1);//这里是不是不需要再-1了，前面指针P++是先执行后判断
 }
 
 /* Clear n bytes of memory pointing to dst as c */
