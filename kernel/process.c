@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-30 06:23
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-14
+ * @LastEditTime: 2024-05-15
  * @FilePath: /caffeinix/kernel/process.c
  * @Description: 
  * Words are cheap so I do.
@@ -191,7 +191,7 @@ static void process_free(process_t p)
         p->state = UNUSED;
         p->parent = 0;
         p->sleep_chan = 0;
-        p->name = 0;
+        p->name[0] = 0;
 }
 
 /* Be called by vm_create */
@@ -271,7 +271,7 @@ void userinit(void)
         /* Record how many memory we used */
         p->sz = PGSIZE;
 
-        p->name = "initcode";
+        safe_strncpy(p->name, "initcode", strlen("initcode"));
         /* Allow schedule */
         p->state = RUNNABLE;
 

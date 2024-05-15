@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-25 09:22
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-14
+ * @LastEditTime: 2024-05-15
  * @FilePath: /caffeinix/kernel/include/process.h
  * @Description: 
  * Words are cheap so I do.
@@ -15,6 +15,8 @@
 #include <spinlock.h>
 #include <riscv.h>
 #include <file.h>
+
+#define MAXNAME                         16
 
 /* TODO:Delete this macro */
 #define PROCESS_NO_SCHED                1
@@ -75,7 +77,7 @@ typedef enum process_state{
 }process_state_t;
 
 typedef struct process{
-        const char* name;
+        char name[MAXNAME];
         int pid;
         struct spinlock lock;  
         process_state_t state;
