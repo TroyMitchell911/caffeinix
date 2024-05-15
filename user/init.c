@@ -13,8 +13,13 @@
 
 #define CONSOLE                 1  
 int main(void){
-        int ret, fd, pid;
+        int ret, fd;
         char buf[128];
+        buf[0] = 'f';
+        buf[1] = 'i';
+        buf[2] = 'l';
+        buf[0] = 'e';
+        buf[4] = '\0';
         
         fd = open("console", O_RDWR);
         if(fd == -1) {
@@ -26,16 +31,14 @@ int main(void){
         if(fd != -1)
                 fd = dup(fd);
 
-        /* For pid test */
-        pid = getpid();
-        printf("Get pid: %d\n", pid);
-        ret = fork();
-        printf("Result from fork: %d\n", ret);
-        if(ret == 0) {
-                printf("Parent\n");
-        } else {
-                printf("Child\n");
+        /*For mkdir test*/
+        const char *directory_name = "dir_name";
+        if (mkdir(directory_name) == -1) {
+                printf("mkdir error\n");
+        }else {
+                printf("mkdir created successfully.\n");
         }
+
         for(;;) {
                 if(fd != -1) {
                         ret = read(fd, buf, 128);

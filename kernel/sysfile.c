@@ -8,6 +8,8 @@
  * Words are cheap so I do.
  * Copyright (c) 2024 by TroyMitchell, All Rights Reserved. 
  */
+#include "include/inode.h"
+#include "log.h"
 #include "typedefs.h"
 #include <sysfile.h>
 #include <inode.h>
@@ -299,6 +301,26 @@ fail:
         for(i = 0; i < NELEM(argv) && argv[i] != 0; i++)
                 pfree(argv[i]);
         return -1;
+}
+/*
+Added a system call function sys_mkdir
+test in user/init.c, but it's not succeed
+
+GoKo-Son626
+*/
+uint64 sys_mkdir(void)
+{
+        char path[MAXPATH];
+        struct inode *ip;
+
+        log_begin();
+        if (argstr(0, path, MAXPATH) < 0 || (ip = create(path, T_DIR, 0, 0)) == 0) {
+                log_end();
+                return -1;
+        }
+        iunlockput(ip);
+        log_end();
+        return 0;
 }
 
 extern int fork(void);
