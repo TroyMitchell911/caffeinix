@@ -95,7 +95,7 @@ size_t strlen(const char* s)
 {
         char* p = (char*)s;
         while((*p++) != '\0');
-        return (p - s - 1);//这里是不是不需要再-1了，前面指针P++是先执行后判断
+        return (p - s - 1);
 }
 
 /* Clear n bytes of memory pointing to dst as c */
