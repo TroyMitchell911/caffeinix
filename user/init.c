@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-05-08
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-14
+ * @LastEditTime: 2024-05-15
  * @FilePath: /caffeinix/user/init.c
  * @Description: 
  * Words are cheap so I do.
@@ -31,6 +31,11 @@ int main(void){
         printf("Get pid: %d\n", pid);
         ret = fork();
         printf("Result from fork: %d\n", ret);
+        if(ret == 0) {
+                printf("Parent\n");
+        } else {
+                printf("Child\n");
+        }
         for(;;) {
                 if(fd != -1) {
                         ret = read(fd, buf, 128);
@@ -40,5 +45,6 @@ int main(void){
                         }
                 }  
         }
+
         return 0;
 }

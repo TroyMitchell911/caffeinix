@@ -97,6 +97,7 @@ void yield(void)
         
 }
 #endif
+#include <printf.h>
 extern struct process proc[NPROC];
 void scheduler(void)
 {
@@ -114,6 +115,7 @@ void scheduler(void)
                         if(p->state == RUNNABLE) {
                                 p->state = RUNNING;
                                 cpu->proc = p;
+                                // printf("Now proc:%s\n", p->name);
                                 switchto(&cpu->context, &p->context);
                                 cpu->proc = 0;
                         }
@@ -130,7 +132,7 @@ void sched(void)
         uint8 before_lock;
 
         if(!spinlock_holding(&p->lock)) {
-                PANIC("holding");
+                PANIC("sched holding");
         }
 
         if(intr_status()) {
@@ -152,4 +154,13 @@ void sched(void)
         switchto(&p->context, &cpu->context);
         /* Restore the value of lock */
         cpu->before_lock = before_lock;
+}
+
+void yield(void)
+{
+        process_t p = cur_proc();
+        spinlock_acquire(&p->lock);
+        p->state = RUNNABLE;
+        sched();
+        spinlock_release(&p->lock);
 }

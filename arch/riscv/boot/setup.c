@@ -1,3 +1,13 @@
+/*
+ * @Author: TroyMitchell
+ * @Date: 2024-04-26
+ * @LastEditors: TroyMitchell
+ * @LastEditTime: 2024-05-15
+ * @FilePath: /caffeinix/arch/riscv/boot/setup.c
+ * @Description: 
+ * Words are cheap so I do.
+ * Copyright (c) 2024 by TroyMitchell, All Rights Reserved. 
+ */
 #include <kernel_config.h>
 #include <riscv.h>
 
@@ -40,7 +50,7 @@ void setup(void)
         /* Write hartid into the register 'tp' */
         tp_w(hartid);
 
-        // timer_init(hartid);
+        timer_init(hartid);
 
         /* Enter 'Supervisor mode' and 'main'  */
         asm volatile("mret");

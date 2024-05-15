@@ -19,7 +19,7 @@
 #define MAXNAME                         16
 
 /* TODO:Delete this macro */
-#define PROCESS_NO_SCHED                1
+// #define PROCESS_NO_SCHED                1
 
 typedef struct inode *inode_t;
 
@@ -99,10 +99,8 @@ void process_freepagedir(pagedir_t pgdir, uint64 sz);
 
 void sleep(void* chan, spinlock_t lk);
 void wakeup(void* chan);
-#ifdef PROCESS_NO_SCHED
 void sleep_(void* chan, spinlock_t lk);
 void wakeup_(void* chan);
-#endif
 int either_copyout(int user_dst, uint64 dst, void* src, uint64 len);
 int either_copyin(void *dst, int user_src, uint64 src, uint64 len);
 /* User init for first process */

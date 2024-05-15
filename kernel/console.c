@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-26
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-13
+ * @LastEditTime: 2024-05-15
  * @FilePath: /caffeinix/kernel/console.c
  * @Description: 
  * Words are cheap so I do.
@@ -79,7 +79,6 @@ int console_read(uint64 dst, int n)
                 /* Wait until the interrupt handler put some data into console */
                 while(console.r == console.w) {
                         /* TODO: If this process is killed */
-
                         sleep_(&console.r, &console.lock);
                 }
 

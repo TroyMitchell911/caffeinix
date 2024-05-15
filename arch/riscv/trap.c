@@ -24,7 +24,7 @@ static void tick_intr(void)
 
         tick_count ++;
         if(tick_count % 10 == 0) {
-                printf("timer interrupt\n");
+                // printf("timer interrupt\n");
         }
         /* TODO: We should wakeup here */
         // wakeup
@@ -82,6 +82,9 @@ void kernel_trap(void)
                 PANIC("kerneltrap");
         }
 
+        if(which_dev == 2 && cur_proc() != 0 && cur_proc()->state == RUNNING)
+                yield();
+
         sepc_w(sepc);
         sstatus_w(sstatus);
 }
@@ -111,7 +114,11 @@ void user_trap_entry(void)
                         printf("sepc=%p stval=%p\n", p->trapframe->epc, stval_r());
                         PANIC("user_trap_entry");
                 }
+
+                if(which_dev == 2)
+                        yield();
         }
+
         user_trap_ret();
 }
 
