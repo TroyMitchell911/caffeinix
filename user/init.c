@@ -10,6 +10,9 @@
  */
 #include "user.h"
 #include "../kernel/include/myfcntl.h"
+#include "stat.h"
+#include "../kernel/include/syscall.h"
+#include <stdio.h>
 
 #define CONSOLE                 1  
 int main(void){
@@ -37,6 +40,14 @@ int main(void){
                 printf("mkdir error\n");
         }else {
                 printf("mkdir created successfully.\n");
+        }
+
+        /*for fstat test*/
+        struct stat st;
+        if (fstat(fd, &st) == -1) {  
+                printf("fstat error");
+        }else {
+        printf("fstat successfully");
         }
 
         for(;;) {

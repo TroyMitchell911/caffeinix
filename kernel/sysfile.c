@@ -329,6 +329,27 @@ fail:
         log_end();
         return -1;
 }
+/*
+Added a syscall function file_stat()
+[testing]
+
+2024-05-15 create by GoKo-Son626 
+*/
+uint64 sys_fstat(void)
+{
+        file_t f;
+        int fd;
+        uint64 st;
+
+        argint(0, &fd);
+        argaddr(1, &st);
+
+        f = cur_proc()->ofile[fd];
+        if (f) {
+        return file_stat(f, st);
+        }
+        return -1;
+}
 
 extern int fork(void);
 uint64 sys_fork(void)
