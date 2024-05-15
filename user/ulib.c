@@ -57,15 +57,15 @@ void* memmove(void *dst, const void *src, uint16 n)
 
 char* strchr(const char* s, char c)
 {
- 		while(*s !='\0')
-		{    
-				if(*s==c )
-				{
-				return(char*)s;      
-				}
-				s++;
+ 	while(*s !='\0')
+	{    
+		if(*s==c )
+		{
+		return(char*)s;      
 		}
-        return 0;
+		s++;
+	}
+	return 0;
 }
 
 int strcmp(const char *p, const char *q)
@@ -113,27 +113,27 @@ void* memset(void* dst, char c, uint32 n)
 
 int atoi(const char *s)
 {
-		int n;
-		n = 0;
-		while('0' <= *s && *s <= '9'){
-				n = n*10 + *s - '0';
-				s++；
-		}
-		return n;
+	int n;
+	n = 0;
+	while('0' <= *s && *s <= '9'){
+		n = n*10 + *s - '0';
+		s++；
+	}
+	return n;
 
 }
 
 int memcmp(const void *s1, const void *s2, unsigned int n)
 {
-		const char *p1 = s1, *p2 = s2;
-		while (n-- > 0) {
-				if (*p1 != *p2) {
-				return *p1 - *p2;
-				}
-				p1++;
- 				p2++;
+	const char *p1 = s1, *p2 = s2;
+	while (n-- > 0) {
+		if (*p1 != *p2) {
+		return *p1 - *p2;
 		}
-        return 0;
+		p1++;
+ 		p2++;
+	}
+ 	return 0;
 }
 
 void* memcpy(void* dst, const void* src, uint16 n)
