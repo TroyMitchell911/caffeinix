@@ -101,6 +101,7 @@ void yield(void)
 extern struct process proc[NPROC];
 void scheduler(void)
 {
+        int i;
         volatile cpu_t cpu = cur_cpu();
         process_t p;
 
@@ -113,11 +114,21 @@ void scheduler(void)
                 for(p = proc; p != &proc[NPROC - 1]; p++) {
                         spinlock_acquire(&p->lock);
                         if(p->state == RUNNABLE) {
-                                p->state = RUNNING;
-                                cpu->proc = p;
-                                // printf("Now proc:%s\n", p->name);
-                                switchto(&cpu->context, &p->context);
-                                cpu->proc = 0;
+                                for(i = 0; i < MAXTHREAD; i++) {
+                                        spinlock_acquire(&p->thread[i].lock);
+                                        if(p->thread[i].state == READY) {
+                                                p->state = RUNNING;
+                                                p->cur_thread = &p->thread[i];
+                                                p->cur_thread->state = ACTIVE;
+                                                p->tinfo->addr = TRAPFRAME(i);
+                                                cpu->proc = p;
+                                                // printf("Now proc:%s\n", p->name);
+                                                switchto(&cpu->context, &p->context);
+                                                cpu->proc = 0;
+                                        }
+                                        spinlock_release(&p->thread[i].lock);
+                                }
+                               
                         }
                         spinlock_release(&p->lock);
                 }
@@ -139,7 +150,8 @@ void sched(void)
                 PANIC("sched intr open");
         }
 
-        if(cpu->lock_nest_depth != 1) {
+        if(cpu->lock_nest_depth != 2) {
+                printf("%d->", cpu->lock_nest_depth);
                 PANIC("sched lock_nest_depth");
         }
 
@@ -161,6 +173,9 @@ void yield(void)
         process_t p = cur_proc();
         spinlock_acquire(&p->lock);
         p->state = RUNNABLE;
+        spinlock_acquire(&p->cur_thread->lock);
+        p->cur_thread->state = READY;
         sched();
+        spinlock_release(&p->cur_thread->lock);
         spinlock_release(&p->lock);
 }

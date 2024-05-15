@@ -38,10 +38,17 @@ pagedir_t process_pagedir(process_t p)
                 return 0;
         }
         /* Map address of under trampoline to trapframe */
-        ret = vm_map(pgdir, TRAPFRAME, (uint64)p->trapframe, PGSIZE, PTE_W | PTE_R);
+        ret = vm_map(pgdir, TRAPFRAME_INFO, (uint64)p->tinfo, PGSIZE, PTE_W | PTE_R);
         if(ret){
                 /* We don't need free the address that PTE points because it is a code seg */
                 vm_unmap(pgdir, TRAMPOLINE, 1, 0);
+                pagedir_free(pgdir);
+        }
+        ret = vm_map(pgdir, TRAPFRAME(0), (uint64)p->cur_thread->trapframe, PGSIZE, PTE_W | PTE_R);
+        if(ret){
+                /* We don't need free the address that PTE points because it is a code seg */
+                vm_unmap(pgdir, TRAMPOLINE, 1, 0);
+                vm_unmap(pgdir, TRAPFRAME_INFO, 1, 1);
                 pagedir_free(pgdir);
         }
         return pgdir;
@@ -49,7 +56,13 @@ pagedir_t process_pagedir(process_t p)
 
 void process_freepagedir(pagedir_t pgdir, uint64 sz)
 {
-        vm_unmap(pgdir, TRAPFRAME, 1, 0);
+        trapframe_info_t tinfo;
+        tinfo = cur_proc()->tinfo;
+        for(;tinfo->nums > 1; tinfo->nums --) {
+                vm_unmap(pgdir, TRAPFRAME(tinfo->nums - 1), 1, 1);
+        }
+        vm_unmap(pgdir, TRAPFRAME(0), 1, 0);
+        vm_unmap(pgdir, TRAPFRAME_INFO, 1, 0);
         vm_unmap(pgdir, TRAMPOLINE, 1, 0);
         vm_unmap(pgdir, 0, PGROUNDUP(sz) / PGSIZE, 1);
         pagedir_free(pgdir);
@@ -61,6 +74,7 @@ static void proc_first_start(void)
         static uint8 first = 0;
         /* The function scheduler will acquire the lock */
         spinlock_release(&cur_proc()->lock);
+        spinlock_release(&cur_proc()->cur_thread->lock);
         if(!first) {
                 first = 1;
                 fs_init(1);
@@ -84,16 +98,19 @@ void sleep(void* chan, spinlock_t lk)
         process_t p = cur_proc();
 
         spinlock_acquire(&p->lock);
+        spinlock_acquire(&p->cur_thread->lock);
         spinlock_release(lk);
 
         p->sleep_chan = chan;
         p->state = SLEEPING;
+        p->cur_thread->state = READY;
 
         sched();
 
         p->sleep_chan = 0;
 
         spinlock_release(&p->lock);
+        spinlock_release(&p->cur_thread->lock);
         spinlock_acquire(lk);
 }
 
@@ -147,53 +164,77 @@ void wakeup(void* chan)
 /* Alloc a process */
 static process_t process_alloc(void)
 {
-        process_t process;
-        for(process = proc; process != &proc[NPROC - 1]; process++) {
-                spinlock_acquire(&process->lock);
-                if(process->state == UNUSED) {
+        process_t p;
+        thread_t t;
+        for(p = proc; p != &proc[NPROC - 1]; p++) {
+                spinlock_acquire(&p->lock);
+                if(p->state == UNUSED) {
                         goto found;
                 }
-                spinlock_release(&process->lock);
+                spinlock_release(&p->lock);
         }
 found:
+        t = p->thread;
+        spinlock_acquire(&t->lock);
+
+        t->state = NREADY,
+
+        p->tinfo = (trapframe_info_t)palloc();
+        if(!p->tinfo) {
+                goto r0;
+        }
+
         /* Alloc memory for trapframe */
-        process->trapframe = (trapframe_t)palloc();
-        if(!process->trapframe) {
+        t->trapframe = (trapframe_t)palloc();
+        if(!t->trapframe) {
                 goto r1;
         }
+
+        p->tinfo->nums = 1;
+
+        p->cur_thread = t;
+
         /* Alloc memory for page-table */
-        process->pagetable = process_pagedir(process);
-        if(!process->pagetable) {
+        p->pagetable = process_pagedir(p);
+        if(!p->pagetable) {
                 goto r2;
         }
         
         /* Alloc pid */
-        process->pid = pid_alloc();
+        p->pid = pid_alloc();
         /* Set the address of kernel stack */
-        process->kstack = KSTACK((int)(process - proc));
+        p->kstack = KSTACK((int)(p - proc));
         /* Clear the context of process */
-        memset(&process->context, 0, sizeof(struct context));
+        memset(&p->context, 0, sizeof(struct context));
         /* Set the context of stack pointer */
-        process->context.sp = process->kstack + PGSIZE;
+        p->context.sp = p->kstack + PGSIZE;
         /* Set the context of return address */
-        process->context.ra = (uint64)(proc_first_start);
+        p->context.ra = (uint64)(proc_first_start);
 
-        return process;
+        return p;
 r2:
-        pfree(process->trapframe);
+        pfree(t->trapframe);
 r1:
-        spinlock_release(&process->lock);
+        pfree(p->tinfo);
+r0:
+        spinlock_release(&t->lock);
+        spinlock_release(&p->lock);
         return 0;
 }
 
 static void process_free(process_t p)
 {
+        int i;
+
         if(p->pagetable) {
                 process_freepagedir(p->pagetable, p->sz);
         }
-        if(p->trapframe)
-                pfree(p->trapframe);
-        p->trapframe = 0;
+        for(i = 0; i < MAXTHREAD; i++) {
+                if(p->thread[i].trapframe)
+                        pfree(p->thread[i].trapframe);
+                p->thread[i].trapframe = 0;
+                p->thread[i].state = NUSED;
+        }
         p->pid = 0;
         p->sz = 0;
         p->state = UNUSED;
@@ -222,6 +263,7 @@ void process_map_kernel_stack(pagedir_t pgdir)
 void process_init(void)
 {
         process_t p = proc;
+        thread_t t;
         /* Init the spinlock */
         spinlock_init(&pid_lock, "pid_lock");
         spinlock_init(&wait_lock, "wait_lock");
@@ -230,6 +272,10 @@ void process_init(void)
                 spinlock_init(&p->lock, "proc");
                 p->state = UNUSED;
                 p->kstack = KSTACK((int)(p - proc));
+                for(t = p->thread; t <= &p->thread[MAXTHREAD - 1]; t++) {
+                        spinlock_init(&t->lock, "thread");
+                        t->state = NUSED;
+                }
         }
 }
 
@@ -247,9 +293,12 @@ static uint8 initcode[] = {
 void userinit(void)
 {
         process_t p;
+        thread_t t;
         char* mem;
+
         /* Alloc a process */
         p = process_alloc();
+        t = p->thread;
 
         if(!p) {
                 PANIC("userinit");
@@ -272,10 +321,13 @@ void userinit(void)
         p->cwd = namei("/");
 
         /* Set the epc to '0' because we have mapped the code to lowest address */
-        p->trapframe->epc = 0;
+        t->trapframe->epc = 0;
         /* Set the stack pointer to highest address in memory we just alloced */
         /* IMPORTANT: NOT HIGHEST VIRTUAL ADDRESS */
-        p->trapframe->sp = PGSIZE;
+        t->trapframe->sp = PGSIZE;
+        t->state = READY,
+
+        p->cur_thread = t;
         /* Record how many memory we used */
         p->sz = PGSIZE;
 
@@ -285,6 +337,7 @@ void userinit(void)
 
         /* The lock will be held in process_alloc */
         spinlock_release(&p->lock);
+        spinlock_release(&t->lock);
 }
 
 int either_copyout(int user_dst, uint64 dst, void* src, uint64 len)
@@ -316,9 +369,13 @@ int fork(void)
 {
         int pid, i;
         process_t oldp, newp;
+        thread_t oldt, newt;
 
         oldp = cur_proc();
         newp = process_alloc();
+
+        oldt = oldp->cur_thread;
+        newt = newp->thread;
 
         if(!newp)
                 return -1;
@@ -329,10 +386,10 @@ int fork(void)
         }
 
         newp->sz = oldp->sz;
-        *newp->trapframe = *oldp->trapframe;
+        *newt->trapframe = *oldt->trapframe;
 
         pid = newp->pid;
-        newp->trapframe->a0 = 0;
+        newt->trapframe->a0 = 0;
 
         for(i = 0; i < NOFILE; i++) {
                 if(oldp->ofile[i] == 0)
@@ -344,6 +401,7 @@ int fork(void)
         safe_strncpy(newp->name, "test", MAXNAME);
 
         spinlock_release(&newp->lock);
+        spinlock_release(&newp->cur_thread->lock);
 
         spinlock_acquire(&wait_lock);
         newp->parent = oldp;
@@ -351,6 +409,9 @@ int fork(void)
 
         spinlock_acquire(&newp->lock);
         newp->state = RUNNABLE;
+        spinlock_acquire(&newp->cur_thread->lock);
+        newp->cur_thread->state = READY;
+        spinlock_release(&newp->cur_thread->lock);
         spinlock_release(&newp->lock);
 
         /* Return for parent process */

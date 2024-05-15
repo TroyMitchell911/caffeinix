@@ -1,3 +1,13 @@
+/*
+ * @Author: TroyMitchell
+ * @Date: 2024-04-26
+ * @LastEditors: TroyMitchell
+ * @LastEditTime: 2024-05-15
+ * @FilePath: /caffeinix/kernel/spinlock.c
+ * @Description: 
+ * Words are cheap so I do.
+ * Copyright (c) 2024 by TroyMitchell, All Rights Reserved. 
+ */
 #include <spinlock.h>
 #include <riscv.h>
 #include <debug.h>
@@ -48,8 +58,11 @@ void spinlock_acquire(spinlock_t lock)
 {
         enter_critical();
 
-        if(spinlock_holding(lock))
+        if(spinlock_holding(lock)) {
+                printf("%s->", lock->name);
                 PANIC("spainlock_acquire");
+        }
+                
         /*
                 On RISC-V, sync_lock_test_and_set turns into an atomic swap:
                 a5 = 1
@@ -69,8 +82,11 @@ void spinlock_acquire(spinlock_t lock)
 
 void spinlock_release(spinlock_t lock)
 {
-        if(!spinlock_holding(lock))
+        if(!spinlock_holding(lock)) {
+                printf("%s->", lock->name);
                 PANIC("spinlock_release");
+        }
+       
 
         lock->cpu = 0;
         /*

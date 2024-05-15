@@ -101,17 +101,17 @@ void user_trap_entry(void)
 
         stvec_w((uint64)kernel_vec);
 
-        p->trapframe->epc = sepc_r();
+        p->cur_thread->trapframe->epc = sepc_r();
 
         if(cause == 8) {
                 /* System call */
-                p->trapframe->epc += 4;
+                p->cur_thread->trapframe->epc += 4;
                 intr_on();
                 syscall();
         } else {
                 if((which_dev = dev_intr(cause)) == 0) {
                         printf("scause %p\n", cause);
-                        printf("sepc=%p stval=%p\n", p->trapframe->epc, stval_r());
+                        printf("sepc=%p stval=%p\n", p->cur_thread->trapframe->epc, stval_r());
                         PANIC("user_trap_entry");
                 }
 
@@ -137,10 +137,10 @@ void user_trap_ret(void)
         trampoline_uservec = TRAMPOLINE + (user_vec - trampoline);
         stvec_w(trampoline_uservec);
 
-        p->trapframe->kernel_satp = satp_r();
-        p->trapframe->kernel_sp = p->kstack + PGSIZE;
-        p->trapframe->kernel_hartid = tp_r();
-        p->trapframe->kernel_trap = (uint64)user_trap_entry;
+        p->cur_thread->trapframe->kernel_satp = satp_r();
+        p->cur_thread->trapframe->kernel_sp = p->kstack + PGSIZE;
+        p->cur_thread->trapframe->kernel_hartid = tp_r();
+        p->cur_thread->trapframe->kernel_trap = (uint64)user_trap_entry;
 
         sstatus = sstatus_r();
         /* Set the interrupt is from user mode */
@@ -150,7 +150,7 @@ void user_trap_ret(void)
         sstatus_w(sstatus);
 
         /* Write the epc. It will be set to 0 if the process is first started */
-        sepc_w(p->trapframe->epc);
+        sepc_w(p->cur_thread->trapframe->epc);
 
         satp = MAKE_SATP(p->pagetable);
 

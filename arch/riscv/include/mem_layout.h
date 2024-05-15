@@ -1,3 +1,13 @@
+/*
+ * @Author: TroyMitchell
+ * @Date: 2024-04-18
+ * @LastEditors: TroyMitchell
+ * @LastEditTime: 2024-05-15
+ * @FilePath: /caffeinix/arch/riscv/include/mem_layout.h
+ * @Description: 
+ * Words are cheap so I do.
+ * Copyright (c) 2024 by TroyMitchell, All Rights Reserved. 
+ */
 #ifndef __CAFFEINIX_ARCH_RISCV_MEM_LAYOUT_H
 #define __CAFFEINIX_ARCH_RISCV_MEM_LAYOUT_H
 
@@ -9,8 +19,9 @@
         map the trampoline page to the highest address,
         in both user and kernel space.
  */
-#define TRAMPOLINE (MAXVA - PGSIZE)
-#define TRAPFRAME (TRAMPOLINE - PGSIZE)
+#define TRAMPOLINE      (MAXVA - PGSIZE)
+#define TRAPFRAME_INFO   (TRAMPOLINE - PGSIZE)
+#define TRAPFRAME(x)    (TRAPFRAME_INFO - ((PGSIZE) * (x + 1)))
 /* 
         map kernel stacks beneath the trampoline,
         each surrounded by invalid guard pages.

@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-30 06:23
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-07
+ * @LastEditTime: 2024-05-15
  * @FilePath: /caffeinix/kernel/main.c
  * @Description: 
  * Words are cheap so I do.
@@ -37,7 +37,7 @@ void main(void)
                 printf("%p\n", end);
                 kvm_create();
                 kvm_init();
-                thread_init();
+                // thread_init();
                 trap_init_lock();
                 trap_init();
                 process_init();

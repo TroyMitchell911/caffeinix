@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-05-07
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-14
+ * @LastEditTime: 2024-05-15
  * @FilePath: /caffeinix/kernel/syscall.c
  * @Description: 
  * Words are cheap so I do.
@@ -19,7 +19,7 @@
 static uint64 argraw(int n)
 {
         process_t p = cur_proc(); 
-        uint64 *args = &p->trapframe->a0;
+        uint64 *args = &p->cur_thread->trapframe->a0;
         if(n <= 5)
                 return args[n];
 
@@ -94,12 +94,12 @@ void syscall(void)
         int syscall_num;
         process_t p = cur_proc();
 
-        syscall_num = p->trapframe->a7;
+        syscall_num = p->cur_thread->trapframe->a7;
         if(syscall_num > 0 && syscall_num < NELEM(syscalls) && syscalls[syscall_num]) {
                 // printf("syscall_num: %d\n", syscall_num);
-                p->trapframe->a0 = syscalls[syscall_num]();
+                p->cur_thread->trapframe->a0 = syscalls[syscall_num]();
         } else {
-                p->trapframe->a0 = -1;
+                p->cur_thread->trapframe->a0 = -1;
                 printf("Unknown syscall number %d from this process-> pid:%d name:%s\n", 
                         syscall_num, p->pid, p->name);
                 PANIC("unknown");
