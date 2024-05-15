@@ -74,6 +74,7 @@ extern uint64 sys_write(void);
 extern uint64 sys_dup(void);
 extern uint64 sys_getpid(void);
 extern uint64 sys_fork(void);
+extern uint64 sys_mkdir(void);
 
 typedef uint64 (*syscall_t)(void);
 
@@ -87,6 +88,7 @@ syscall_t syscalls[] = {
         [SYS_dup] = sys_dup,
         [SYS_getpid] = sys_getpid,
         [SYS_fork] = sys_fork,
+        [SYS_mkdir] = sys_mkdir,
 };      
 
 void syscall(void)

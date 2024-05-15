@@ -2,12 +2,14 @@
  * @Author: TroyMitchell
  * @Date: 2024-05-07
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-14
+ * @LastEditTime: 2024-05-15
  * @FilePath: /caffeinix/kernel/sysfile.c
  * @Description: 
  * Words are cheap so I do.
  * Copyright (c) 2024 by TroyMitchell, All Rights Reserved. 
  */
+#include "include/inode.h"
+#include "log.h"
 #include "typedefs.h"
 #include <sysfile.h>
 #include <inode.h>
@@ -298,6 +300,33 @@ uint64 sys_exec(void)
 fail:
         for(i = 0; i < NELEM(argv) && argv[i] != 0; i++)
                 pfree(argv[i]);
+        return -1;
+}
+/*
+Added a system call function sys_mkdir
+test in user/init.c, but it's not succeed
+
+2024-05-15 create by GoKo-Son626 
+2024-05-15 fix by TroyMitchell
+*/
+uint64 sys_mkdir(void)
+{
+        int ret;
+        char path[MAXPATH];
+        struct inode *ip;
+
+        log_begin();
+        ret = argstr(0, path, MAXPATH);
+        if(ret < 0) 
+                goto fail;
+        ip = create(path, T_DIR, 0, 0);
+        if(ip == 0)
+                goto fail;
+        iunlockput(ip);
+        log_end();
+        return 0;
+fail:
+        log_end();
         return -1;
 }
 
