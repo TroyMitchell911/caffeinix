@@ -12,9 +12,13 @@
 #include "../kernel/include/myfcntl.h"
 
 #define CONSOLE                 1  
+
+
+int _test_thread(void* arg);
+
 int main(void){
         int ret, fd;
-        char buf[128];
+        // char buf[128];
 
         char* test = malloc(128);
         strcpy(test, "hello,world\n");
@@ -39,15 +43,24 @@ int main(void){
 
         printf("%s", test);
 
-        for(;;) {
-                if(fd != -1) {
-                        ret = read(fd, buf, 128);
-                        buf[ret] = '\0';
-                        if(ret != 0) {
-                                fprintf(fd, "From user: %s", buf);
-                        }
-                }  
-        }
+        clone(_test_thread, 0, 0, 0);
+        for(;;);
+        // for(;;) {
+        //         if(fd != -1) {
+        //                 ret = read(fd, buf, 128);
+        //                 buf[ret] = '\0';
+        //                 if(ret != 0) {
+        //                         fprintf(fd, "From user: %s", buf);
+        //                 }
+        //         }  
+        // }
 
+        return 0;
+}
+
+int _test_thread(void* arg)
+{
+        printf("_test_thread\n");
+        while(1);
         return 0;
 }

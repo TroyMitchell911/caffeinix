@@ -14,6 +14,7 @@
 #include <uart.h>
 #include <printf.h>
 #include <vm.h>
+#include <process.h>
 
 struct list all_thread;
 
@@ -55,12 +56,15 @@ void thread_setup(void)
                 spinlock_init(&t->lock, "thread");
                 t->kstack = KSTACK((int)(t - thread));;
                 t->state = NUSED;
+                strncpy(t->name, "thread", 7);
         }
 }
 
 thread_t thread_alloc(process_t p)
 {
         thread_t t;
+        int i;
+
         for(t = thread; t <= &thread[NTHREAD - 1]; t++) {
                 spinlock_acquire(&t->lock);
                 if(t->state == NUSED) {
@@ -86,6 +90,14 @@ found:
         memset(&t->context, 0, sizeof(struct context));
         /* Set the context of stack pointer */
         t->context.sp = t->kstack + PGSIZE;
+
+        for(i = 0; i < PROC_MAXTHREAD; i++) {
+                if(p->thread[i] == 0) {
+                        p->thread[i] = t;
+                        break;
+                }
+        }
+        p->tnums ++;
         
         return t;
         
@@ -96,6 +108,22 @@ r1:
 
 void thread_free(thread_t t)
 {
+        process_t p;
+        int i;
+
+        p = t->home;
+
+        if(p->tnums == 0)
+                PANIC("thread_free");
+
+        for(i = 0; i < PROC_MAXTHREAD; i++) {
+                if(p->thread[i] == t) {
+                        p->thread[i] = 0;
+                        break;
+                }
+        }
+        p->tnums --;
+
         t->state = NUSED;
         if(t->trapframe)
                 pfree(t->trapframe);

@@ -186,7 +186,7 @@ found:
 
         p->tinfo->nums = 1;
 
-        p->thread[0] = p->cur_thread = t;
+        p->cur_thread = t;
 
         /* Alloc memory for page-table */
         p->pagetable = process_pagedir(p);
@@ -202,7 +202,7 @@ found:
 
         return p;
 r2:
-        p->thread[0] = p->cur_thread = 0;
+        p->cur_thread = 0;
         pfree(p->tinfo);
 r1:
         thread_free(t);
@@ -244,7 +244,7 @@ void process_init(void)
         for(; p <= &proc[NCPU - 1]; p++) {
                 spinlock_init(&p->lock, "proc");
                 p->state = UNUSED;
-                
+                p->tnums = 0;
                 for(i = 0; i < PROC_MAXTHREAD; i++) {
                         p->thread[i] = 0;
                 }

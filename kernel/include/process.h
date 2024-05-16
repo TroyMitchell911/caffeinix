@@ -50,6 +50,7 @@ typedef struct process{
 
         struct process *parent;
         trapframe_info_t tinfo;
+        int tnums;
         thread_t thread[PROC_MAXTHREAD];
         thread_t cur_thread;
 }*process_t;

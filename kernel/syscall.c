@@ -76,6 +76,7 @@ extern uint64 sys_getpid(void);
 extern uint64 sys_fork(void);
 extern uint64 sys_mkdir(void);
 extern uint64 sys_sbrk(void);
+extern uint64 sys_clone(void);
 
 typedef uint64 (*syscall_t)(void);
 
@@ -91,6 +92,7 @@ syscall_t syscalls[] = {
         [SYS_fork] = sys_fork,
         [SYS_mkdir] = sys_mkdir,
         [SYS_sbrk] = sys_sbrk,
+        [SYS_clone] = sys_clone,
 };      
 
 void syscall(void)
