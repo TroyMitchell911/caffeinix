@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-25 09:22
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-15
+ * @LastEditTime: 2024-05-16
  * @FilePath: /caffeinix/kernel/include/process.h
  * @Description: 
  * Words are cheap so I do.
@@ -15,9 +15,6 @@
 #include <spinlock.h>
 #include <riscv.h>
 #include <file.h>
-
-#define MAXTHREAD                       3
-#define MAXNAME                         16
 
 /* TODO:Delete this macro */
 // #define PROCESS_NO_SCHED                1
@@ -32,26 +29,6 @@ typedef enum process_state{
         SLEEPING,
         ZOMBIE,
 }process_state_t;
-
-
-typedef struct context {
-        uint64 ra;
-        uint64 sp;
-
-        /* Callee saved */
-        uint64 s0;
-        uint64 s1;
-        uint64 s2;
-        uint64 s3;
-        uint64 s4;
-        uint64 s5;
-        uint64 s6;
-        uint64 s7;
-        uint64 s8;
-        uint64 s9;
-        uint64 s10;
-        uint64 s11;
-}*context_t;
 
 typedef struct trapframe_info {
         uint64 addr;
@@ -73,9 +50,8 @@ typedef struct process{
         void *sleep_chan;
 
         struct process *parent;
-        struct context context;
         trapframe_info_t tinfo;
-        struct thread thread[MAXTHREAD];
+        thread_t thread[PROC_MAXTHREAD];
         thread_t cur_thread;
 }*process_t;
 

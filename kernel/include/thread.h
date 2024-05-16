@@ -1,9 +1,22 @@
+/*
+ * @Author: TroyMitchell
+ * @Date: 2024-05-16
+ * @LastEditors: TroyMitchell
+ * @LastEditTime: 2024-05-16
+ * @FilePath: /caffeinix/kernel/include/thread.h
+ * @Description: 
+ * Words are cheap so I do.
+ * Copyright (c) 2024 by TroyMitchell, All Rights Reserved. 
+ */
 #ifndef __CAFFEINIX_KERNEL_THREAD_H
 #define __CAFFEINIX_KERNEL_THREAD_H
 
 #include <typedefs.h>
 #include <list.h>
 #include <spinlock.h>
+#include <kernel_config.h>
+
+typedef struct process *process_t;
 
 typedef enum thread_state {
         NUSED,
@@ -11,6 +24,25 @@ typedef enum thread_state {
         READY,
         ACTIVE,
 }thread_state_t;
+
+typedef struct context {
+        uint64 ra;
+        uint64 sp;
+
+        /* Callee saved */
+        uint64 s0;
+        uint64 s1;
+        uint64 s2;
+        uint64 s3;
+        uint64 s4;
+        uint64 s5;
+        uint64 s6;
+        uint64 s7;
+        uint64 s8;
+        uint64 s9;
+        uint64 s10;
+        uint64 s11;
+}*context_t;
 
 typedef struct trapframe {
         /* kernel page table */
@@ -57,17 +89,24 @@ typedef struct trapframe {
 }*trapframe_t;
 
 typedef struct thread {
-        const char* name;
+        char name[MAXNAME];
         struct spinlock lock;
+
         thread_state_t state;
+
         trapframe_t trapframe;
+        struct context context;
+        
+        process_t home;
         struct list all_tag;
 }*thread_t;
 
-
+extern struct thread thread[NTHREAD];
 
 typedef void (*thread_func_t)(void*);
 
-void thread_init(void);
-void thread_test(void);
+void thread_setup(void);
+thread_t thread_alloc(process_t p);
+void thread_free(thread_t t);
+
 #endif

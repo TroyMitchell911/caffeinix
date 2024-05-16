@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-30 06:23
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-15
+ * @LastEditTime: 2024-05-16
  * @FilePath: /caffeinix/kernel/process.c
  * @Description: 
  * Words are cheap so I do.
@@ -58,6 +58,7 @@ void process_freepagedir(pagedir_t pgdir, uint64 sz)
 {
         trapframe_info_t tinfo;
         tinfo = cur_proc()->tinfo;
+        /* Save a trapframe page for exec reuse */
         for(;tinfo->nums > 1; tinfo->nums --) {
                 vm_unmap(pgdir, TRAPFRAME(tinfo->nums - 1), 1, 1);
         }
@@ -174,25 +175,18 @@ static process_t process_alloc(void)
                 spinlock_release(&p->lock);
         }
 found:
-        t = p->thread;
-        spinlock_acquire(&t->lock);
-
-        t->state = NREADY,
+        t = thread_alloc(p);
+        if(!t)
+                goto r0;
 
         p->tinfo = (trapframe_info_t)palloc();
         if(!p->tinfo) {
-                goto r0;
-        }
-
-        /* Alloc memory for trapframe */
-        t->trapframe = (trapframe_t)palloc();
-        if(!t->trapframe) {
                 goto r1;
         }
 
         p->tinfo->nums = 1;
 
-        p->cur_thread = t;
+        p->thread[0] = p->cur_thread = t;
 
         /* Alloc memory for page-table */
         p->pagetable = process_pagedir(p);
@@ -205,17 +199,18 @@ found:
         /* Set the address of kernel stack */
         p->kstack = KSTACK((int)(p - proc));
         /* Clear the context of process */
-        memset(&p->context, 0, sizeof(struct context));
+        memset(&p->cur_thread->context, 0, sizeof(struct context));
         /* Set the context of stack pointer */
-        p->context.sp = p->kstack + PGSIZE;
+        p->cur_thread->context.sp = p->kstack + PGSIZE;
         /* Set the context of return address */
-        p->context.ra = (uint64)(proc_first_start);
+        p->cur_thread->context.ra = (uint64)(proc_first_start);
 
         return p;
 r2:
-        pfree(t->trapframe);
-r1:
+        p->thread[0] = p->cur_thread = 0;
         pfree(p->tinfo);
+r1:
+        thread_free(t);
 r0:
         spinlock_release(&t->lock);
         spinlock_release(&p->lock);
@@ -229,11 +224,11 @@ static void process_free(process_t p)
         if(p->pagetable) {
                 process_freepagedir(p->pagetable, p->sz);
         }
-        for(i = 0; i < MAXTHREAD; i++) {
-                if(p->thread[i].trapframe)
-                        pfree(p->thread[i].trapframe);
-                p->thread[i].trapframe = 0;
-                p->thread[i].state = NUSED;
+        for(i = 0; i < PROC_MAXTHREAD; i++) {
+                if(p->thread[i] != 0) {
+                        thread_free(p->thread[i]);
+                        p->thread[i] = 0;
+                }
         }
         p->pid = 0;
         p->sz = 0;
@@ -263,7 +258,7 @@ void process_map_kernel_stack(pagedir_t pgdir)
 void process_init(void)
 {
         process_t p = proc;
-        thread_t t;
+        int i;
         /* Init the spinlock */
         spinlock_init(&pid_lock, "pid_lock");
         spinlock_init(&wait_lock, "wait_lock");
@@ -272,9 +267,8 @@ void process_init(void)
                 spinlock_init(&p->lock, "proc");
                 p->state = UNUSED;
                 p->kstack = KSTACK((int)(p - proc));
-                for(t = p->thread; t <= &p->thread[MAXTHREAD - 1]; t++) {
-                        spinlock_init(&t->lock, "thread");
-                        t->state = NUSED;
+                for(i = 0; i < PROC_MAXTHREAD; i++) {
+                        p->thread[i] = 0;
                 }
         }
 }
@@ -298,7 +292,7 @@ void userinit(void)
 
         /* Alloc a process */
         p = process_alloc();
-        t = p->thread;
+        t = p->cur_thread;
 
         if(!p) {
                 PANIC("userinit");
@@ -375,7 +369,7 @@ int fork(void)
         newp = process_alloc();
 
         oldt = oldp->cur_thread;
-        newt = newp->thread;
+        newt = newp->cur_thread;
 
         if(!newp)
                 return -1;

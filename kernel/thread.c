@@ -1,3 +1,13 @@
+/*
+ * @Author: TroyMitchell
+ * @Date: 2024-05-11
+ * @LastEditors: TroyMitchell
+ * @LastEditTime: 2024-05-16
+ * @FilePath: /caffeinix/kernel/thread.c
+ * @Description: 
+ * Words are cheap so I do.
+ * Copyright (c) 2024 by TroyMitchell, All Rights Reserved. 
+ */
 #include <thread.h>
 #include <palloc.h>
 #include <mystring.h>
@@ -6,65 +16,51 @@
 
 struct list all_thread;
 
-extern volatile uint64 tick_count;
+struct thread thread[NTHREAD];
 
-
-void thread_create(const char* name, thread_func_t func, void* arg)
+void thread_setup(void)
 {
-        thread_t thread = (thread_t)palloc();
+        thread_t t;
+        for(t = thread; t <= &thread[NTHREAD - 1]; t++) {
+                spinlock_init(&t->lock, "thread");
 
-        /* Init the spinlock */
-        spinlock_init(&thread->lock, name);
-        spinlock_acquire(&thread->lock);
-
-        thread->state = READY;
-        thread->name = name;
-
-        list_init(&thread->all_tag);
-        /* Insert node in the head */
-        list_insert_after(&all_thread, &thread->all_tag);
-        /* Clear the context */
-        memset(&thread->context, 0, sizeof(struct context));
-        /* Set the sp of thread to the end of memory we alloced */
-        thread->context.sp = (uint64)thread + PGSIZE;
-        /* Set the return address of thread to the address of func */
-        thread->context.ra = (uint64)func;
-
-        spinlock_release(&thread->lock);
-}
-
-static void test1(void* arg)
-{
-        uint64 last_tick = tick_count;
-
-        while(1) {
-                if(tick_count - last_tick >= 10) {
-                        last_tick = tick_count;
-                        printf("test1\n");
-                }
+                t->state = NUSED;
         }
 }
 
-static void test2(void* arg)
+thread_t thread_alloc(process_t p)
 {
-        uint64 last_tick = tick_count;
-
-        while(1) {
-                if(tick_count - last_tick >= 10) {
-                        last_tick = tick_count;
-                        printf("test2\n");
+        thread_t t;
+        for(t = thread; t <= &thread[NTHREAD - 1]; t++) {
+                spinlock_acquire(&t->lock);
+                if(t->state == NUSED) {
+                        t->home = p;
+                        goto found;
                 }
+                spinlock_release(&t->lock);
         }
+        return 0;
+found:
+        t->state = NREADY;
+
+        t->trapframe = (trapframe_t)palloc();
+        if(!t->trapframe) {
+                goto r1;
+        }
+
+        memset(t->trapframe, 0, PGSIZE);
+
+        return t;
+        
+r1:
+        spinlock_release(&t->lock);
+        return 0;
 }
 
-void thread_init(void)
+void thread_free(thread_t t)
 {
-        list_init(&all_thread);
+        t->state = NUSED;
+        if(t->trapframe)
+                pfree(t->trapframe);
+        t->trapframe = 0;
 }
-
-void thread_test(void) 
-{
-        thread_create("test1", test1, 0);
-        thread_create("test2", test2, 0);
-}
-

@@ -101,9 +101,9 @@ void yield(void)
 extern struct process proc[NPROC];
 void scheduler(void)
 {
-        int i;
         volatile cpu_t cpu = cur_cpu();
         process_t p;
+        thread_t t;
 
         cpu->proc = 0;
 
@@ -111,26 +111,23 @@ void scheduler(void)
                 /* Open interrupt to avoid dead lock */
                 intr_on();
                 
-                for(p = proc; p != &proc[NPROC - 1]; p++) {
-                        spinlock_acquire(&p->lock);
-                        if(p->state == RUNNABLE) {
-                                for(i = 0; i < MAXTHREAD; i++) {
-                                        spinlock_acquire(&p->thread[i].lock);
-                                        if(p->thread[i].state == READY) {
-                                                p->state = RUNNING;
-                                                p->cur_thread = &p->thread[i];
-                                                p->cur_thread->state = ACTIVE;
-                                                p->tinfo->addr = TRAPFRAME(i);
-                                                cpu->proc = p;
-                                                // printf("Now proc:%s\n", p->name);
-                                                switchto(&cpu->context, &p->context);
-                                                cpu->proc = 0;
-                                        }
-                                        spinlock_release(&p->thread[i].lock);
-                                }
-                               
+                for(t = thread; t <= &thread[NTHREAD - 1]; t++) {
+                        spinlock_acquire(&t->lock);
+                        if(t->state == READY) {
+                                if(!t->home)
+                                        PANIC("scheduler");
+                                p = t->home;
+                                spinlock_acquire(&p->lock);
+                                p->state = RUNNING;
+                                p->cur_thread = t;
+                                p->cur_thread->state = ACTIVE;
+                                p->tinfo->addr = TRAPFRAME((t - p->thread[0]));
+                                cpu->proc = p;
+                                switchto(&cpu->context, &p->cur_thread->context);
+                                cpu->proc = 0;
+                                spinlock_release(&p->lock);
                         }
-                        spinlock_release(&p->lock);
+                        spinlock_release(&t->lock);
                 }
         } 
 }
@@ -163,7 +160,7 @@ void sched(void)
         /* Save the value of lock */
         before_lock = cpu->before_lock;
         /* Change the context to  kernel scheduler */
-        switchto(&p->context, &cpu->context);
+        switchto(&p->cur_thread->context, &cpu->context);
         /* Restore the value of lock */
         cpu->before_lock = before_lock;
 }
