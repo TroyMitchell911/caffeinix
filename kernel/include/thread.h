@@ -92,6 +92,8 @@ typedef struct thread {
         char name[MAXNAME];
         struct spinlock lock;
 
+        int tid;
+
         thread_state_t state;
 
         uint64 kstack;

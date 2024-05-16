@@ -18,9 +18,22 @@ struct list all_thread;
 
 struct thread thread[NTHREAD];
 
+static int next_tid = 1;
+static struct spinlock tid_lock;
+
+static int tid_alloc(void)
+{
+        int tid;
+        spinlock_acquire(&tid_lock);
+        tid = next_tid++;
+        spinlock_release(&tid_lock);
+        return tid;
+}
+
 void thread_setup(void)
 {
         thread_t t;
+        spinlock_init(&tid_lock, "tid_lock");
         for(t = thread; t <= &thread[NTHREAD - 1]; t++) {
                 spinlock_init(&t->lock, "thread");
                 t->kstack = KSTACK((int)(t - thread));;
@@ -49,6 +62,8 @@ found:
         }
 
         memset(t->trapframe, 0, PGSIZE);
+
+        t->tid = tid_alloc();
 
         return t;
         
