@@ -409,3 +409,23 @@ int fork(void)
         /* Return for parent process */
         return pid;
 }
+
+int process_grow(int n)
+{
+        uint64 sz;
+        process_t p;
+        
+        p = cur_proc();
+        sz = p->sz;
+        
+        if(n > 0) {
+                sz = vm_alloc(p->pagetable, sz, sz + n, PTE_W); 
+                if(sz == 0) {
+                        return -1;
+                }
+        } else if(n < 0) {
+                sz = vm_dealloc(p->pagetable, sz, sz + n);
+        }
+        p->sz = sz;
+        return 0;
+}

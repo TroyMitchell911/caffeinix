@@ -58,6 +58,7 @@ void process_map_kernel_stack(pagedir_t pgdir);
 void process_init(void);
 pagedir_t process_pagedir(process_t p);
 void process_freepagedir(pagedir_t pgdir, uint64 sz);
+int process_grow(int n);
 
 void sleep(void* chan, spinlock_t lk);
 void wakeup(void* chan);

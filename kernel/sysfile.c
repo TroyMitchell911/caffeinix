@@ -2,12 +2,14 @@
  * @Author: TroyMitchell
  * @Date: 2024-05-07
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-14
+ * @LastEditTime: 2024-05-16
  * @FilePath: /caffeinix/kernel/sysfile.c
  * @Description: 
  * Words are cheap so I do.
  * Copyright (c) 2024 by TroyMitchell, All Rights Reserved. 
  */
+#include "include/inode.h"
+#include "log.h"
 #include "typedefs.h"
 #include <sysfile.h>
 #include <inode.h>
@@ -300,9 +302,49 @@ fail:
                 pfree(argv[i]);
         return -1;
 }
+/*
+Added a system call function sys_mkdir
+test in user/init.c, but it's not succeed
+
+2024-05-15 create by GoKo-Son626 
+2024-05-15 fix by TroyMitchell
+*/
+uint64 sys_mkdir(void)
+{
+        int ret;
+        char path[MAXPATH];
+        struct inode *ip;
+
+        log_begin();
+        ret = argstr(0, path, MAXPATH);
+        if(ret < 0) 
+                goto fail;
+        ip = create(path, T_DIR, 0, 0);
+        if(ip == 0)
+                goto fail;
+        iunlockput(ip);
+        log_end();
+        return 0;
+fail:
+        log_end();
+        return -1;
+}
 
 extern int fork(void);
 uint64 sys_fork(void)
 {
         return fork();
+}
+
+uint64 sys_sbrk(void)
+{
+        uint64 addr;
+        int n, ret;
+        
+        argint(0, &n);
+        addr = cur_proc()->sz;
+        ret = process_grow(n);
+        if(ret != 0)
+                return -1;
+        return addr;
 }
