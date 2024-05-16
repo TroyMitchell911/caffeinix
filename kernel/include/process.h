@@ -42,7 +42,6 @@ typedef struct process{
         int pid;
         process_state_t state;
         
-        uint64 kstack;
         uint64 sz;
         pagedir_t pagetable;
         inode_t cwd;

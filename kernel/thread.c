@@ -23,7 +23,7 @@ void thread_setup(void)
         thread_t t;
         for(t = thread; t <= &thread[NTHREAD - 1]; t++) {
                 spinlock_init(&t->lock, "thread");
-
+                t->kstack = KSTACK((int)(t - thread));;
                 t->state = NUSED;
         }
 }

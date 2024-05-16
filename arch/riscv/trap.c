@@ -138,7 +138,7 @@ void user_trap_ret(void)
         stvec_w(trampoline_uservec);
 
         p->cur_thread->trapframe->kernel_satp = satp_r();
-        p->cur_thread->trapframe->kernel_sp = p->kstack + PGSIZE;
+        p->cur_thread->trapframe->kernel_sp = p->cur_thread->kstack + PGSIZE;
         p->cur_thread->trapframe->kernel_hartid = tp_r();
         p->cur_thread->trapframe->kernel_trap = (uint64)user_trap_entry;
 

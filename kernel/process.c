@@ -58,7 +58,7 @@ void process_freepagedir(pagedir_t pgdir, uint64 sz)
 {
         trapframe_info_t tinfo;
         tinfo = cur_proc()->tinfo;
-        /* Save a trapframe page for exec reuse */
+        /* Save a trapframe page for exec to reuse */
         for(;tinfo->nums > 1; tinfo->nums --) {
                 vm_unmap(pgdir, TRAPFRAME(tinfo->nums - 1), 1, 1);
         }
@@ -196,12 +196,10 @@ found:
         
         /* Alloc pid */
         p->pid = pid_alloc();
-        /* Set the address of kernel stack */
-        p->kstack = KSTACK((int)(p - proc));
-        /* Clear the context of process */
+        // /* Set the address of kernel stack */
         memset(&p->cur_thread->context, 0, sizeof(struct context));
         /* Set the context of stack pointer */
-        p->cur_thread->context.sp = p->kstack + PGSIZE;
+        p->cur_thread->context.sp = p->cur_thread->kstack + PGSIZE;
         /* Set the context of return address */
         p->cur_thread->context.ra = (uint64)(proc_first_start);
 
@@ -266,7 +264,7 @@ void process_init(void)
         for(; p <= &proc[NCPU - 1]; p++) {
                 spinlock_init(&p->lock, "proc");
                 p->state = UNUSED;
-                p->kstack = KSTACK((int)(p - proc));
+                
                 for(i = 0; i < PROC_MAXTHREAD; i++) {
                         p->thread[i] = 0;
                 }

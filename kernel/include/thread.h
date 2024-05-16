@@ -94,6 +94,7 @@ typedef struct thread {
 
         thread_state_t state;
 
+        uint64 kstack;
         trapframe_t trapframe;
         struct context context;
         

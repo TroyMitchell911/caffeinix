@@ -118,13 +118,15 @@ void scheduler(void)
                                         PANIC("scheduler");
                                 p = t->home;
                                 spinlock_acquire(&p->lock);
-                                p->state = RUNNING;
-                                p->cur_thread = t;
-                                p->cur_thread->state = ACTIVE;
-                                p->tinfo->addr = TRAPFRAME((t - p->thread[0]));
-                                cpu->proc = p;
-                                switchto(&cpu->context, &p->cur_thread->context);
-                                cpu->proc = 0;
+                                if(p->state == RUNNABLE) {
+                                        p->state = RUNNING;
+                                        p->cur_thread = t;
+                                        p->cur_thread->state = ACTIVE;
+                                        p->tinfo->addr = TRAPFRAME((t - p->thread[0]));
+                                        cpu->proc = p;
+                                        switchto(&cpu->context, &p->cur_thread->context);
+                                        cpu->proc = 0;
+                                }
                                 spinlock_release(&p->lock);
                         }
                         spinlock_release(&t->lock);
