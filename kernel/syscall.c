@@ -1,8 +1,8 @@
 /*
  * @Author: TroyMitchell
  * @Date: 2024-05-07
- * @LastEditors: error: error: git config user.name & please set dead value or install git && error: git config user.email & please set dead value or install git & please set dead value or install git
- * @LastEditTime: 2024-05-16 10:34:44
+ * @LastEditors: GoKo-Son626
+ * @LastEditTime: 2024-05-16
  * @FilePath: /caffeinix/kernel/syscall.c
  * @Description: 
  * Words are cheap so I do.
