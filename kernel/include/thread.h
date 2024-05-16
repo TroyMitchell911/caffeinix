@@ -15,6 +15,7 @@
 #include <list.h>
 #include <spinlock.h>
 #include <kernel_config.h>
+#include <riscv.h>
 
 typedef struct process *process_t;
 
@@ -107,6 +108,8 @@ typedef struct thread {
 extern struct thread thread[NTHREAD];
 
 typedef void (*thread_func_t)(void*);
+
+void map_kernel_stack(pagedir_t pgdir);
 
 void thread_setup(void);
 thread_t thread_alloc(process_t p);

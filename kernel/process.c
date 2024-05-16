@@ -196,12 +196,9 @@ found:
         
         /* Alloc pid */
         p->pid = pid_alloc();
-        // /* Set the address of kernel stack */
-        memset(&p->cur_thread->context, 0, sizeof(struct context));
-        /* Set the context of stack pointer */
-        p->cur_thread->context.sp = p->cur_thread->kstack + PGSIZE;
+        
         /* Set the context of return address */
-        p->cur_thread->context.ra = (uint64)(proc_first_start);
+        t->context.ra = (uint64)(proc_first_start);
 
         return p;
 r2:
@@ -234,23 +231,6 @@ static void process_free(process_t p)
         p->parent = 0;
         p->sleep_chan = 0;
         p->name[0] = 0;
-}
-
-/* Be called by vm_create */
-void process_map_kernel_stack(pagedir_t pgdir)
-{
-        process_t p = proc;
-        uint64 pa;
-        uint64 va;
-        /* Assign kernel stack space to each process and map it */
-        for(; p <= &proc[NCPU - 1]; p++) {
-                pa = (uint64)palloc();
-                if(!pa) {
-                        PANIC("process_map_kernel_stack");
-                }
-                va = KSTACK((int)(p - proc));
-                vm_map(pgdir, va, pa, PGSIZE, PTE_R | PTE_W);
-        }
 }
 
 void process_init(void)
@@ -316,10 +296,9 @@ void userinit(void)
         t->trapframe->epc = 0;
         /* Set the stack pointer to highest address in memory we just alloced */
         /* IMPORTANT: NOT HIGHEST VIRTUAL ADDRESS */
-        t->trapframe->sp = PGSIZE;
+        // t->trapframe->sp = PGSIZE;
         t->state = READY,
 
-        p->cur_thread = t;
         /* Record how many memory we used */
         p->sz = PGSIZE;
 

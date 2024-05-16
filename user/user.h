@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-05-08
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-14
+ * @LastEditTime: 2024-05-16
  * @FilePath: /caffeinix/user/user.h
  * @Description: 
  * Words are cheap so I do.
@@ -29,6 +29,8 @@ int getpid(void);
 char* sbrk(int);
 int sleep(int);
 int uptime(void);
+int clone(int (*fn)(void *), void *child_stack, int flags, void *arg, ...
+           /* pid_t *ptid, void *newtls, pid_t *ctid */);
 
 /* From ulib.c */
 char* strcpy(char*, const char*);

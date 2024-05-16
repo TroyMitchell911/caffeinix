@@ -54,7 +54,6 @@ typedef struct process{
         thread_t cur_thread;
 }*process_t;
 
-void process_map_kernel_stack(pagedir_t pgdir);
 void process_init(void);
 pagedir_t process_pagedir(process_t p);
 void process_freepagedir(pagedir_t pgdir, uint64 sz);
