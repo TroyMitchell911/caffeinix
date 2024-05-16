@@ -1,8 +1,8 @@
 /*
  * @Author: TroyMitchell
  * @Date: 2024-05-08
- * @LastEditors: error: error: git config user.name & please set dead value or install git && error: git config user.email & please set dead value or install git & please set dead value or install git
- * @LastEditTime: 2024-05-16 10:48:37
+ * @LastEditors: GoKo-Son626
+ * @LastEditTime: 2024-05-16
  * @FilePath: /caffeinix/user/init.c
  * @Description: 
  * Words are cheap so I do.
@@ -39,14 +39,13 @@ int main(void){
         }
 
         /*for fstat test*/
-        /*
         struct stat st;
         if (fstat(fd, &st) == -1) {  
-                printf("fstat error");
+                printf("fstat error\n");
         }else {
         
-              printf("fstat successfully");
-        }*/
+              printf("fstat successfully\n");
+        }
         printf("%s", test);
 
         for(;;) {

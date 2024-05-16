@@ -1,8 +1,8 @@
 /*
  * @Author: TroyMitchell
  * @Date: 2024-05-08
- * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-14
+ * @LastEditors: GoKo-Son626
+ * @LastEditTime: 2024-05-16
  * @FilePath: /caffeinix/user/user.h
  * @Description: 
  * Words are cheap so I do.
@@ -29,6 +29,8 @@ int getpid(void);
 char* sbrk(int);
 int sleep(int);
 int uptime(void);
+struct stat;
+int fstat(int fd, struct stat*);
 
 /* From ulib.c */
 char* strcpy(char*, const char*);

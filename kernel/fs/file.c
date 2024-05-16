@@ -1,8 +1,8 @@
 /*
  * @Author: TroyMitchell
  * @Date: 2024-04-30 06:23
- * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-13
+ * @LastEditors: GoKo-Son626
+ * @LastEditTime: 2024-05-16
  * @FilePath: /caffeinix/kernel/fs/file.c
  * @Description: This file for file-system operation
  * Words are cheap so I do.
@@ -211,12 +211,13 @@ int file_write(file_t f, uint64 addr, int n)
 
         return ret;
 }
-/*
-Added a file function file_stat() for sys_fstat()
-[testing]
 
-2024-05-15 create by GoKo-Son626 
-*/
+/**
+ * @description: Added a file function "file_stat" for sys_fstat
+ * @param {file_t} f
+ * @param {uint64} addr
+ * @return {0}
+ */
 int file_stat(file_t f, uint64 addr)
 {
         process_t p = cur_proc();

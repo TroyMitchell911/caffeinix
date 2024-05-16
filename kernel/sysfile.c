@@ -1,8 +1,8 @@
 /*
  * @Author: TroyMitchell
  * @Date: 2024-05-07
- * @LastEditors: error: error: git config user.name & please set dead value or install git && error: git config user.email & please set dead value or install git & please set dead value or install git
- * @LastEditTime: 2024-05-16 10:44:32
+ * @LastEditors: GoKo-Son626
+ * @LastEditTime: 2024-05-16
  * @FilePath: /caffeinix/kernel/sysfile.c
  * @Description: 
  * Words are cheap so I do.
@@ -329,12 +329,11 @@ fail:
         log_end();
         return -1;
 }
-/*
-Added a syscall function file_stat()
-[testing]
 
-2024-05-15 create by GoKo-Son626 
-*/
+/**
+ * @description: Added a system call function "file_stat"
+ * @return {0}
+ */
 uint64 sys_fstat(void)
 {
         file_t f;
