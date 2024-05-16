@@ -1,8 +1,8 @@
 /*
  * @Author: TroyMitchell
  * @Date: 2024-05-07
- * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-14
+ * @LastEditors: error: error: git config user.name & please set dead value or install git && error: git config user.email & please set dead value or install git & please set dead value or install git
+ * @LastEditTime: 2024-05-16 10:34:44
  * @FilePath: /caffeinix/kernel/syscall.c
  * @Description: 
  * Words are cheap so I do.
@@ -76,6 +76,7 @@ extern uint64 sys_getpid(void);
 extern uint64 sys_fork(void);
 extern uint64 sys_mkdir(void);
 extern uint64 sys_fstat(void);
+extern uint64 sys_sbrk(void);
 
 typedef uint64 (*syscall_t)(void);
 
@@ -91,6 +92,7 @@ syscall_t syscalls[] = {
         [SYS_fork] = sys_fork,
         [SYS_mkdir] = sys_mkdir,
         [SYS_fstat] = sys_fstat,
+        [SYS_sbrk] = sys_sbrk,
 };      
 
 void syscall(void)

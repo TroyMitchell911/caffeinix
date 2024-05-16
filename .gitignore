@@ -7,4 +7,4 @@
 /output/kernel
 /.cache
 compile_commands.json
-
+./user/pthread.h

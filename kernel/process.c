@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-30 06:23
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-15
+ * @LastEditTime: 2024-05-16
  * @FilePath: /caffeinix/kernel/process.c
  * @Description: 
  * Words are cheap so I do.
@@ -355,4 +355,24 @@ int fork(void)
 
         /* Return for parent process */
         return pid;
+}
+
+int process_grow(int n)
+{
+        uint64 sz;
+        process_t p;
+        
+        p = cur_proc();
+        sz = p->sz;
+        
+        if(n > 0) {
+                sz = vm_alloc(p->pagetable, sz, sz + n, PTE_W); 
+                if(sz == 0) {
+                        return -1;
+                }
+        } else if(n < 0) {
+                sz = vm_dealloc(p->pagetable, sz, sz + n);
+        }
+        p->sz = sz;
+        return 0;
 }

@@ -8,10 +8,9 @@
  * Words are cheap so I do.
  * Copyright (c) 2024 by TroyMitchell, All Rights Reserved. 
  */
-#include "inode.h"
-#include "process.h"
-#include "scheduler.h"
-#include "typedefs.h"
+#include <inode.h>
+#include <process.h>
+#include <scheduler.h>
 #include "../user/stat.h"
 #include "vm.h"
 #include <file.h>

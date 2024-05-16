@@ -1,8 +1,8 @@
 /*
  * @Author: TroyMitchell
  * @Date: 2024-05-07
- * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-15
+ * @LastEditors: error: error: git config user.name & please set dead value or install git && error: git config user.email & please set dead value or install git & please set dead value or install git
+ * @LastEditTime: 2024-05-16 10:44:32
  * @FilePath: /caffeinix/kernel/sysfile.c
  * @Description: 
  * Words are cheap so I do.
@@ -346,7 +346,7 @@ uint64 sys_fstat(void)
 
         f = cur_proc()->ofile[fd];
         if (f) {
-        return file_stat(f, st);
+                return file_stat(f, st);
         }
         return -1;
 }
@@ -355,4 +355,17 @@ extern int fork(void);
 uint64 sys_fork(void)
 {
         return fork();
+}
+
+uint64 sys_sbrk(void)
+{
+        uint64 addr;
+        int n, ret;
+        
+        argint(0, &n);
+        addr = cur_proc()->sz;
+        ret = process_grow(n);
+        if(ret != 0)
+                return -1;
+        return addr;
 }

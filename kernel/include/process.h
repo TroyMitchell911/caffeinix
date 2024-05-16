@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-25 09:22
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-15
+ * @LastEditTime: 2024-05-16
  * @FilePath: /caffeinix/kernel/include/process.h
  * @Description: 
  * Words are cheap so I do.
@@ -96,6 +96,7 @@ void process_map_kernel_stack(pagedir_t pgdir);
 void process_init(void);
 pagedir_t process_pagedir(process_t p);
 void process_freepagedir(pagedir_t pgdir, uint64 sz);
+int process_grow(int n);
 
 void sleep(void* chan, spinlock_t lk);
 void wakeup(void* chan);
