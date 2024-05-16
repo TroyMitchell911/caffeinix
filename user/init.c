@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-05-08
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-15
+ * @LastEditTime: 2024-05-16
  * @FilePath: /caffeinix/user/init.c
  * @Description: 
  * Words are cheap so I do.
@@ -15,12 +15,10 @@
 int main(void){
         int ret, fd;
         char buf[128];
-        buf[0] = 'f';
-        buf[1] = 'i';
-        buf[2] = 'l';
-        buf[0] = 'e';
-        buf[4] = '\0';
-        
+
+        char* test = malloc(128);
+        strcpy(test, "hello,world\n");
+
         fd = open("console", O_RDWR);
         if(fd == -1) {
                 ret = mknod("console", 1, 0);
@@ -38,6 +36,8 @@ int main(void){
         }else {
                 printf("mkdir created successfully.\n");
         }
+
+        printf("%s", test);
 
         for(;;) {
                 if(fd != -1) {
