@@ -47,6 +47,13 @@ int main(void){
         clone(_test_thread, 0, 0, "_test_thread3");
         clone(_test_thread, 0, 0, "_test_thread4");
         clone(_test_thread, 0, 0, "_test_thread5");
+
+        ret = fork();
+        if(ret == 0)
+                printf("child\n");
+        else
+                printf("parent\n");
+
         for(;;);
         // for(;;) {
         //         if(fd != -1) {

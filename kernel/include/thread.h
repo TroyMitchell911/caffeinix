@@ -23,6 +23,7 @@ typedef enum thread_state {
         NUSED,
         NREADY,
         READY,
+        RESETING,
         ACTIVE,
 }thread_state_t;
 

@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-30 06:23
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-16
+ * @LastEditTime: 2024-05-17
  * @FilePath: /caffeinix/kernel/process.c
  * @Description: 
  * Words are cheap so I do.
@@ -104,7 +104,7 @@ void sleep(void* chan, spinlock_t lk)
 
         p->sleep_chan = chan;
         p->state = SLEEPING;
-        p->cur_thread->state = READY;
+        p->cur_thread->state = RESETING;
 
         sched();
 
@@ -123,6 +123,7 @@ void wakeup(void* chan)
                         spinlock_acquire(&p->lock);
                         if(p->sleep_chan == chan && p->state == SLEEPING) {
                                 p->state = RUNNABLE;
+                                p->cur_thread->state = READY;
                         }
                         spinlock_release(&p->lock);
                 }
@@ -335,7 +336,6 @@ int either_copyin(void *dst, int user_src, uint64 src, uint64 len)
         }
 }
 
-/* TODO: test */
 int fork(void)
 {
         int pid, i;
@@ -369,7 +369,7 @@ int fork(void)
         }
         newp->cwd = idup(oldp->cwd);
 
-        safe_strncpy(newp->name, "test", MAXNAME);
+        safe_strncpy(newp->name, oldp->name, MAXNAME);
 
         spinlock_release(&newp->lock);
         spinlock_release(&newp->cur_thread->lock);
