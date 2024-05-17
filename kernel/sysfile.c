@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-05-07
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-16
+ * @LastEditTime: 2024-05-17
  * @FilePath: /caffeinix/kernel/sysfile.c
  * @Description: 
  * Words are cheap so I do.
@@ -353,6 +353,7 @@ uint64 sys_sbrk(void)
 static void clone_first_start(void)
 {
         /* The function scheduler will acquire the lock */
+        spinlock_release(&cur_proc()->lock);
         spinlock_release(&cur_proc()->cur_thread->lock);
         extern void user_trap_ret(void);
         user_trap_ret();

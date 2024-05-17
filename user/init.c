@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-05-08
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-16
+ * @LastEditTime: 2024-05-17
  * @FilePath: /caffeinix/user/init.c
  * @Description: 
  * Words are cheap so I do.
@@ -12,7 +12,6 @@
 #include "../kernel/include/myfcntl.h"
 
 #define CONSOLE                 1  
-
 
 int _test_thread(void* arg);
 
@@ -43,7 +42,11 @@ int main(void){
 
         printf("%s", test);
 
-        clone(_test_thread, 0, 0, 0);
+        clone(_test_thread, 0, 0, "_test_thread1");
+        clone(_test_thread, 0, 0, "_test_thread2");
+        clone(_test_thread, 0, 0, "_test_thread3");
+        clone(_test_thread, 0, 0, "_test_thread4");
+        clone(_test_thread, 0, 0, "_test_thread5");
         for(;;);
         // for(;;) {
         //         if(fd != -1) {
@@ -60,7 +63,7 @@ int main(void){
 
 int _test_thread(void* arg)
 {
-        printf("_test_thread\n");
+        printf("%s\n", (char*)arg);
         while(1);
         return 0;
 }

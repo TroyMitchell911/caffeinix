@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-05-16
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-16
+ * @LastEditTime: 2024-05-17
  * @FilePath: /caffeinix/kernel/include/thread.h
  * @Description: 
  * Words are cheap so I do.
@@ -94,6 +94,7 @@ typedef struct thread {
         struct spinlock lock;
 
         int tid;
+        int id_p;
 
         thread_state_t state;
 

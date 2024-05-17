@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-05-11
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-16
+ * @LastEditTime: 2024-05-17
  * @FilePath: /caffeinix/kernel/thread.c
  * @Description: 
  * Words are cheap so I do.
@@ -63,7 +63,6 @@ void thread_setup(void)
 thread_t thread_alloc(process_t p)
 {
         thread_t t;
-        int i;
 
         for(t = thread; t <= &thread[NTHREAD - 1]; t++) {
                 spinlock_acquire(&t->lock);
@@ -75,11 +74,16 @@ thread_t thread_alloc(process_t p)
         }
         return 0;
 found:
+        if(p->tnums == PROC_MAXTHREAD)
+                goto r1;
+        t->id_p = p->tnums ++;
+        p->thread[t->id_p] = t;
+
         t->state = NREADY;
 
         t->trapframe = (trapframe_t)palloc();
         if(!t->trapframe) {
-                goto r1;
+                goto r2;
         }
 
         memset(t->trapframe, 0, PGSIZE);
@@ -91,16 +95,9 @@ found:
         /* Set the context of stack pointer */
         t->context.sp = t->kstack + PGSIZE;
 
-        for(i = 0; i < PROC_MAXTHREAD; i++) {
-                if(p->thread[i] == 0) {
-                        p->thread[i] = t;
-                        break;
-                }
-        }
-        p->tnums ++;
-        
         return t;
-        
+r2:
+        p->tnums --;
 r1:
         spinlock_release(&t->lock);
         return 0;
