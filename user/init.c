@@ -1,8 +1,13 @@
 /*
  * @Author: TroyMitchell
  * @Date: 2024-05-08
+<<<<<<< HEAD
  * @LastEditors: GoKo-Son626
  * @LastEditTime: 2024-05-16
+=======
+ * @LastEditors: TroyMitchell
+ * @LastEditTime: 2024-05-17
+>>>>>>> thread
  * @FilePath: /caffeinix/user/init.c
  * @Description: 
  * Words are cheap so I do.
@@ -13,9 +18,12 @@
 #include "stat.h"
 
 #define CONSOLE                 1  
+
+int _test_thread(void* arg);
+
 int main(void){
         int ret, fd;
-        char buf[128];
+        // char buf[128];
 
         char* test = malloc(128);
         strcpy(test, "hello,world\n");
@@ -48,15 +56,35 @@ int main(void){
         }
         printf("%s", test);
 
-        for(;;) {
-                if(fd != -1) {
-                        ret = read(fd, buf, 128);
-                        buf[ret] = '\0';
-                        if(ret != 0) {
-                                fprintf(fd, "From user: %s", buf);
-                        }
-                }  
-        }
+        clone(_test_thread, 0, 0, "_test_thread1");
+        clone(_test_thread, 0, 0, "_test_thread2");
+        clone(_test_thread, 0, 0, "_test_thread3");
+        clone(_test_thread, 0, 0, "_test_thread4");
+        clone(_test_thread, 0, 0, "_test_thread5");
 
+        ret = fork();
+        if(ret == 0)
+                printf("child\n");
+        else
+                printf("parent\n");
+
+        for(;;);
+        // for(;;) {
+        //         if(fd != -1) {
+        //                 ret = read(fd, buf, 128);
+        //                 buf[ret] = '\0';
+        //                 if(ret != 0) {
+        //                         fprintf(fd, "From user: %s", buf);
+        //                 }
+        //         }  
+        // }
+
+        return 0;
+}
+
+int _test_thread(void* arg)
+{
+        printf("%s\n", (char*)arg);
+        while(1);
         return 0;
 }

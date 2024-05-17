@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-05-11
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-14
+ * @LastEditTime: 2024-05-16
  * @FilePath: /caffeinix/arch/riscv/include/typedefs.h
  * @Description: 
  * Words are cheap so I do.

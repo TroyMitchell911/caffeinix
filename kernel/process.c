@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-30 06:23
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-16
+ * @LastEditTime: 2024-05-17
  * @FilePath: /caffeinix/kernel/process.c
  * @Description: 
  * Words are cheap so I do.
@@ -38,10 +38,17 @@ pagedir_t process_pagedir(process_t p)
                 return 0;
         }
         /* Map address of under trampoline to trapframe */
-        ret = vm_map(pgdir, TRAPFRAME, (uint64)p->trapframe, PGSIZE, PTE_W | PTE_R);
+        ret = vm_map(pgdir, TRAPFRAME_INFO, (uint64)p->tinfo, PGSIZE, PTE_W | PTE_R);
         if(ret){
                 /* We don't need free the address that PTE points because it is a code seg */
                 vm_unmap(pgdir, TRAMPOLINE, 1, 0);
+                pagedir_free(pgdir);
+        }
+        ret = vm_map(pgdir, TRAPFRAME(0), (uint64)p->cur_thread->trapframe, PGSIZE, PTE_W | PTE_R);
+        if(ret){
+                /* We don't need free the address that PTE points because it is a code seg */
+                vm_unmap(pgdir, TRAMPOLINE, 1, 0);
+                vm_unmap(pgdir, TRAPFRAME_INFO, 1, 1);
                 pagedir_free(pgdir);
         }
         return pgdir;
@@ -49,7 +56,14 @@ pagedir_t process_pagedir(process_t p)
 
 void process_freepagedir(pagedir_t pgdir, uint64 sz)
 {
-        vm_unmap(pgdir, TRAPFRAME, 1, 0);
+        trapframe_info_t tinfo;
+        tinfo = cur_proc()->tinfo;
+        /* Save a trapframe page for exec to reuse */
+        for(;tinfo->nums > 1; tinfo->nums --) {
+                vm_unmap(pgdir, TRAPFRAME(tinfo->nums - 1), 1, 1);
+        }
+        vm_unmap(pgdir, TRAPFRAME(0), 1, 0);
+        vm_unmap(pgdir, TRAPFRAME_INFO, 1, 0);
         vm_unmap(pgdir, TRAMPOLINE, 1, 0);
         vm_unmap(pgdir, 0, PGROUNDUP(sz) / PGSIZE, 1);
         pagedir_free(pgdir);
@@ -61,6 +75,7 @@ static void proc_first_start(void)
         static uint8 first = 0;
         /* The function scheduler will acquire the lock */
         spinlock_release(&cur_proc()->lock);
+        spinlock_release(&cur_proc()->cur_thread->lock);
         if(!first) {
                 first = 1;
                 fs_init(1);
@@ -84,16 +99,19 @@ void sleep(void* chan, spinlock_t lk)
         process_t p = cur_proc();
 
         spinlock_acquire(&p->lock);
+        spinlock_acquire(&p->cur_thread->lock);
         spinlock_release(lk);
 
         p->sleep_chan = chan;
         p->state = SLEEPING;
+        p->cur_thread->state = RESETING;
 
         sched();
 
         p->sleep_chan = 0;
 
         spinlock_release(&p->lock);
+        spinlock_release(&p->cur_thread->lock);
         spinlock_acquire(lk);
 }
 
@@ -105,6 +123,7 @@ void wakeup(void* chan)
                         spinlock_acquire(&p->lock);
                         if(p->sleep_chan == chan && p->state == SLEEPING) {
                                 p->state = RUNNABLE;
+                                p->cur_thread->state = READY;
                         }
                         spinlock_release(&p->lock);
                 }
@@ -147,53 +166,66 @@ void wakeup(void* chan)
 /* Alloc a process */
 static process_t process_alloc(void)
 {
-        process_t process;
-        for(process = proc; process != &proc[NPROC - 1]; process++) {
-                spinlock_acquire(&process->lock);
-                if(process->state == UNUSED) {
+        process_t p;
+        thread_t t;
+        for(p = proc; p != &proc[NPROC - 1]; p++) {
+                spinlock_acquire(&p->lock);
+                if(p->state == UNUSED) {
                         goto found;
                 }
-                spinlock_release(&process->lock);
+                spinlock_release(&p->lock);
         }
 found:
-        /* Alloc memory for trapframe */
-        process->trapframe = (trapframe_t)palloc();
-        if(!process->trapframe) {
+        t = thread_alloc(p);
+        if(!t)
+                goto r0;
+
+        p->tinfo = (trapframe_info_t)palloc();
+        if(!p->tinfo) {
                 goto r1;
         }
+
+        p->tinfo->nums = 1;
+
+        p->cur_thread = t;
+
         /* Alloc memory for page-table */
-        process->pagetable = process_pagedir(process);
-        if(!process->pagetable) {
+        p->pagetable = process_pagedir(p);
+        if(!p->pagetable) {
                 goto r2;
         }
         
         /* Alloc pid */
-        process->pid = pid_alloc();
-        /* Set the address of kernel stack */
-        process->kstack = KSTACK((int)(process - proc));
-        /* Clear the context of process */
-        memset(&process->context, 0, sizeof(struct context));
-        /* Set the context of stack pointer */
-        process->context.sp = process->kstack + PGSIZE;
+        p->pid = pid_alloc();
+        
         /* Set the context of return address */
-        process->context.ra = (uint64)(proc_first_start);
+        t->context.ra = (uint64)(proc_first_start);
 
-        return process;
+        return p;
 r2:
-        pfree(process->trapframe);
+        p->cur_thread = 0;
+        pfree(p->tinfo);
 r1:
-        spinlock_release(&process->lock);
+        thread_free(t);
+r0:
+        spinlock_release(&t->lock);
+        spinlock_release(&p->lock);
         return 0;
 }
 
 static void process_free(process_t p)
 {
+        int i;
+
         if(p->pagetable) {
                 process_freepagedir(p->pagetable, p->sz);
         }
-        if(p->trapframe)
-                pfree(p->trapframe);
-        p->trapframe = 0;
+        for(i = 0; i < PROC_MAXTHREAD; i++) {
+                if(p->thread[i] != 0) {
+                        thread_free(p->thread[i]);
+                        p->thread[i] = 0;
+                }
+        }
         p->pid = 0;
         p->sz = 0;
         p->state = UNUSED;
@@ -202,26 +234,10 @@ static void process_free(process_t p)
         p->name[0] = 0;
 }
 
-/* Be called by vm_create */
-void process_map_kernel_stack(pagedir_t pgdir)
-{
-        process_t p = proc;
-        uint64 pa;
-        uint64 va;
-        /* Assign kernel stack space to each process and map it */
-        for(; p <= &proc[NCPU - 1]; p++) {
-                pa = (uint64)palloc();
-                if(!pa) {
-                        PANIC("process_map_kernel_stack");
-                }
-                va = KSTACK((int)(p - proc));
-                vm_map(pgdir, va, pa, PGSIZE, PTE_R | PTE_W);
-        }
-}
-
 void process_init(void)
 {
         process_t p = proc;
+        int i;
         /* Init the spinlock */
         spinlock_init(&pid_lock, "pid_lock");
         spinlock_init(&wait_lock, "wait_lock");
@@ -229,7 +245,10 @@ void process_init(void)
         for(; p <= &proc[NCPU - 1]; p++) {
                 spinlock_init(&p->lock, "proc");
                 p->state = UNUSED;
-                p->kstack = KSTACK((int)(p - proc));
+                p->tnums = 0;
+                for(i = 0; i < PROC_MAXTHREAD; i++) {
+                        p->thread[i] = 0;
+                }
         }
 }
 
@@ -247,9 +266,12 @@ static uint8 initcode[] = {
 void userinit(void)
 {
         process_t p;
+        thread_t t;
         char* mem;
+
         /* Alloc a process */
         p = process_alloc();
+        t = p->cur_thread;
 
         if(!p) {
                 PANIC("userinit");
@@ -272,10 +294,12 @@ void userinit(void)
         p->cwd = namei("/");
 
         /* Set the epc to '0' because we have mapped the code to lowest address */
-        p->trapframe->epc = 0;
+        t->trapframe->epc = 0;
         /* Set the stack pointer to highest address in memory we just alloced */
         /* IMPORTANT: NOT HIGHEST VIRTUAL ADDRESS */
-        p->trapframe->sp = PGSIZE;
+        // t->trapframe->sp = PGSIZE;
+        t->state = READY,
+
         /* Record how many memory we used */
         p->sz = PGSIZE;
 
@@ -285,6 +309,7 @@ void userinit(void)
 
         /* The lock will be held in process_alloc */
         spinlock_release(&p->lock);
+        spinlock_release(&t->lock);
 }
 
 int either_copyout(int user_dst, uint64 dst, void* src, uint64 len)
@@ -311,14 +336,17 @@ int either_copyin(void *dst, int user_src, uint64 src, uint64 len)
         }
 }
 
-/* TODO: test */
 int fork(void)
 {
         int pid, i;
         process_t oldp, newp;
+        thread_t oldt, newt;
 
         oldp = cur_proc();
         newp = process_alloc();
+
+        oldt = oldp->cur_thread;
+        newt = newp->cur_thread;
 
         if(!newp)
                 return -1;
@@ -329,10 +357,10 @@ int fork(void)
         }
 
         newp->sz = oldp->sz;
-        *newp->trapframe = *oldp->trapframe;
+        *newt->trapframe = *oldt->trapframe;
 
         pid = newp->pid;
-        newp->trapframe->a0 = 0;
+        newt->trapframe->a0 = 0;
 
         for(i = 0; i < NOFILE; i++) {
                 if(oldp->ofile[i] == 0)
@@ -341,9 +369,10 @@ int fork(void)
         }
         newp->cwd = idup(oldp->cwd);
 
-        safe_strncpy(newp->name, "test", MAXNAME);
+        safe_strncpy(newp->name, oldp->name, MAXNAME);
 
         spinlock_release(&newp->lock);
+        spinlock_release(&newp->cur_thread->lock);
 
         spinlock_acquire(&wait_lock);
         newp->parent = oldp;
@@ -351,6 +380,9 @@ int fork(void)
 
         spinlock_acquire(&newp->lock);
         newp->state = RUNNABLE;
+        spinlock_acquire(&newp->cur_thread->lock);
+        newp->cur_thread->state = READY;
+        spinlock_release(&newp->cur_thread->lock);
         spinlock_release(&newp->lock);
 
         /* Return for parent process */

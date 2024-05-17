@@ -9,7 +9,8 @@ trampoline:
 user_vec:
         csrw sscratch, a0
 
-        li a0, TRAPFRAME
+        li a0, TRAPFRAME_INFO
+        ld a0, 0(a0)
 
         sd ra, 40(a0)
         sd sp, 48(a0)
@@ -64,9 +65,10 @@ user_ret:
         csrw satp, a0
         sfence.vma zero, zero
 
-        li a0, TRAPFRAME
+        li a0, TRAPFRAME_INFO
+        ld a0, 0(a0)
 
-        # restore all but a0 from TRAPFRAME
+        # restore all but a0 from TRAPFRAME_INFO
         ld ra, 40(a0)
         ld sp, 48(a0)
         ld gp, 56(a0)

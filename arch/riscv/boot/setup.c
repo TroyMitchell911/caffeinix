@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-26
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-15
+ * @LastEditTime: 2024-05-16
  * @FilePath: /caffeinix/arch/riscv/boot/setup.c
  * @Description: 
  * Words are cheap so I do.

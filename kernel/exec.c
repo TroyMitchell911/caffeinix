@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-05-07
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-14
+ * @LastEditTime: 2024-05-15
  * @FilePath: /caffeinix/kernel/exec.c
  * @Description: 
  * Words are cheap so I do.
@@ -152,9 +152,9 @@ int exec(char* path, char** argv)
                 Arguments to user main(argc, argv).
                 We just set a1 bcs the a0 via return to set.
         */
-        p->trapframe->a1 = sp;
-        p->trapframe->sp = sp;
-        p->trapframe->epc = elf.entry;
+        p->cur_thread->trapframe->a1 = sp;
+        p->cur_thread->trapframe->sp = sp;
+        p->cur_thread->trapframe->epc = elf.entry;
         process_freepagedir(oldpgdir, oldsz);
         
         /* Rid of the last element (ustack[argc ++] = 0;) */

@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-30 06:23
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-14
+ * @LastEditTime: 2024-05-16
  * @FilePath: /caffeinix/arch/riscv/vm.c
  * @Description: This file about all virtual address
  * Words are cheap so I do.
@@ -127,7 +127,7 @@ static pagedir_t kernel_pagedir_t_create(void)
         /* Map the data and the rest of physical DRAM */
         vm_map(pgdir, (uint64)etext, (uint64)etext, PHY_MEM_STOP - (uint64)etext, PTE_R | PTE_W);
 
-        process_map_kernel_stack(pgdir);
+        map_kernel_stack(pgdir);
         return pgdir;
 }
 

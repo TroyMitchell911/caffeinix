@@ -1,70 +1,128 @@
+/*
+ * @Author: TroyMitchell
+ * @Date: 2024-05-11
+ * @LastEditors: TroyMitchell
+ * @LastEditTime: 2024-05-17
+ * @FilePath: /caffeinix/kernel/thread.c
+ * @Description: 
+ * Words are cheap so I do.
+ * Copyright (c) 2024 by TroyMitchell, All Rights Reserved. 
+ */
 #include <thread.h>
 #include <palloc.h>
 #include <mystring.h>
 #include <uart.h>
 #include <printf.h>
+#include <vm.h>
+#include <process.h>
 
 struct list all_thread;
 
-extern volatile uint64 tick_count;
+struct thread thread[NTHREAD];
 
+static int next_tid = 1;
+static struct spinlock tid_lock;
 
-void thread_create(const char* name, thread_func_t func, void* arg)
+static int tid_alloc(void)
 {
-        thread_t thread = (thread_t)palloc();
-
-        /* Init the spinlock */
-        spinlock_init(&thread->lock, name);
-        spinlock_acquire(&thread->lock);
-
-        thread->state = READY;
-        thread->name = name;
-
-        list_init(&thread->all_tag);
-        /* Insert node in the head */
-        list_insert_after(&all_thread, &thread->all_tag);
-        /* Clear the context */
-        memset(&thread->context, 0, sizeof(struct context));
-        /* Set the sp of thread to the end of memory we alloced */
-        thread->context.sp = (uint64)thread + PGSIZE;
-        /* Set the return address of thread to the address of func */
-        thread->context.ra = (uint64)func;
-
-        spinlock_release(&thread->lock);
+        int tid;
+        spinlock_acquire(&tid_lock);
+        tid = next_tid++;
+        spinlock_release(&tid_lock);
+        return tid;
 }
 
-static void test1(void* arg)
+/* Be called by vm_create */
+void map_kernel_stack(pagedir_t pgdir)
 {
-        uint64 last_tick = tick_count;
-
-        while(1) {
-                if(tick_count - last_tick >= 10) {
-                        last_tick = tick_count;
-                        printf("test1\n");
+        int i;
+        uint64 pa, va;
+        /* Assign kernel stack space to each process and map it */
+        for(i = 0; i < NTHREAD; i++) {
+                pa = (uint64)palloc();
+                if(!pa) {
+                        PANIC("process_map_kernel_stack");
                 }
+                va = KSTACK((int)(i));
+                vm_map(pgdir, va, pa, PGSIZE, PTE_R | PTE_W);
         }
 }
 
-static void test2(void* arg)
+void thread_setup(void)
 {
-        uint64 last_tick = tick_count;
-
-        while(1) {
-                if(tick_count - last_tick >= 10) {
-                        last_tick = tick_count;
-                        printf("test2\n");
-                }
+        thread_t t;
+        spinlock_init(&tid_lock, "tid_lock");
+        for(t = thread; t <= &thread[NTHREAD - 1]; t++) {
+                spinlock_init(&t->lock, "thread");
+                t->kstack = KSTACK((int)(t - thread));;
+                t->state = NUSED;
+                strncpy(t->name, "thread", 7);
         }
 }
 
-void thread_init(void)
+thread_t thread_alloc(process_t p)
 {
-        list_init(&all_thread);
+        thread_t t;
+
+        for(t = thread; t <= &thread[NTHREAD - 1]; t++) {
+                spinlock_acquire(&t->lock);
+                if(t->state == NUSED) {
+                        t->home = p;
+                        goto found;
+                }
+                spinlock_release(&t->lock);
+        }
+        return 0;
+found:
+        if(p->tnums == PROC_MAXTHREAD)
+                goto r1;
+        t->id_p = p->tnums ++;
+        p->thread[t->id_p] = t;
+
+        t->state = NREADY;
+
+        t->trapframe = (trapframe_t)palloc();
+        if(!t->trapframe) {
+                goto r2;
+        }
+
+        memset(t->trapframe, 0, PGSIZE);
+
+        t->tid = tid_alloc();
+
+        /* Set the address of kernel stack */
+        memset(&t->context, 0, sizeof(struct context));
+        /* Set the context of stack pointer */
+        t->context.sp = t->kstack + PGSIZE;
+
+        return t;
+r2:
+        p->tnums --;
+r1:
+        spinlock_release(&t->lock);
+        return 0;
 }
 
-void thread_test(void) 
+void thread_free(thread_t t)
 {
-        thread_create("test1", test1, 0);
-        thread_create("test2", test2, 0);
-}
+        process_t p;
+        int i;
 
+        p = t->home;
+
+        if(p->tnums == 0)
+                PANIC("thread_free");
+
+        for(i = 0; i < PROC_MAXTHREAD; i++) {
+                if(p->thread[i] == t) {
+                        p->thread[i] = 0;
+                        break;
+                }
+        }
+        p->tnums --;
+
+        t->state = NUSED;
+        if(t->trapframe)
+                pfree(t->trapframe);
+        t->trapframe = 0;
+}
