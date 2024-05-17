@@ -1,13 +1,18 @@
 /*
  * @Author: TroyMitchell
  * @Date: 2024-04-30 06:23
- * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-13
+ * @LastEditors: GoKo-Son626
+ * @LastEditTime: 2024-05-16
  * @FilePath: /caffeinix/kernel/fs/file.c
  * @Description: This file for file-system operation
  * Words are cheap so I do.
  * Copyright (c) 2024 by TroyMitchell, All Rights Reserved. 
  */
+#include <inode.h>
+#include <process.h>
+#include <scheduler.h>
+#include "../user/stat.h"
+#include "vm.h"
 #include <file.h>
 #include <mystring.h>
 #include <debug.h>
@@ -205,4 +210,32 @@ int file_write(file_t f, uint64 addr, int n)
         }
 
         return ret;
+}
+
+/**
+ * @description: Added a file function "file_stat" for sys_fstat
+ * @param {file_t} f
+ * @param {uint64} addr
+ * @return {0}
+ */
+int file_stat(file_t f, uint64 addr)
+{
+        process_t p = cur_proc();
+        struct stat st;
+
+        if (f->type == FD_INODE || f->type == FD_DEVICE) {
+                ilock(f->ip);
+                st.dev = f->ip->dev;
+                st.ino = f->ip->inum;
+                st.type = f->ip->d.type;
+                st.nlink = f->ip->d.nlink;
+                st.size = f->ip->d.size;
+                iunlock(f->ip);
+
+                if (copyout(p->pagetable, addr, (char *)&st, sizeof(st)) < 0) {
+                        return -1;
+                }
+                return 0;
+        }
+        return -1;
 }

@@ -1,7 +1,7 @@
 /*
  * @Author: TroyMitchell
  * @Date: 2024-05-07
- * @LastEditors: TroyMitchell
+ * @LastEditors: GoKo-Son626
  * @LastEditTime: 2024-05-16
  * @FilePath: /caffeinix/kernel/sysfile.c
  * @Description: 
@@ -327,6 +327,26 @@ uint64 sys_mkdir(void)
         return 0;
 fail:
         log_end();
+        return -1;
+}
+
+/**
+ * @description: Added a system call function "file_stat"
+ * @return {0}
+ */
+uint64 sys_fstat(void)
+{
+        file_t f;
+        int fd;
+        uint64 st;
+
+        argint(0, &fd);
+        argaddr(1, &st);
+
+        f = cur_proc()->ofile[fd];
+        if (f) {
+                return file_stat(f, st);
+        }
         return -1;
 }
 

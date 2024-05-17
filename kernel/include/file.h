@@ -38,6 +38,6 @@ file_t file_dup(file_t f);
 void file_close(file_t f);
 int file_read(file_t f, uint64 addr, int n);
 int file_write(file_t f, uint64 addr, int n);
-
+int file_stat(file_t f, uint64 addr);
 
 #endif

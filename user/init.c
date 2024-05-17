@@ -1,7 +1,7 @@
 /*
  * @Author: TroyMitchell
  * @Date: 2024-05-08
- * @LastEditors: TroyMitchell
+ * @LastEditors: GoKo-Son626
  * @LastEditTime: 2024-05-16
  * @FilePath: /caffeinix/user/init.c
  * @Description: 
@@ -10,6 +10,7 @@
  */
 #include "user.h"
 #include "../kernel/include/myfcntl.h"
+#include "stat.h"
 
 #define CONSOLE                 1  
 int main(void){
@@ -37,6 +38,14 @@ int main(void){
                 printf("mkdir created successfully.\n");
         }
 
+        /*for fstat test*/
+        struct stat st;
+        if (fstat(fd, &st) == -1) {  
+                printf("fstat error\n");
+        }else {
+        
+              printf("fstat successfully\n");
+        }
         printf("%s", test);
 
         for(;;) {

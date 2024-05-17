@@ -1,7 +1,7 @@
 /*
  * @Author: TroyMitchell
  * @Date: 2024-05-07
- * @LastEditors: TroyMitchell
+ * @LastEditors: GoKo-Son626
  * @LastEditTime: 2024-05-16
  * @FilePath: /caffeinix/kernel/syscall.c
  * @Description: 
@@ -75,6 +75,7 @@ extern uint64 sys_dup(void);
 extern uint64 sys_getpid(void);
 extern uint64 sys_fork(void);
 extern uint64 sys_mkdir(void);
+extern uint64 sys_fstat(void);
 extern uint64 sys_sbrk(void);
 
 typedef uint64 (*syscall_t)(void);
@@ -90,6 +91,7 @@ syscall_t syscalls[] = {
         [SYS_getpid] = sys_getpid,
         [SYS_fork] = sys_fork,
         [SYS_mkdir] = sys_mkdir,
+        [SYS_fstat] = sys_fstat,
         [SYS_sbrk] = sys_sbrk,
 };      
 
