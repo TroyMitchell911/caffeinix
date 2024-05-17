@@ -119,7 +119,7 @@ void scheduler(void)
                                 p = t->home;
                                 spinlock_acquire(&p->lock);
                                 if(p->state == RUNNABLE) {
-                                        // printf("%s\n", t->name);
+                                        // printf("%s\n", p->name);
                                         p->state = RUNNING;
                                         p->cur_thread = t;
                                         p->cur_thread->state = ACTIVE;

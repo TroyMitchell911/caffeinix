@@ -1,13 +1,8 @@
 /*
  * @Author: TroyMitchell
  * @Date: 2024-05-07
-<<<<<<< HEAD
  * @LastEditors: TroyMitchell
  * @LastEditTime: 2024-05-17
-=======
- * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-17
->>>>>>> thread
  * @FilePath: /caffeinix/kernel/sysfile.c
  * @Description: 
  * Words are cheap so I do.

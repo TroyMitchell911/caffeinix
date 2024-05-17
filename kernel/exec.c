@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-05-07
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-15
+ * @LastEditTime: 2024-05-17
  * @FilePath: /caffeinix/kernel/exec.c
  * @Description: 
  * Words are cheap so I do.
@@ -56,6 +56,7 @@ int exec(char* path, char** argv)
         struct proghdr ph;
         pagedir_t oldpgdir, pgdir = 0;
         process_t p = cur_proc();   
+        char *name, *path_p;
         
         log_begin();
         ip = namei(path);
@@ -155,6 +156,14 @@ int exec(char* path, char** argv)
         p->cur_thread->trapframe->a1 = sp;
         p->cur_thread->trapframe->sp = sp;
         p->cur_thread->trapframe->epc = elf.entry;
+
+
+        for(name = path_p = path; *path_p != '\0'; path_p ++) {
+                if(*path_p == '/')
+                        /* Ignore character '/' */
+                        name = path_p + 1;
+        }
+        safe_strncpy(p->name, name, MAXNAME);
         process_freepagedir(oldpgdir, oldsz);
         
         /* Rid of the last element (ustack[argc ++] = 0;) */
