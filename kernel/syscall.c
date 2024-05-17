@@ -1,8 +1,8 @@
 /*
  * @Author: TroyMitchell
  * @Date: 2024-05-07
- * @LastEditors: GoKo-Son626
- * @LastEditTime: 2024-05-16
+ * @LastEditors: TroyMitchell
+ * @LastEditTime: 2024-05-17
  * @FilePath: /caffeinix/kernel/syscall.c
  * @Description: 
  * Words are cheap so I do.
@@ -78,6 +78,7 @@ extern uint64 sys_mkdir(void);
 extern uint64 sys_fstat(void);
 extern uint64 sys_sbrk(void);
 extern uint64 sys_clone(void);
+extern uint64 sys_sleep(void);
 
 typedef uint64 (*syscall_t)(void);
 
@@ -95,6 +96,7 @@ syscall_t syscalls[] = {
         [SYS_fstat] = sys_fstat,
         [SYS_sbrk] = sys_sbrk,
         [SYS_clone] = sys_clone,
+        [SYS_sleep] = sys_sleep,
 };      
 
 void syscall(void)

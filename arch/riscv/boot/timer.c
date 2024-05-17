@@ -1,3 +1,13 @@
+/*
+ * @Author: TroyMitchell
+ * @Date: 2024-04-13
+ * @LastEditors: TroyMitchell
+ * @LastEditTime: 2024-05-17
+ * @FilePath: /caffeinix/arch/riscv/boot/timer.c
+ * @Description: 
+ * Words are cheap so I do.
+ * Copyright (c) 2024 by TroyMitchell, All Rights Reserved. 
+ */
 #include <riscv.h>
 #include <mem_layout.h>
 #include <kernel_config.h>
@@ -23,7 +33,7 @@ void timer_init(uint8 hartid)
         /* Get the buffer corresponding to each hart */
         scratch = &timer_buff[id];
         /* About 100 ms */
-        int interval = 1000000;
+        int interval = 10000 * TICK_INTERVAL;
         /* Write new CMP value */
         *(uint64*)CLINT_MTIMECMP(id) = *(uint64*)CLINT_MTIME + interval;
         /* Fill the data of buffer */

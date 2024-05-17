@@ -110,7 +110,7 @@ void scheduler(void)
         for(;;) {
                 /* Open interrupt to avoid dead lock */
                 intr_on();
-                
+
                 for(t = &thread[0]; t <= &thread[NTHREAD - 1]; t ++) {
                         spinlock_acquire(&t->lock);
                         if(t->state == READY) {
@@ -119,7 +119,7 @@ void scheduler(void)
                                 p = t->home;
                                 spinlock_acquire(&p->lock);
                                 if(p->state == RUNNABLE) {
-                                        printf("%s\n", t->name);
+                                        // printf("%s\n", t->name);
                                         p->state = RUNNING;
                                         p->cur_thread = t;
                                         p->cur_thread->state = ACTIVE;

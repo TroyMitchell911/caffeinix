@@ -2,8 +2,8 @@
  * @Author: TroyMitchell
  * @Date: 2024-05-07
 <<<<<<< HEAD
- * @LastEditors: GoKo-Son626
- * @LastEditTime: 2024-05-16
+ * @LastEditors: TroyMitchell
+ * @LastEditTime: 2024-05-17
 =======
  * @LastEditors: TroyMitchell
  * @LastEditTime: 2024-05-17
@@ -426,4 +426,24 @@ r1:
         thread_free(t);
 r0:
         return -1;
+}
+
+extern volatile uint64 tick_count;
+extern struct spinlock tick_lock;
+uint64 sys_sleep(void)
+{
+        int n;
+
+        argint(0, &n);
+
+        spinlock_acquire(&tick_lock);
+
+        n = n * 1000 / TICK_INTERVAL + tick_count;
+        while(n > tick_count) {
+                /* TODO: Is killed? */
+                sleep((void*)&tick_count, &tick_lock);
+        }
+        spinlock_release(&tick_lock);
+
+        return 0;
 }

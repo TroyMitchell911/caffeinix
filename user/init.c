@@ -18,6 +18,7 @@ int _test_thread(void* arg);
 
 int main(void){
         int ret, fd;
+        char buf[128];
 
         if((fd = open("console", O_RDWR)) == -1) {
                 if((mknod("console", 1, 0)) == 0) {
@@ -39,23 +40,25 @@ int main(void){
         else
                 printf("parent\n");
 
-        for(;;);
-        // for(;;) {
-        //         if(fd != -1) {
-        //                 ret = read(fd, buf, 128);
-        //                 buf[ret] = '\0';
-        //                 if(ret != 0) {
-        //                         fprintf(fd, "From user: %s", buf);
-        //                 }
-        //         }  
-        // }
+        for(;;) {
+                if(fd != -1) {
+                        ret = read(fd, buf, 128);
+                        buf[ret] = '\0';
+                        if(ret != 0) {
+                                fprintf(fd, "From user: %s", buf);
+                        }
+                }  
+        }
 
         return 0;
 }
 
 int _test_thread(void* arg)
 {
-        printf("%s\n", (char*)arg);
-        while(1);
+        
+        while(1) {
+              printf("%s\n", (char*)arg);
+              sleep(1);  
+        }
         return 0;
 }

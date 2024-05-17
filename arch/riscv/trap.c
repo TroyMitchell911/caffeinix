@@ -14,7 +14,7 @@ extern void syscall(void);
 
 void user_trap_ret(void);
 
-static struct spinlock tick_lock;
+struct spinlock tick_lock;
 /* For test */
 volatile uint64 tick_count = 0;
 
@@ -26,8 +26,7 @@ static void tick_intr(void)
         if(tick_count % 10 == 0) {
                 // printf("timer interrupt\n");
         }
-        /* TODO: We should wakeup here */
-        // wakeup
+        wakeup((void*)&tick_count);
         spinlock_release(&tick_lock);
 }
 
