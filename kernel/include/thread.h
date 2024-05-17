@@ -103,6 +103,7 @@ typedef struct thread {
         trapframe_t trapframe;
         struct context context;
         
+        void *sleep_chan;
         process_t home;
         struct list all_tag;
 }*thread_t;

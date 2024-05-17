@@ -110,12 +110,8 @@ void scheduler(void)
         for(;;) {
                 /* Open interrupt to avoid dead lock */
                 intr_on();
-                /* 
-                        TODO: Completely repaired the problem that 
-                        after one thread of the process sleeps,
-                        other processes have no chance to be executed.
-                */
-                for(t = &thread[NTHREAD - 1]; t >= &thread[0]; t--) {
+                
+                for(t = &thread[0]; t <= &thread[NTHREAD - 1]; t ++) {
                         spinlock_acquire(&t->lock);
                         if(t->state == READY) {
                                 if(!t->home)
@@ -180,6 +176,6 @@ void yield(void)
         spinlock_acquire(&p->cur_thread->lock);
         p->cur_thread->state = READY;
         sched();
-        spinlock_release(&p->cur_thread->lock);
         spinlock_release(&p->lock);
+        spinlock_release(&p->cur_thread->lock);   
 }

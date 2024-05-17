@@ -18,38 +18,14 @@ int _test_thread(void* arg);
 
 int main(void){
         int ret, fd;
-        // char buf[128];
 
-        char* test = malloc(128);
-        strcpy(test, "hello,world\n");
-
-        fd = open("console", O_RDWR);
-        if(fd == -1) {
-                ret = mknod("console", 1, 0);
-                if(ret == 0) {
-                        fd = open("console", O_RDWR);
+        if((fd = open("console", O_RDWR)) == -1) {
+                if((mknod("console", 1, 0)) == 0) {
+                        fd = open("console", O_RDWR);       
                 }
         }
         if(fd != -1)
                 fd = dup(fd);
-
-        /*For mkdir test*/
-        const char *directory_name = "dir_name";
-        if (mkdir(directory_name) == -1) {
-                printf("mkdir error\n");
-        }else {
-                printf("mkdir created successfully.\n");
-        }
-
-        /*for fstat test*/
-        struct stat st;
-        if (fstat(fd, &st) == -1) {  
-                printf("fstat error\n");
-        }else {
-        
-              printf("fstat successfully\n");
-        }
-        printf("%s", test);
 
         clone(_test_thread, 0, 0, "_test_thread1");
         clone(_test_thread, 0, 0, "_test_thread2");

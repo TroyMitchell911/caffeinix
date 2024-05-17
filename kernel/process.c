@@ -97,33 +97,39 @@ static int pid_alloc(void)
 void sleep(void* chan, spinlock_t lk)
 {
         process_t p = cur_proc();
+        thread_t t = p->cur_thread;
 
         spinlock_acquire(&p->lock);
-        spinlock_acquire(&p->cur_thread->lock);
+        spinlock_acquire(&t->lock);
         spinlock_release(lk);
 
-        p->sleep_chan = chan;
-        p->state = SLEEPING;
-        p->cur_thread->state = RESETING;
+        t->sleep_chan = chan;
+        p->state = RUNNABLE;
+        t->state = RESETING;
 
         sched();
 
-        p->sleep_chan = 0;
+        t->sleep_chan = 0;
 
         spinlock_release(&p->lock);
-        spinlock_release(&p->cur_thread->lock);
+        spinlock_release(&t->lock);
         spinlock_acquire(lk);
 }
 
 void wakeup(void* chan)
 {
         process_t p;
+        thread_t t;
+        int i;
         for(p = proc; p != &proc[NPROC - 1]; p++) {
                 if(p != cur_proc()) {
                         spinlock_acquire(&p->lock);
-                        if(p->sleep_chan == chan && p->state == SLEEPING) {
-                                p->state = RUNNABLE;
-                                p->cur_thread->state = READY;
+                        if(p->tnums != 0) {
+                                for(i = 0; i < p->tnums; i++) {
+                                        t = p->thread[i];
+                                        if(t->sleep_chan == chan && t->state == RESETING)
+                                                t->state = READY;
+                                }
                         }
                         spinlock_release(&p->lock);
                 }
