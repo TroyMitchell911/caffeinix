@@ -1,20 +1,15 @@
 /*
  * @Author: TroyMitchell
  * @Date: 2024-05-08
-<<<<<<< HEAD
- * @LastEditors: GoKo-Son626
- * @LastEditTime: 2024-05-16
-=======
  * @LastEditors: TroyMitchell
  * @LastEditTime: 2024-05-17
->>>>>>> thread
  * @FilePath: /caffeinix/user/init.c
  * @Description: 
  * Words are cheap so I do.
  * Copyright (c) 2024 by TroyMitchell, All Rights Reserved. 
  */
 #include "user.h"
-#include "../kernel/include/myfcntl.h"
+#include "fcntl.h"
 #include "stat.h"
 
 #define CONSOLE                 1  

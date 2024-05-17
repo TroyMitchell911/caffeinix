@@ -2,11 +2,11 @@
  * @Author: TroyMitchell
  * @Date: 2024-05-08
 <<<<<<< HEAD
- * @LastEditors: GoKo-Son626
+ * @LastEditors: TroyMitchell
 =======
  * @LastEditors: TroyMitchell
 >>>>>>> thread
- * @LastEditTime: 2024-05-16
+ * @LastEditTime: 2024-05-17
  * @FilePath: /caffeinix/user/user.h
  * @Description: 
  * Words are cheap so I do.
@@ -33,13 +33,11 @@ int getpid(void);
 char* sbrk(int);
 int sleep(int);
 int uptime(void);
-<<<<<<< HEAD
 struct stat;
 int fstat(int fd, struct stat*);
-=======
 int clone(int (*fn)(void *), void *child_stack, int flags, void *arg, ...
            /* pid_t *ptid, void *newtls, pid_t *ctid */);
->>>>>>> thread
+
 
 /* From ulib.c */
 char* strcpy(char*, const char*);
