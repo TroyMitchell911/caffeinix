@@ -449,6 +449,7 @@ uint64 sys_exit(void)
         int n;
         argint(0, &n);
         exit(n);
+        /* Never reach here */
         return 0;
 }
 

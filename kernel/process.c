@@ -24,6 +24,24 @@ extern char trampoline[];
 static struct spinlock pid_lock, wait_lock;
 struct process proc[NPROC];
 static int next_pid = 1;
+static process_t first;
+
+static void reparent(process_t p)
+{
+        process_t pp;
+        for(pp = proc; pp < &proc[NPROC]; pp ++) {
+                if(pp != p) {
+                        spinlock_acquire(&pp->lock);
+                        if(pp->parent == p) {
+                                pp->parent = first;
+                                spinlock_release(&pp->lock);
+                                wakeup(pp->parent);
+                                continue;
+                        }  
+                        spinlock_release(&pp->lock);
+                }
+        }
+}
 
 pagedir_t process_pagedir(process_t p)
 {
@@ -313,6 +331,8 @@ void userinit(void)
         /* Allow schedule */
         p->state = RUNNABLE;
 
+        first = p;
+
         /* The lock will be held in process_alloc */
         spinlock_release(&p->lock);
         spinlock_release(&t->lock);
@@ -397,7 +417,35 @@ int fork(void)
 
 void exit(int cause)
 {
+        process_t p;
+        file_t f;
+        int fd;
+        p = cur_proc();
 
+        for(fd = 0; fd < NOFILE; fd++) {
+                if((f = p->ofile[fd]) != 0) {
+                        file_close(f);
+                        p->ofile[fd] = 0;
+                }
+        }
+
+        log_begin();
+        iput(p->cwd);
+        log_end();
+
+        spinlock_acquire(&wait_lock);
+
+        reparent(p);
+
+        spinlock_acquire(&p->lock);
+
+        p->exit_state = cause;
+        p->state = ZOMBIE;
+
+        spinlock_release(&wait_lock);
+
+        sched();
+        PANIC("exit");
 }
 
 void wait(uint64 addr)

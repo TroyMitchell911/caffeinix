@@ -48,6 +48,7 @@ typedef struct process{
         file_t ofile[NOFILE];
         void *sleep_chan;
 
+        int exit_state;
         int killed;
         struct process *parent;
         trapframe_info_t tinfo;
