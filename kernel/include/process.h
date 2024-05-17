@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-25 09:22
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-16
+ * @LastEditTime: 2024-05-17
  * @FilePath: /caffeinix/kernel/include/process.h
  * @Description: 
  * Words are cheap so I do.
@@ -48,6 +48,7 @@ typedef struct process{
         file_t ofile[NOFILE];
         void *sleep_chan;
 
+        int killed;
         struct process *parent;
         trapframe_info_t tinfo;
         int tnums;
@@ -60,6 +61,7 @@ pagedir_t process_pagedir(process_t p);
 void process_freepagedir(pagedir_t pgdir, uint64 sz);
 int process_grow(int n);
 
+int killed(process_t p);
 void sleep(void* chan, spinlock_t lk);
 void wakeup(void* chan);
 void sleep_(void* chan, spinlock_t lk);

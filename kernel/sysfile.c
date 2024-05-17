@@ -378,7 +378,7 @@ static void clone_first_start(void)
         extern void user_trap_ret(void);
         user_trap_ret();
 }
-#include <mystring.h>
+
 uint64 sys_clone(void)
 {
         uint64 func_addr, arg_addr, sz;
@@ -441,4 +441,23 @@ uint64 sys_sleep(void)
         spinlock_release(&tick_lock);
 
         return 0;
+}
+
+extern void exit(int cause);
+uint64 sys_exit(void)
+{
+        int n;
+        argint(0, &n);
+        exit(n);
+        return 0;
+}
+
+extern int kill(int pid);
+uint64 sys_kill(void)
+{
+        int pid;
+        
+        argint(0, &pid);
+
+        return kill(pid);
 }

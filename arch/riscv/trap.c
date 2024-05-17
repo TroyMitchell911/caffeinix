@@ -88,9 +88,10 @@ void kernel_trap(void)
         sstatus_w(sstatus);
 }
 
+extern void exit(int cause);
 void user_trap_entry(void)
 {
-        int which_dev;
+        int which_dev = 0;
         process_t p = cur_proc();
         uint64 cause = scause_r();
 
@@ -103,6 +104,9 @@ void user_trap_entry(void)
         p->cur_thread->trapframe->epc = sepc_r();
 
         if(cause == 8) {
+                if(killed(p))
+                        exit(-1);
+
                 /* System call */
                 p->cur_thread->trapframe->epc += 4;
                 intr_on();
@@ -113,10 +117,13 @@ void user_trap_entry(void)
                         printf("sepc=%p stval=%p\n", p->cur_thread->trapframe->epc, stval_r());
                         PANIC("user_trap_entry");
                 }
-
-                if(which_dev == 2)
-                        yield();
         }
+
+        if(killed(p))
+                exit(-1);
+
+        if(which_dev == 2)
+                yield();
 
         user_trap_ret();
 }

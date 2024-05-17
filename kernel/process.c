@@ -395,6 +395,47 @@ int fork(void)
         return pid;
 }
 
+void exit(int cause)
+{
+
+}
+
+void wait(uint64 addr)
+{
+        
+}
+
+/**
+ * @description: Kill a process
+ * @param {int} pid of process
+ * @return {*} 0: kill successfully     1:kill failed
+ * @note This process will be killed actually by user_trap_entry in trap.c
+ */
+int kill(int pid)
+{
+        process_t p;
+        for(p = proc; p < &proc[NPROC]; p++) {
+                spinlock_acquire(&p->lock);
+                if(p->pid == pid) {
+                        p->killed = 1;
+                        if(p->state == SLEEPING)
+                                p->state = RUNNABLE;
+                }
+                spinlock_release(&p->lock);
+                return 0;
+        }
+        return -1;
+}
+
+int killed(process_t p)
+{
+        int killed;
+        spinlock_acquire(&p->lock);
+        killed = p->killed;
+        spinlock_release(&p->lock);
+        return killed;
+}
+
 int process_grow(int n)
 {
         uint64 sz;

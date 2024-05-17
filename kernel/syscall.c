@@ -79,6 +79,8 @@ extern uint64 sys_fstat(void);
 extern uint64 sys_sbrk(void);
 extern uint64 sys_clone(void);
 extern uint64 sys_sleep(void);
+extern uint64 sys_exit(void);
+extern uint64 sys_kill(void);
 
 typedef uint64 (*syscall_t)(void);
 
@@ -97,6 +99,8 @@ syscall_t syscalls[] = {
         [SYS_sbrk] = sys_sbrk,
         [SYS_clone] = sys_clone,
         [SYS_sleep] = sys_sleep,
+        [SYS_exit] = sys_exit,
+        [SYS_kill] = sys_kill,
 };      
 
 void syscall(void)
