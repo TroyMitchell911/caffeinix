@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-30 06:23
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-17
+ * @LastEditTime: 2024-05-18
  * @FilePath: /caffeinix/kernel/process.c
  * @Description: 
  * Words are cheap so I do.
@@ -419,7 +419,8 @@ void exit(int cause)
 {
         process_t p;
         file_t f;
-        int fd;
+        int fd, i;
+
         p = cur_proc();
 
         for(fd = 0; fd < NOFILE; fd++) {
@@ -438,9 +439,19 @@ void exit(int cause)
         reparent(p);
 
         spinlock_acquire(&p->lock);
+        spinlock_acquire(&p->cur_thread->lock);
 
         p->exit_state = cause;
         p->state = ZOMBIE;
+        p->cur_thread->state = DIED;
+        
+        for(i = 0; i < p->tnums; i++) {
+                if(p->thread[i] && p->thread[i] != p->cur_thread) {
+                        spinlock_acquire(&p->thread[i]->lock);
+                        p->thread[i]->state = DIED;
+                        spinlock_release(&p->thread[i]->lock);
+                }
+        }
 
         spinlock_release(&wait_lock);
 
@@ -468,9 +479,10 @@ int kill(int pid)
                         p->killed = 1;
                         if(p->state == SLEEPING)
                                 p->state = RUNNABLE;
+                        spinlock_release(&p->lock);
+                        return 0;
                 }
                 spinlock_release(&p->lock);
-                return 0;
         }
         return -1;
 }

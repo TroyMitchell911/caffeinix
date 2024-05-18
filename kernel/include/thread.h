@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-05-16
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-17
+ * @LastEditTime: 2024-05-18
  * @FilePath: /caffeinix/kernel/include/thread.h
  * @Description: 
  * Words are cheap so I do.
@@ -25,6 +25,7 @@ typedef enum thread_state {
         READY,
         RESETING,
         ACTIVE,
+        DIED,
 }thread_state_t;
 
 typedef struct context {

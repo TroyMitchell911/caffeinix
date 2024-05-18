@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-05-08
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-17
+ * @LastEditTime: 2024-05-18
  * @FilePath: /caffeinix/user/init.c
  * @Description: 
  * Words are cheap so I do.
@@ -35,10 +35,18 @@ int main(void){
         clone(_test_thread, 0, 0, "_test_thread5");
 
         ret = fork();
-        if(ret == 0)
-                printf("child\n");
-        else
+        if(ret == 0) {
+                for(;;) {
+                        printf("child\n");
+                        sleep(1);
+                }
+        }
+        else {
+                sleep(3);
                 printf("parent\n");
+                kill(ret);
+        }
+                
 
         for(;;) {
                 if(fd != -1) {
