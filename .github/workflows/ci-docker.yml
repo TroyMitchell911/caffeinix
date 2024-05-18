@@ -1,0 +1,26 @@
+name: CI with Docker for Ubuntu 22.04
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Docker container
+        run: |
+          docker run --name build-env -v ${{ github.workspace }}:/workspace -w /workspace -d troymitchell/caffeinix:1.0 sleep 3600
+      - name: Build
+        run: |
+          docker exec build-env bash -c "export PATH=$PATH:/opt/riscv/bin && make"
+      - name: Cleanup
+        run: docker stop build-env
