@@ -30,14 +30,7 @@ int main(void){
         } else {
                 printf("open console failed\n");
                 exit(-1);
-        }
-
-        for(;;) {
-                char buf[5];
-                gets(buf, 5);
-                printf("%s", buf);
-        }
-                        
+        }     
 
         for(;;) {
                 pid = fork();

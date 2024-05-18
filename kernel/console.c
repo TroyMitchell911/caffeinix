@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-26
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-15
+ * @LastEditTime: 2024-05-18
  * @FilePath: /caffeinix/kernel/console.c
  * @Description: 
  * Words are cheap so I do.
@@ -31,6 +31,8 @@ static struct {
 #define BACKSPACE       0x100
 #define C(x)            ((x)-'@')  // Control-x
 
+int read_size = 0;
+
 static void console_intr(int c)
 {
         spinlock_acquire(&console.lock);
@@ -43,7 +45,7 @@ static void console_intr(int c)
                                 console_putc(c);
                                 console.buf[console.e++ % INPUT_BUF_SIZE] = c;
                                 /* We can wakeup the blocked process by read if the user input '\n' */
-                                if(c == '\n' || console.e - console.r == INPUT_BUF_SIZE) {
+                                if(c == '\n' || console.e - console.r == INPUT_BUF_SIZE || console.e - console.r == read_size) {
                                         console.w = console.e;
                                         wakeup_(&console.r);
                                 }
@@ -72,6 +74,8 @@ int console_read(uint64 dst, int n)
         int ret, target;
 
         target = n;
+
+        read_size = n;
 
         spinlock_acquire(&console.lock);
 
