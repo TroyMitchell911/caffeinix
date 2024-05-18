@@ -33,6 +33,13 @@ int main(void){
         }
 
         for(;;) {
+                char buf[5];
+                gets(buf, 5);
+                printf("%s", buf);
+        }
+                        
+
+        for(;;) {
                 pid = fork();
 
                 if(pid == -1) {
