@@ -438,6 +438,8 @@ void exit(int cause)
 
         reparent(p);
 
+        wakeup(p->parent);
+
         spinlock_acquire(&p->lock);
         spinlock_acquire(&p->cur_thread->lock);
 
@@ -475,7 +477,7 @@ int wait(uint64 addr)
                                 if(pp->state == ZOMBIE) {
                                         pid = pp->pid;
 
-                                        if(!addr && 
+                                        if(addr && 
                                            !either_copyout(1,
                                                                 addr,
                                                                 &pp->exit_state,

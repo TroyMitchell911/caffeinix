@@ -32,31 +32,31 @@ int main(void){
                 exit(-1);
         }
 
-        pid = fork();
-
-        if(pid == -1) {
-                printf("fork faild\n");
-                exit(-1);
-        } else if(pid == 0) {
-                exec("sh", argv);
-                printf("exec sh failed\n");
-                exit(-1);
-        }
-                
         for(;;) {
-                ret = wait(0);
-                if(ret == pid) {
-                        printf("sh exited\n");
-                        break;
-                } else if(ret == -1) {
-                        printf("wait failed\n");
+                pid = fork();
+
+                if(pid == -1) {
+                        printf("fork faild\n");
                         exit(-1);
-                } else {
-                        printf("parentless\n");
-                        /* Don't do anything: parentless */
+                } else if(pid == 0) {
+                        exec("sh", argv);
+                        printf("exec sh failed\n");
+                        exit(-1);
+                }
+                        
+                for(;;) {
+                        ret = wait(0);
+                        if(ret == pid) {
+                                printf("sh exited\n");
+                                sleep(2);
+                                break;
+                        } else if(ret == -1) {
+                                printf("wait failed\n");
+                                exit(-1);
+                        } else {
+                                printf("parentless\n");
+                                /* Don't do anything: parentless */
+                        }
                 }
         }
-
-        
-        return 0;
 }

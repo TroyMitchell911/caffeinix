@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-05-07
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-17
+ * @LastEditTime: 2024-05-18
  * @FilePath: /caffeinix/kernel/exec.c
  * @Description: 
  * Words are cheap so I do.
@@ -79,13 +79,13 @@ int exec(char* path, char** argv)
         pgdir = process_pagedir(p);
         if(!pgdir)
                 goto fail;
-        printf("elf.phoff = %d; elf.phnum = %d\n", elf.phoff, elf.phnum);
+        // printf("elf.phoff = %d; elf.phnum = %d\n", elf.phoff, elf.phnum);
         for(i = 0, off = elf.phoff; i < elf.phnum; i++, off += sizeof(ph)) {
                 
                 if(readi(ip, 0, (uint64)&ph, off, sizeof(ph)) != sizeof(ph))
                         goto fail;
-                printf("ph.type = %d\n", ph.type);
-                printf("ph.off = %x; ph.filesize:%x\n", ph.off, ph.filesz);
+                // printf("ph.type = %d\n", ph.type);
+                // printf("ph.off = %x; ph.filesize:%x\n", ph.off, ph.filesz);
                 if(ph.type != ELF_PROG_LOAD)
                         continue;
                         
@@ -99,7 +99,7 @@ int exec(char* path, char** argv)
                 if(ph.vaddr % PGSIZE != 0)
                         goto fail;
                 /* Extend virtual address and alloc physical memory */
-                printf("vm_alloc: %x->%x\n",sz, ph.vaddr + ph.memsz);
+                // printf("vm_alloc: %x->%x\n",sz, ph.vaddr + ph.memsz);
                 if((sz1 = vm_alloc(pgdir, sz, ph.vaddr + ph.memsz, flags2perm(ph.flags))) == 0)
                         goto fail;
                 sz = sz1;
