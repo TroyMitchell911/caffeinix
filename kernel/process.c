@@ -459,9 +459,48 @@ void exit(int cause)
         PANIC("exit");
 }
 
-void wait(uint64 addr)
+int wait(uint64 addr)
 {
-        
+        process_t p, pp;
+        int kids = 0, pid;
+        p = cur_proc();
+
+        spinlock_acquire(&wait_lock);
+
+        for(;;) {
+                for(pp = proc; pp < &proc[NPROC]; pp++) {
+                        if(pp->parent == p) {
+                                spinlock_acquire(&pp->lock);
+                                kids = 1;
+                                if(pp->state == ZOMBIE) {
+                                        pid = pp->pid;
+
+                                        if(!addr && 
+                                           !either_copyout(1,
+                                                                addr,
+                                                                &pp->exit_state,
+                                                                sizeof(pp->exit_state))) {
+                                                spinlock_release(&pp->lock);
+                                                spinlock_release(&wait_lock);
+                                                return -1;
+                                        }
+
+                                        process_free(pp);
+                                        spinlock_release(&pp->lock);
+                                        spinlock_release(&wait_lock);
+
+                                        return pid;
+                                }
+                        }
+                }
+
+                if(!kids || killed(p)) {
+                        spinlock_release(&wait_lock);
+                        return -1;
+                }
+
+                sleep(p, &wait_lock);
+        }
 }
 
 /**
