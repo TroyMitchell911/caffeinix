@@ -85,9 +85,21 @@ int strncmp(const char *p, const char *q, uint32 n)
         return (uint8)*p - (uint8)*q;
 }
 
+extern int read(int, void*, int);
 char* gets(char* buf, int max)
 {
-        return 0;
+        int n, ret;
+        n = 0;
+        while(n < (max - 1)) {
+                ret = read(0, buf + n, 1);
+                if(ret != 1)
+                        break;
+                n ++;
+                if(buf[n - 1] == '\n' || buf[n - 1] == '\r')
+                        break;
+        }
+        buf[n] = '\0';
+        return buf;
 }
 
 /* Get string length */
