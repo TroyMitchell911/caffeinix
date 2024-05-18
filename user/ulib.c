@@ -2,14 +2,22 @@
  * @Author: TroyMitchell
  * @Date: 2024-05-14
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-14
- * @FilePath: /caffeinix/user/ublic.c
+ * @LastEditTime: 2024-05-18
+ * @FilePath: /caffeinix/user/ulib.c
  * @Description: 
  * Words are cheap so I do.
  * Copyright (c) 2024 by TroyMitchell, All Rights Reserved. 
  */
 
 #include "../arch/riscv/include/typedefs.h"
+
+extern void exit(int cause);
+void _main(void)
+{
+        extern int main();
+        main();
+        exit(0);
+}
 
 char* strcpy(char *s, const char *t)
 {
