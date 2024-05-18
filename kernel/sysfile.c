@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-05-07
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-17
+ * @LastEditTime: 2024-05-18
  * @FilePath: /caffeinix/kernel/sysfile.c
  * @Description: 
  * Words are cheap so I do.
@@ -461,4 +461,14 @@ uint64 sys_kill(void)
         argint(0, &pid);
 
         return kill(pid);
+}
+
+extern int wait(uint64 addr);
+uint64 sys_wait(void)
+{
+        uint64 addr;
+
+        argaddr(0, &addr);
+
+        return wait(addr);
 }

@@ -491,6 +491,7 @@ int wait(uint64 addr)
 
                                         return pid;
                                 }
+                                spinlock_release(&pp->lock);
                         }
                 }
 

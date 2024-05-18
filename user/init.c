@@ -12,61 +12,51 @@
 #include "fcntl.h"
 #include "stat.h"
 
-#define CONSOLE                 1  
+#define CONSOLE                 1 
 
-int _test_thread(void* arg);
+char *argv[] = {"sh", 0};
 
 int main(void){
-        int ret, fd;
-        char buf[128];
+        int pid, fd, ret;
 
         if((fd = open("console", O_RDWR)) == -1) {
                 if((mknod("console", 1, 0)) == 0) {
                         fd = open("console", O_RDWR);       
                 }
         }
-        if(fd != -1)
+        if(fd != -1) {
                 fd = dup(fd);
-
-        clone(_test_thread, 0, 0, "_test_thread1");
-        clone(_test_thread, 0, 0, "_test_thread2");
-        clone(_test_thread, 0, 0, "_test_thread3");
-        clone(_test_thread, 0, 0, "_test_thread4");
-        clone(_test_thread, 0, 0, "_test_thread5");
-
-        ret = fork();
-        if(ret == 0) {
-                for(;;) {
-                        printf("child\n");
-                        sleep(1);
-                }
+                fd = dup(fd);
+        } else {
+                printf("open console failed\n");
+                exit(-1);
         }
-        else {
-                sleep(3);
-                printf("parent\n");
-                kill(ret);
+
+        pid = fork();
+
+        if(pid == -1) {
+                printf("fork faild\n");
+                exit(-1);
+        } else if(pid == 0) {
+                exec("sh", argv);
+                printf("exec sh failed\n");
+                exit(-1);
         }
                 
-
         for(;;) {
-                if(fd != -1) {
-                        ret = read(fd, buf, 128);
-                        buf[ret] = '\0';
-                        if(ret != 0) {
-                                fprintf(fd, "From user: %s", buf);
-                        }
-                }  
+                ret = wait(0);
+                if(ret == pid) {
+                        printf("sh exited\n");
+                        break;
+                } else if(ret == -1) {
+                        printf("wait failed\n");
+                        exit(-1);
+                } else {
+                        printf("parentless\n");
+                        /* Don't do anything: parentless */
+                }
         }
 
-        return 0;
-}
-
-int _test_thread(void* arg)
-{
         
-        while(1) {
-              printf("%s\n", (char*)arg);
-              sleep(1);  
-        }
         return 0;
 }

@@ -57,7 +57,9 @@ obj-y += kernel/
 obj-y += arch/riscv/
 
 UPROGS = \
-	$(TOPDIR)/user/_init
+	$(TOPDIR)/user/_init \
+	$(TOPDIR)/user/_sh
+
 export UPROGS
 
 TARGET := $(OUTPUT)/kernel
