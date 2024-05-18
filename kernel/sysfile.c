@@ -261,6 +261,7 @@ uint64 sys_close(void)
         f = cur_proc()->ofile[fd];
         if(!f)
                 return -1;
+        cur_proc()->ofile[fd] = 0;
         file_close(f);
         return 0;
 }

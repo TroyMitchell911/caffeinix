@@ -3,6 +3,8 @@
 
 #define SH_BUF_MAX                      128
 
+char *argv[] = {0, 0};
+
 static int getcmd(char* buf, int max)
 {
         printf("$ ");
