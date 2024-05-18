@@ -1,12 +1,8 @@
 /*
  * @Author: TroyMitchell
  * @Date: 2024-05-08
-<<<<<<< HEAD
- * @LastEditors: TroyMitchell
-=======
- * @LastEditors: TroyMitchell
->>>>>>> thread
- * @LastEditTime: 2024-05-17
+ * @LastEditors: GoKo-Son626
+ * @LastEditTime: 2024-05-18
  * @FilePath: /caffeinix/user/user.h
  * @Description: 
  * Words are cheap so I do.

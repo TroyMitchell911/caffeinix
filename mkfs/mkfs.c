@@ -18,8 +18,10 @@ typedef unsigned short ushort;
 
 #define bzero_mkfs(dst, sz)  memset(dst, 0, sz)
 
-// Disk layout:
-// [ boot block | sb block | log | inode blocks | free bit map | data blocks ]
+/*
+        Disk layout:
+        [ boot block | sb block | log | inode blocks | free bit map | data blocks ]
+*/
 
 int nbitmap = FSSIZE/(BSIZE*8) + 1;
 int ninodeblocks = NINODES / IPB + 1;
@@ -79,7 +81,7 @@ int main(int argc, char *argv[])
 
         static_assert(sizeof(int) == 4, "Integers must be 4 bytes!");
 
-        if(argc < 2){
+        if(argc < 2) {
         fprintf(stderr, "Usage: mkfs fs.img files...\n");
                 exit(1);
         }
@@ -129,18 +131,14 @@ int main(int argc, char *argv[])
         strcpy(de.name, "..");
         iappend(rootino, &de, sizeof(de));
 
-        for(i = 2; i < argc; i++)
-        {
+        for(i = 2; i < argc; i++) {
                 // get rid of "user/"
                 char *shortname = strstr(argv[i], "user/");
 
-                if(!shortname)
-                {
+                if(!shortname) {
                         shortname = argv[i];
-                } else 
-                {
+                } else
                         shortname += 5;
-                }
 
                 printf("shortname:%s\n", shortname);
                 assert(strchr(shortname, '/') == 0);
@@ -245,8 +243,7 @@ void balloc_mkfs(int used)
         printf("balloc_mkfs: first %d blocks have been allocated\n", used);
         assert(used < BSIZE*8);
         bzero_mkfs(buf, BSIZE);
-        for(i = 0; i < used; i++)
-        {
+        for(i = 0; i < used; i++) {
                 buf[i/8] = buf[i/8] | (0x1 << (i%8));
         }
         printf("balloc_mkfs: write bitmap block at sector %d\n", sb.bmapstart);
@@ -267,26 +264,20 @@ void iappend(uint inum, void *xp, int n)
         rinode(inum, &din);
         off = xint(din.size);
         // printf("append inum %d at off %d sz %d\n", inum, off, n);
-        while(n > 0)
-        {
+        while(n > 0) {
                 fbn = off / BSIZE;
                 assert(fbn < MAXFILE);
-                if(fbn < NDIRECT)
-                {
-                        if(xint(din.addrs[fbn]) == 0)
-                        {
+                if(fbn < NDIRECT) {
+                        if(xint(din.addrs[fbn]) == 0) {
                                 din.addrs[fbn] = xint(freeblock++);
                         }
                         x = xint(din.addrs[fbn]);
-                } else 
-                {
-                        if(xint(din.addrs[NDIRECT]) == 0)
-                        {
+                } else {
+                        if(xint(din.addrs[NDIRECT]) == 0) {
                                 din.addrs[NDIRECT] = xint(freeblock++);
                         }
                         rsect(xint(din.addrs[NDIRECT]), (char*)indirect);
-                        if(indirect[fbn - NDIRECT] == 0)
-                        {
+                        if(indirect[fbn - NDIRECT] == 0) {
                                 indirect[fbn - NDIRECT] = xint(freeblock++);
                                 wsect(xint(din.addrs[NDIRECT]), (char*)indirect);
                         }

@@ -1,8 +1,8 @@
 /*
  * @Author: TroyMitchell
  * @Date: 2024-05-08
- * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-17
+ * @LastEditors: GoKo-Son626
+ * @LastEditTime: 2024-05-18
  * @FilePath: /caffeinix/user/init.c
  * @Description: 
  * Words are cheap so I do.
@@ -13,6 +13,8 @@
 #include "stat.h"
 
 #define CONSOLE                 1  
+#define NULL (void*)            0
+
 
 int _test_thread(void* arg);
 
@@ -27,6 +29,48 @@ int main(void){
         }
         if(fd != -1)
                 fd = dup(fd);
+
+        char str1[] = "Hello, world!";
+        char c1 = 'o';  
+        char c2 = 'z';  
+        
+        /* Test for "strchr" */
+        // Test to find a character
+        char* result1 = strchr(str1, c1);  
+        if (result1 != NULL ) {  
+                printf("Found '%c' in '%s'\n", c1, str1);  
+        } else {  
+                printf("'%c' not found in '%s'\n", c1, str1);  
+        }
+        // Test to find a character that not exit
+        char* result2 = strchr(str1, c2);  
+        if (result2 != NULL) {  
+                printf("Found '%c' in '%s' \n", c2, str1);  
+        } else {  
+                printf("'%c' not found in '%s'\n", c2, str1);  
+        }
+
+        /* Test for atoi */
+        char* Num = "66";
+        int number = atoi(Num);
+        printf("The number value of char \" %s \" is %d \n", Num, number);
+
+        /* Test for memcmp*/
+        char* str2 = "Hello";
+        char* str3 = "Hello world";
+        int result3 = memcmp(str2, str3, strlen(str2));  
+        if (result3 == 0) {  
+                printf("The first %d bits of str1 and str2 are equal\n", strlen(str2));  
+        } else {  
+                printf("The first %d bits of str1 and str2 are not equal\n", strlen(str2));  
+        }
+        int result4 = memcmp(str2, str3, strlen(str3));  
+        if (result4 == 0) {  
+                printf("The first %d bits of str1 and str2 are equal\n", strlen(str3));  
+        } else {  
+                printf("The first %d bits of str1 and str2 are not equal\n", strlen(str3));  
+        }
+
 
         clone(_test_thread, 0, 0, "_test_thread1");
         clone(_test_thread, 0, 0, "_test_thread2");
