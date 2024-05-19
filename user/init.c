@@ -12,6 +12,8 @@
 #include "fcntl.h"
 #include "stat.h"
 
+#define TEST_USER               1
+
 #define CONSOLE                 1 
 
 char *argv[] = {"sh", 0};
@@ -31,6 +33,19 @@ int main(void){
                 printf("open console failed\n");
                 exit(-1);
         }     
+
+#if TEST_USER
+        pid = fork();
+        if(pid == 0) {
+                char *targv[] = {"tuser", 0};
+                exec("tuser", targv);
+                exit(0);
+        } else if(pid != -1) {
+                wait(0);
+        } else {
+                exit(-1);
+        }
+#endif
 
         for(;;) {
                 pid = fork();

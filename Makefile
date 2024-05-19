@@ -58,7 +58,8 @@ obj-y += arch/riscv/
 
 UPROGS = \
 	$(TOPDIR)/user/_init \
-	$(TOPDIR)/user/_sh
+	$(TOPDIR)/user/_sh \
+	$(TOPDIR)/user/_tuser \
 
 export UPROGS
 
