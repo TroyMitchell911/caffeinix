@@ -1,8 +1,8 @@
 /*
  * @Author: TroyMitchell
  * @Date: 2024-05-07
- * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-18
+ * @LastEditors: GoKo-Son626
+ * @LastEditTime: 2024-05-20
  * @FilePath: /caffeinix/kernel/sysfile.c
  * @Description: 
  * Words are cheap so I do.
@@ -472,4 +472,33 @@ uint64 sys_wait(void)
         argaddr(0, &addr);
 
         return wait(addr);
+}
+
+/**
+ * @description: Changing the working directory of current process
+ * @return {int}: Returns 0 if the working directory was changed successfully, or 1 if not
+ */
+uint64 sys_chdir(void)
+{
+        char path[MAXPATH];
+        inode_t ip;
+        process_t p = cur_proc();
+
+        log_begin();
+        if (argstr(0, path, MAXPATH) < 0 || (ip = namei(path)) == 0) {
+                log_end();
+                return -1;
+        }
+        ilock(ip);
+        if (ip->d.type != T_DIR) {
+                iunlock(ip);
+                log_end();
+                return -1;
+        }
+        iunlock(ip);
+        iput(p->cwd);
+        log_end();
+        p->cwd = ip;
+
+        return 0;
 }
