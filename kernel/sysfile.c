@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-05-07
  * @LastEditors: GoKo-Son626
- * @LastEditTime: 2024-05-19
+ * @LastEditTime: 2024-05-20
  * @FilePath: /caffeinix/kernel/sysfile.c
  * @Description: 
  * Words are cheap so I do.
@@ -491,7 +491,7 @@ uint64 sys_chdir(void)
         }
         ilock(ip);
         if (ip->d.type != T_DIR) {
-                iunlockput(ip);
+                iunlock(ip);
                 log_end();
                 return -1;
         }
