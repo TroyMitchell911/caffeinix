@@ -523,17 +523,13 @@ char name[DIRSIZ], new_path[MAXPATH], old_path[MAXPATH];
         log_begin();
 
         ip = namei(old_path);
-        if (!ip) {
-                log_end();
-                return -1;
-        }
+        if (!ip)
+                goto r0;
 
         ilock(ip);
 
-        if (ip->d.type == T_DIR) {
-                iunlockput(ip);
-                return -1;
-        }
+        if (ip->d.type == T_DIR)
+                goto r1;
 
         ip->d.nlink++;
         iupdate(ip);
@@ -561,7 +557,9 @@ bad:
         ilock(ip);
         ip->d.nlink--;
         iupdate(ip);
+r1:
         iunlockput(ip);
+r0:
         log_end();
         return -1;
 }
