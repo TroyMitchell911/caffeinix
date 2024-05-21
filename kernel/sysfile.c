@@ -1,8 +1,8 @@
 /*
  * @Author: TroyMitchell
  * @Date: 2024-05-07
- * @LastEditors: GoKo-Son626
- * @LastEditTime: 2024-05-20
+ * @LastEditors: TroyMitchell
+ * @LastEditTime: 2024-05-21
  * @FilePath: /caffeinix/kernel/sysfile.c
  * @Description: 
  * Words are cheap so I do.
@@ -501,4 +501,67 @@ uint64 sys_chdir(void)
         p->cwd = ip;
 
         return 0;
+}
+
+/**
+ * @description: Create the path new as a link to the same inode as old_path
+ * @return {int}: Returns 0 on successful creation and -1 on failure
+ */
+uint64 sys_link(void)
+{
+char name[DIRSIZ], new_path[MAXPATH], old_path[MAXPATH];
+        inode_t dp, ip;
+        int ret;
+
+        ret = argstr(0, old_path, MAXPATH);
+        if(ret < 0)
+                return -1;
+        ret = argstr(1, new_path, MAXPATH);
+        if(ret < 0)
+                return -1;
+
+        log_begin();
+
+        ip = namei(old_path);
+        if (!ip) {
+                log_end();
+                return -1;
+        }
+
+        ilock(ip);
+
+        if (ip->d.type == T_DIR) {
+                iunlockput(ip);
+                return -1;
+        }
+
+        ip->d.nlink++;
+        iupdate(ip);
+        iunlock(ip);
+
+        dp = nameiparent(new_path, name);
+
+        if (!dp) {
+              goto bad;  
+        }
+
+        ilock(dp);
+
+        if (dp->dev != ip->dev || dirlink(dp, name, ip->inum)) {
+                iunlockput(dp);
+                goto bad;
+        }
+        iunlockput(dp);
+        iput(ip);
+        log_end();
+
+        return 0;
+
+bad:
+        ilock(ip);
+        ip->d.nlink--;
+        iupdate(ip);
+        iunlockput(ip);
+        log_end();
+        return -1;
 }

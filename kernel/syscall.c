@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-05-07
  * @LastEditors: GoKo-Son626
- * @LastEditTime: 2024-05-19
+ * @LastEditTime: 2024-05-20
  * @FilePath: /caffeinix/kernel/syscall.c
  * @Description: 
  * Words are cheap so I do.
@@ -83,6 +83,7 @@ extern uint64 sys_exit(void);
 extern uint64 sys_kill(void);
 extern uint64 sys_wait(void);
 extern uint64 sys_chdir(void);
+extern uint64 sys_link(void);
 
 typedef uint64 (*syscall_t)(void);
 
@@ -105,6 +106,7 @@ syscall_t syscalls[] = {
         [SYS_kill] = sys_kill,
         [SYS_wait] = sys_wait,
         [SYS_chdir] = sys_chdir,
+        [SYS_link] = sys_link,
 };      
 
 void syscall(void)
