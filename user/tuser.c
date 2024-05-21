@@ -1,8 +1,8 @@
 /*
  * @Author: TroyMitchell
  * @Date: 2024-05-19
- * @LastEditors: GoKo-Son626
- * @LastEditTime: 2024-05-20
+ * @LastEditors: TroyMitchell
+ * @LastEditTime: 2024-05-21
  * @FilePath: /caffeinix/user/tuser.c
  * @Description: 
  * Words are cheap so I do.
@@ -10,28 +10,21 @@
  */
 
 #include "user.h"
+#include "fcntl.h"
 
 int main(void)
 {
- int ret;
+        int ret;
         const char *oldfile = "oldfile.txt";
         const char *newfile = "newfile.txt";
         printf("test user program!\n");
 
-        int fd = open(oldfile, 0x200 | 0x001);
+        int fd = open(oldfile, O_CREAT);
         if (fd < 0) {  
                 printf("open oldfile.txt failed\n");  
                 return 0;
-        }else {
+        } else {
                 printf("open oldfile.txt successfully\n");
-        }
-
-        int fd1 = open(newfile, 0x200 | 0x001);
-        if (fd1 < 0) {  
-                printf("open newfile.txt failed\n");  
-                return 0;
-        }else {
-                printf("open newfile.txt successfully\n");
         }
 
         ret = link(oldfile, newfile);
@@ -39,6 +32,14 @@ int main(void)
                 printf("link fail \n");
         } else {
                 printf("link successful \n");
+        }
+
+        int fd1 = open(oldfile, 0x002);
+        if (fd1 < 0) {  
+                printf("open newfile.txt failed\n");  
+                return 0;
+        } else {
+                printf("open newfile.txt successfully\n");
         }
 
         return 0;
