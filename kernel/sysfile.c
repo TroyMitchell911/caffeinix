@@ -1,8 +1,8 @@
 /*
  * @Author: TroyMitchell
  * @Date: 2024-05-07
- * @LastEditors: GoKo-Son626
- * @LastEditTime: 2024-05-20
+ * @LastEditors: TroyMitchell
+ * @LastEditTime: 2024-05-21
  * @FilePath: /caffeinix/kernel/sysfile.c
  * @Description: 
  * Words are cheap so I do.
@@ -509,16 +509,21 @@ uint64 sys_chdir(void)
  */
 uint64 sys_link(void)
 {
-        char name[DIRSIZ], new_path[MAXPATH], old_path[MAXPATH];
+char name[DIRSIZ], new_path[MAXPATH], old_path[MAXPATH];
         inode_t dp, ip;
+        int ret;
 
-        if (argstr(0, old_path, MAXPATH) < 0 || argstr(1, new_path, MAXPATH)) {
+        ret = argstr(0, old_path, MAXPATH);
+        if(ret < 0)
                 return -1;
-        }
+        ret = argstr(1, new_path, MAXPATH);
+        if(ret < 0)
+                return -1;
 
         log_begin();
 
-        if ((ip = namei(old_path)) == 0) {
+        ip = namei(old_path);
+        if (!ip) {
                 log_end();
                 return -1;
         }
@@ -534,7 +539,9 @@ uint64 sys_link(void)
         iupdate(ip);
         iunlock(ip);
 
-        if ((dp = nameiparent(new_path, name)) == 0) {
+        dp = nameiparent(new_path, name);
+
+        if (!dp) {
               goto bad;  
         }
 
@@ -556,6 +563,5 @@ bad:
         iupdate(ip);
         iunlockput(ip);
         log_end();
-
         return -1;
 }
