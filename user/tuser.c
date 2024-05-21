@@ -1,7 +1,7 @@
 /*
  * @Author: TroyMitchell
  * @Date: 2024-05-19
- * @LastEditors: TroyMitchell
+ * @LastEditors: GoKo-Son626
  * @LastEditTime: 2024-05-21
  * @FilePath: /caffeinix/user/tuser.c
  * @Description: 
@@ -40,6 +40,23 @@ int main(void)
                 return 0;
         } else {
                 printf("open newfile.txt successfully\n");
+        }
+
+        /*Test for unlink*/
+        printf("\n");
+        int fd2 = unlink(oldfile);
+        if (fd2 != 0) {
+                printf("unlink %s faild\n", oldfile);
+        } else {
+                printf("unlink %s successfully\n", oldfile);
+        }
+
+        fd1 = open(oldfile, 0x002);
+        if (fd1 < 0) {  
+                printf("After unlink, open oldfile.txt failed\n");  
+                return 0;
+        } else {
+                printf("After unlink, open oldfile.txt successfully\n");
         }
 
         return 0;
