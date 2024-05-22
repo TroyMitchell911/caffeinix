@@ -164,12 +164,12 @@ uint64 sys_open(void)
                 goto fail2;
         }
 
-        if(ip->d.type == T_FILE) {
-                f->type = FD_INODE;
-                f->off = 0;
-        } else if(ip->d.type == T_DEVICE) {
+        if(ip->d.type == T_DEVICE) {
                 f->type = FD_DEVICE;
                 f->major = ip->d.major;
+        } else {
+                f->type = FD_INODE;
+                f->off = 0;
         }
 
         f->ip = ip;
