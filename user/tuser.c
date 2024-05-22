@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-05-19
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-21
+ * @LastEditTime: 2024-05-22
  * @FilePath: /caffeinix/user/tuser.c
  * @Description: 
  * Words are cheap so I do.
@@ -40,6 +40,23 @@ int main(void)
                 return 0;
         } else {
                 printf("open newfile.txt successfully\n");
+        }
+
+        /*Test for unlink*/
+        printf("\n");
+        int fd2 = unlink(newfile);
+        if (fd2 != 0) {
+                printf("unlink %s faild\n", newfile);
+        } else {
+                printf("unlink %s successfully\n", newfile);
+        }
+
+        fd1 = open(newfile, 0x002);
+        if (fd1 < 0) {  
+                printf("After unlink, open newfile.txt failed\n");  
+                return 0;
+        } else {
+                printf("After unlink, open newfile.txt successfully\n");
         }
 
         return 0;

@@ -1,13 +1,14 @@
 /*
  * @Author: TroyMitchell
  * @Date: 2024-05-07
- * @LastEditors: TroyMitchell
+ * @LastEditors: GoKo-Son626
  * @LastEditTime: 2024-05-21
  * @FilePath: /caffeinix/kernel/sysfile.c
  * @Description: 
  * Words are cheap so I do.
  * Copyright (c) 2024 by TroyMitchell, All Rights Reserved. 
  */
+#include "fs.h"
 #include "include/inode.h"
 #include "log.h"
 #include "typedefs.h"
@@ -509,7 +510,7 @@ uint64 sys_chdir(void)
  */
 uint64 sys_link(void)
 {
-char name[DIRSIZ], new_path[MAXPATH], old_path[MAXPATH];
+        char name[DIRSIZ], new_path[MAXPATH], old_path[MAXPATH];
         inode_t dp, ip;
         int ret;
 
@@ -561,5 +562,78 @@ r1:
         iunlockput(ip);
 r0:
         log_end();
+        return -1;
+}
+
+static int isdirempty(struct inode *dp)
+{
+        int off;
+        struct dirent de;
+
+        for(off=2*sizeof(de); off<dp->d.size; off+=sizeof(de)) {
+        if(readi(dp, 0, (uint64)&de, off, sizeof(de)) != sizeof(de))
+                panic("isdirempty: readi");
+        if(de.inum != 0)
+                        return 0;
+        }
+        return 1;
+}
+
+uint64 sys_unlink(void)
+{
+        int ret1,ret2;
+        inode_t ip, dp;
+        struct dirent de;
+        char name[DIRSIZ], path[MAXPATH];
+        uint off;
+
+        ret1 = argstr(0, path, MAXPATH);
+        if(ret1 < 0)
+                return -1;
+
+        log_begin();
+        dp = nameiparent(path, name);
+        if(dp == 0) {
+                log_end();
+                return -1;
+        }
+
+        ilock(dp);
+
+        ret1 = strncmp(name, ".", DIRSIZ);
+        ret2 = strncmp(name, "..", DIRSIZ);
+        if(ret1 == 0 || ret2 == 0)
+                goto bad;
+
+        if((ip = dirlookup(dp, name, &off)) == 0)
+                goto bad;
+        ilock(ip);
+
+        if(ip->d.nlink < 1)
+                panic("unlink: nlink < 1");
+        if(ip->d.type == T_DIR && !isdirempty(ip)) {
+                iunlockput(ip);
+                goto bad;
+        }
+
+        memset(&de, 0, sizeof(de));
+        ret1 = writei(dp, 0, (uint64) & de, off, sizeof(de));
+        if(ret1 != sizeof(de))
+                panic("unlink: writei");
+        if(ip->d.type == T_DIR) {
+                dp->d.nlink--;
+                iupdate(dp);
+        }
+        iunlockput(dp);
+
+        ip->d.nlink--;
+        iupdate(ip);
+        iunlockput(ip);
+        log_end();
+        return 0;
+bad:
+        iunlockput(dp);
+        log_end();
+
         return -1;
 }
