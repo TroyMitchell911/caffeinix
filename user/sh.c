@@ -240,6 +240,15 @@ int main(void)
         }
 
         while(getcmd(buf, SH_BUF_MAX) >= 0) {
+                if(buf[0] == 'c' && buf[1] == 'd' && buf[2] == ' ') {
+                        /* Delete '\n' */
+                        buf[strlen(buf) - 1] = '\0';
+
+                        if(chdir(buf + 3) < 0)
+                                fprintf(2, "cd: %s: No such file or directory\n", buf + 3);
+
+                        continue;
+                }
                 ret = fork();
                 if(ret == 0) {
                         runcmd(parsecmd(buf));
@@ -247,7 +256,7 @@ int main(void)
                         panic("fork failed\n");
                 } else {
                         wait(0);
-                }
+                }   
         }
 
         exit(-1);
