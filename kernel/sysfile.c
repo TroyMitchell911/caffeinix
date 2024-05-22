@@ -1,17 +1,16 @@
 /*
  * @Author: TroyMitchell
  * @Date: 2024-05-07
- * @LastEditors: GoKo-Son626
- * @LastEditTime: 2024-05-21
+ * @LastEditors: TroyMitchell
+ * @LastEditTime: 2024-05-22
  * @FilePath: /caffeinix/kernel/sysfile.c
  * @Description: 
  * Words are cheap so I do.
  * Copyright (c) 2024 by TroyMitchell, All Rights Reserved. 
  */
-#include "fs.h"
-#include "include/inode.h"
-#include "log.h"
-#include "typedefs.h"
+#include <fs.h>
+#include <inode.h>
+#include <log.h>
 #include <sysfile.h>
 #include <inode.h>
 #include <file.h>
@@ -23,6 +22,7 @@
 #include <palloc.h>
 #include <debug.h>
 #include <vm.h>
+#include <myfcntl.h>
 
 extern int exec(char* path, char** argv);
 
@@ -138,7 +138,7 @@ uint64 sys_open(void)
 
         log_begin();
         /* If the caller need to create and open a file */
-        if(flag & O_CREAT) {
+        if(flag & O_CREATE) {
                 ip = create(path, T_FILE, 0, 0);
                 /* Create failed */
                 if(ip == 0)
@@ -150,7 +150,7 @@ uint64 sys_open(void)
                         goto fail1;
                 ilock(ip);
                 /* Caffeinix doesn't allow user to open a dirent through the syscall 'open' */
-                if(ip->d.type == T_DIR)
+                if(ip->d.type == T_DIR && flag != O_RDONLY)
                         goto fail2;
         }
         /* Check the major of device */
