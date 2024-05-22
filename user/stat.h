@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-05-14
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-14
+ * @LastEditTime: 2024-05-22
  * @FilePath: /caffeinix/user/stat.h
  * @Description: 
  * Words are cheap so I do.
@@ -22,3 +22,5 @@ struct stat {
         short nlink; 
         uint64 size; 
 };
+
+int stat(const char *path, struct stat *st);

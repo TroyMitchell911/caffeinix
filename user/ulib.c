@@ -2,16 +2,17 @@
  * @Author: TroyMitchell
  * @Date: 2024-05-14
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-19
+ * @LastEditTime: 2024-05-22
  * @FilePath: /caffeinix/user/ulib.c
  * @Description: 
  * Words are cheap so I do.
  * Copyright (c) 2024 by TroyMitchell, All Rights Reserved. 
  */
 
-#include "../arch/riscv/include/typedefs.h"
+#include "stat.h"
+#include "fcntl.h"
+#include "user.h"
 
-extern void exit(int cause);
 void _main(void)
 {
         extern int main();
@@ -29,7 +30,7 @@ char* strcpy(char *s, const char *t)
         return os;
 }
 
-char* strncpy(char* s, const char* t, uint16 n)
+char* strncpy(char* s, const char* t, unsigned short n)
 {
         char *os;       
 
@@ -41,7 +42,7 @@ char* strncpy(char* s, const char* t, uint16 n)
         return os;  
 }
 
-void* memmove(void *dst, const void *src, uint16 n)
+void* memmove(void *dst, const void *src, int n)
 {
         const char *s;
         char *d;
@@ -114,7 +115,7 @@ char* gets(char* buf, int max)
 }
 
 /* Get string length */
-size_t strlen(const char* s)
+unsigned int strlen(const char* s)
 {
         char* p = (char*)s;
         while((*p++) != '\0');
@@ -122,7 +123,7 @@ size_t strlen(const char* s)
 }
 
 /* Clear n bytes of memory pointing to dst as c */
-void* memset(void* dst, char c, uint32 n)
+void* memset(void* dst, int c, unsigned int n)
 {
         char* d = (char*)dst;
         int i;
@@ -172,9 +173,23 @@ int memcmp(const void *s1, const void *s2, unsigned int n)
         return 0;
 }
 
-void* memcpy(void* dst, const void* src, uint16 n)
+void* memcpy(void* dst, const void* src, unsigned int n)
 {
         return memmove(dst, src, n);
+}
+
+int stat(const char *path, struct stat *st)
+{
+        int fd, ret;
+
+        fd = open(path, O_RDONLY);
+        if(fd == -1)
+                return -1;
+        
+        ret = fstat(fd, st);
+        close(fd);
+        
+        return ret;
 }
 
 
