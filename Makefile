@@ -61,6 +61,7 @@ UPROGS = \
 	$(TOPDIR)/user/_sh \
 	$(TOPDIR)/user/_tuser \
 	$(TOPDIR)/user/_ls \
+	$(TOPDIR)/user/_mkdir \
 
 export UPROGS
 
