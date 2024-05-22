@@ -1,8 +1,8 @@
 /*
  * @Author: TroyMitchell
  * @Date: 2024-05-19
- * @LastEditors: GoKo-Son626
- * @LastEditTime: 2024-05-21
+ * @LastEditors: TroyMitchell
+ * @LastEditTime: 2024-05-22
  * @FilePath: /caffeinix/user/tuser.c
  * @Description: 
  * Words are cheap so I do.
@@ -44,19 +44,19 @@ int main(void)
 
         /*Test for unlink*/
         printf("\n");
-        int fd2 = unlink(oldfile);
+        int fd2 = unlink(newfile);
         if (fd2 != 0) {
-                printf("unlink %s faild\n", oldfile);
+                printf("unlink %s faild\n", newfile);
         } else {
-                printf("unlink %s successfully\n", oldfile);
+                printf("unlink %s successfully\n", newfile);
         }
 
-        fd1 = open(oldfile, 0x002);
+        fd1 = open(newfile, 0x002);
         if (fd1 < 0) {  
-                printf("After unlink, open oldfile.txt failed\n");  
+                printf("After unlink, open newfile.txt failed\n");  
                 return 0;
         } else {
-                printf("After unlink, open oldfile.txt successfully\n");
+                printf("After unlink, open newfile.txt successfully\n");
         }
 
         return 0;
