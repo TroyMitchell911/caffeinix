@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-05-14
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-22
+ * @LastEditTime: 2024-05-23
  * @FilePath: /caffeinix/user/ulib.c
  * @Description: 
  * Words are cheap so I do.
@@ -100,17 +100,19 @@ int strncmp(const char *p, const char *q, uint32 n)
 extern int read(int, void*, int);
 char* gets(char* buf, int max)
 {
-        int n, ret;
-        n = 0;
-        while(n < (max - 1)) {
-                ret = read(0, buf + n, 1);
-                if(ret != 1)
-                        break;
-                n ++;
-                if(buf[n - 1] == '\n' || buf[n - 1] == '\r')
-                        break;
+        int ret;
+        ret = read(0, buf, max - 2);
+        if(ret == -1)
+                return 0;
+
+        /* Overflow process*/
+        if(buf[ret - 1] != '\n') {
+                buf[ret] = '\n';
+                ret ++;
+                printf("\n");
         }
-        buf[n] = '\0';
+
+        buf[ret] = '\0';
         return buf;
 }
 

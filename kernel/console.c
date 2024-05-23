@@ -51,7 +51,7 @@ static void console_intr(int c)
                                 console_putc(c);
                                 console.buf[console.e++ % INPUT_BUF_SIZE] = c;
                                 /* We can wakeup the blocked process by read if the user input '\n' */
-                                if(c == '\n' || console.e - console.r == INPUT_BUF_SIZE) {
+                                if(c == '\n' || console.e - console.r == INPUT_BUF_SIZE || console.e - console.r == read_size) {
                                         console.w = console.e;
                                         wakeup_(&console.r);
                                 }
