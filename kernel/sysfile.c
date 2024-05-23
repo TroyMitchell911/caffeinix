@@ -1,8 +1,8 @@
 /*
  * @Author: TroyMitchell
  * @Date: 2024-05-07
- * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-22
+ * @LastEditors: GoKo-Son626
+ * @LastEditTime: 2024-05-23
  * @FilePath: /caffeinix/kernel/sysfile.c
  * @Description: 
  * Words are cheap so I do.
@@ -571,11 +571,12 @@ static int isdirempty(struct inode *dp)
         struct dirent de;
 
         for(off=2*sizeof(de); off<dp->d.size; off+=sizeof(de)) {
-        if(readi(dp, 0, (uint64)&de, off, sizeof(de)) != sizeof(de))
-                panic("isdirempty: readi");
-        if(de.inum != 0)
+                if(readi(dp, 0, (uint64)&de, off, sizeof(de)) != sizeof(de))
+                        panic("isdirempty: readi");
+                if(de.inum != 0)
                         return 0;
         }
+        
         return 1;
 }
 
@@ -605,7 +606,8 @@ uint64 sys_unlink(void)
         if(ret1 == 0 || ret2 == 0)
                 goto bad;
 
-        if((ip = dirlookup(dp, name, &off)) == 0)
+        ip = dirlookup(dp, name, &off);
+        if(ip == 0)
                 goto bad;
         ilock(ip);
 
