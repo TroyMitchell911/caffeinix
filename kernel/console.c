@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-26
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-18
+ * @LastEditTime: 2024-05-23
  * @FilePath: /caffeinix/kernel/console.c
  * @Description: 
  * Words are cheap so I do.
@@ -38,6 +38,12 @@ static void console_intr(int c)
         spinlock_acquire(&console.lock);
 
         switch(c) {
+                case '\x7f':
+                        if(console.e != console.w) {
+                                console.e --;
+                                console_putc(BACKSPACE);
+                        }
+                        break;
                 default:
                         if(c != 0 && console.e - console.r < INPUT_BUF_SIZE) {
                                 c = (c == '\r') ? '\n' : c;
@@ -45,7 +51,7 @@ static void console_intr(int c)
                                 console_putc(c);
                                 console.buf[console.e++ % INPUT_BUF_SIZE] = c;
                                 /* We can wakeup the blocked process by read if the user input '\n' */
-                                if(c == '\n' || console.e - console.r == INPUT_BUF_SIZE || console.e - console.r == read_size) {
+                                if(c == '\n' || console.e - console.r == INPUT_BUF_SIZE) {
                                         console.w = console.e;
                                         wakeup_(&console.r);
                                 }
