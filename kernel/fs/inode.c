@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-30 06:23
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-15
+ * @LastEditTime: 2024-05-24
  * @FilePath: /caffeinix/kernel/fs/inode.c
  * @Description: This file for inode layer of file-system
  * Words are cheap so I do.
@@ -376,6 +376,12 @@ int writei(inode_t ip, int user_src, uint64 src, uint32 off, uint32 n)
                 log_write(b);
                 brelse(b);
         }
+
+        if(off > ip->d.size)
+                ip->d.size = off;
+        
+        /* Update the virtual block numer of inode and size of inode */
+        iupdate(ip);
 
         return tot;
 }

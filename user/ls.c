@@ -1,3 +1,13 @@
+/*
+ * @Author: TroyMitchell
+ * @Date: 2024-05-22
+ * @LastEditors: TroyMitchell
+ * @LastEditTime: 2024-05-24
+ * @FilePath: /caffeinix/user/ls.c
+ * @Description: 
+ * Words are cheap so I do.
+ * Copyright (c) 2024 by TroyMitchell, All Rights Reserved. 
+ */
 #include "user.h"
 #include "stat.h"
 #include "dirent.h"
@@ -68,8 +78,11 @@ r1:
         close(fd);
 }
 
-int main(void)
+int main(int argc, char *argv[])
 {
-        ls(".");
+        if(argc < 2)
+                ls(".");
+        else if(argc == 2)
+                ls(argv[1]);
         return 0;
 }
