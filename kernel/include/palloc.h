@@ -9,4 +9,7 @@ void palloc_init(void);
 void pfree(void* p);
 void* palloc(void);
 
+void* malloc(uint64 size);
+void free(void* p);
+
 #endif
