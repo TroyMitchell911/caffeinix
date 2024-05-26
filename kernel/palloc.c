@@ -12,9 +12,9 @@
 #include <mem_layout.h>
 #include <mystring.h>
 
-#define MAGIC_NUMBER                            0x20030528
-#define MIN_SIZE                                sizeof(pmem_free_list_t)
-#define USE_BLOCK(x)                            ((x) / MIN_SIZE) + (((x) % MIN_SIZE) ? 1 : 0)
+#define MAGIC_NUMBER                            (0x20030528)
+#define MIN_SIZE                                (sizeof(pmem_free_list_t))
+#define USE_BLOCK(x)                            (((x) / MIN_SIZE) + (((x) % MIN_SIZE) ? 1 : 0))
 #define INFO_BLOCK                              USE_BLOCK(sizeof(struct block_info))
 #define PAGE_BLOCK                              USE_BLOCK(PGSIZE)
 
@@ -103,6 +103,12 @@ void* palloc(void)
         return p;
 }
 
+/**
+ * @description: Malloc core function.Clear the used list element
+ * @param {page_t} page: Where the memory that will be alloced belongs to 
+ * @param {uint64} blocks: The blocks number of memory that will be alloced 
+ * @return {*}
+ */
 static void malloc_core(page_t page, uint64 blocks)
 {
         int i;
@@ -112,6 +118,14 @@ static void malloc_core(page_t page, uint64 blocks)
         page->used += blocks;
 }
 
+/**
+ * @description: Free core function. Load the free list element to their parent
+ * @param {page_t} page: Where the memory that will be freed belongs to 
+ * @param {char*} start: The beginning of memory address
+ * @param {uint64} blocks: The blocks number of memory that will be freed 
+ * @param {int} flag: Whether to operate the number of used blocks and free pages
+ * @return {*}
+ */
 static void free_core(page_t page, char* start, uint64 blocks, int flag)
 {
         char *p;
@@ -138,12 +152,19 @@ static void free_core(page_t page, char* start, uint64 blocks, int flag)
                                         break;
                                 }
                         }
-                        pfree(page);
-                        page = 0;
+                        if(pg) {
+                              pfree(page);
+                                page = 0;  
+                        }
                 }
         }
 }
 
+/**
+ * @description: Malloc a page
+                 This function will call free_core to load the list element to parent
+ * @return {*} The pointer of page that be alloced
+ */
 static page_t malloc_page(void)
 {
         page_t page;
@@ -161,6 +182,11 @@ static page_t malloc_page(void)
         return page;
 }
 
+/**
+ * @description: Search enough space from pool
+ * @param {uint64} blocks: Space blocks number
+ * @return {*}: The pointer of page that has enough space
+ */
 static page_t search_space(uint64 blocks)
 {
         page_t page;
@@ -171,6 +197,13 @@ static page_t search_space(uint64 blocks)
         return 0;
 }
 
+/**
+ * @description: Malloc memory (byte-level).
+                 This function will call malloc_page to grow up
+                 if the pool does not have pages that have enough space.
+ * @param {uint64} size: How much memory
+ * @return {*}: The pointer of memory that be alloced
+ */
 void* malloc(uint64 size)
 {
         int use_blocks;
@@ -190,36 +223,47 @@ void* malloc(uint64 size)
                 if(!page)
                         return 0;
         }
-        
-        
-        info = (block_info_t)pool.list;
+
+        info = (block_info_t)page->list;
         /* Get the memory of block_info */
         malloc_core(page, INFO_BLOCK);
+        
+        p = (void*)page->list;
+        /* Get the memory that the caller uses */
+        malloc_core(page, use_blocks);
+
         /* Change information */
         info->used = use_blocks;
         info->magic = MAGIC_NUMBER;
-
-        p = (void*)pool.list;
-        /* Get the memory that the caller uses */
-        malloc_core(page, use_blocks);
         info->addr = p;
+        info->parent = page;
 
         return p;
 }
 
+/**
+ * @description: Free memory. (The address of memory has to be alloced by malloc).
+ * @param {void*} p: The address of pointer
+ * @return {*}
+ */
 void free(void* p)
 {
         block_info_t info;
         page_t page;
+        uint64 used;
 
-        info = p - (INFO_BLOCK * MIN_SIZE);
+        info = (block_info_t)((uint64)p + (INFO_BLOCK * MIN_SIZE));
         page = info->parent;
 
-        if((char*)p <= (char*)page || (char*)p > (char*)page + PGSIZE || p != info->addr) {
+        if((char*)p <= (char*)page ||
+           (char*)p > (char*)page + PGSIZE || 
+           p != info->addr || 
+           info->magic != MAGIC_NUMBER) {
                 /* Illegal address */
                 return;
         }
 
+        used = info->used;
         free_core(page, (char*)info, INFO_BLOCK, 1);
-        free_core(page, info->addr, info->used, 1);
+        free_core(page, info->addr, used, 1);
 }

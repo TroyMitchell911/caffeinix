@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-30 06:23
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-16
+ * @LastEditTime: 2024-05-26
  * @FilePath: /caffeinix/kernel/main.c
  * @Description: 
  * Words are cheap so I do.
@@ -23,6 +23,7 @@
 #include <log.h>
 #include <inode.h>
 #include <file.h>
+#include <mystring.h>
 
 volatile static uint8 start = 0;
 extern char end[];
@@ -46,8 +47,11 @@ void main(void)
                 iinit();
                 file_init();
                 virtio_disk_init();
-
-                printf("Hello! Caffeinix\n");
+                
+                char *test = malloc(strlen("Hello! Caffeinix\n") + 1);
+                strncpy(test, "Hello! Caffeinix\n", strlen("Hello! Caffeinix\n") + 1);
+                printf(test);
+                free(test);
 
                 // thread_test();
                 
