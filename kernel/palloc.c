@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-05-11
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-26
+ * @LastEditTime: 2024-05-27
  * @FilePath: /caffeinix/kernel/palloc.c
  * @Description: 
  * Words are cheap so I do.
@@ -13,10 +13,12 @@
 #include <mystring.h>
 
 #define MAGIC_NUMBER                            (0x20030528)
-#define MIN_SIZE                                (sizeof(pmem_free_list_t))
+#define MIN_SIZE                                (1)
 #define USE_BLOCK(x)                            (((x) / MIN_SIZE) + (((x) % MIN_SIZE) ? 1 : 0))
 #define INFO_BLOCK                              USE_BLOCK(sizeof(struct block_info))
-#define PAGE_BLOCK                              USE_BLOCK(PGSIZE)
+#define PAGE_BLOCK                              512
+#define BITMAP_SIZE                             ((4096 - PAGE_BLOCK) / 8)
+
 
 typedef struct pmem_free_list {
         struct pmem_free_list *next;
@@ -25,8 +27,8 @@ typedef struct pmem_free_list {
 typedef struct page {
         /* Used blocks number */
         uint64 used;
-        /* Block list */
-        pmem_free_list_t list;
+        /* bitmap of block */
+        uint8 bitmap[BITMAP_SIZE];
         /* Points next page */
         struct page *next;
 }*page_t;
@@ -104,65 +106,85 @@ void* palloc(void)
 }
 
 /**
- * @description: Malloc core function.Clear the used list element
+ * @description: Malloc core function: Set the bitmap of page.
  * @param {page_t} page: Where the memory that will be alloced belongs to 
  * @param {uint64} blocks: The blocks number of memory that will be alloced 
- * @return {*}
+ * @return {*} -1: Failed Other: offset in page
  */
-static void malloc_core(page_t page, uint64 blocks)
+static uint64 malloc_core(page_t page, uint64 blocks)
 {
-        int i;
-        for(i = 0; i < blocks; i++) {
-                page->list = page->list->next;
+        int i, j, mask;
+        uint64 count = 0, start;
+
+        if(!page)
+                return -1;
+
+        for(i = 0; i < BITMAP_SIZE; i++) {
+                mask = 0x80;
+                for(j = 0; j < 8; j++) {
+                        if((page->bitmap[i] & mask) == 0) {
+                                if(count == 0) {
+                                        start = i * 8 + j;
+                                }
+                                count++;
+                                if(count == blocks) {
+                                        page->used += blocks;
+                                        return start + PAGE_BLOCK;
+                                }
+                        } else {
+                                count = 0;
+                                start = 0;
+                        }
+                        mask >>= 1;
+                }
         }
-        page->used += blocks;
+        return -1;
 }
 
 /**
- * @description: Free core function. Load the free list element to their parent
+ * @description: Free core function: Clean the bitmap of page.
  * @param {page_t} page: Where the memory that will be freed belongs to 
  * @param {char*} start: The beginning of memory address
  * @param {uint64} blocks: The blocks number of memory that will be freed 
- * @param {int} flag: Whether to operate the number of used blocks and free pages
  * @return {*}
  */
-static void free_core(page_t page, char* start, uint64 blocks, int flag)
+static void free_core(page_t page, char* start, uint64 blocks)
 {
-        char *p;
-        char* end;
-        pmem_free_list_t temp;
+        uint64 s, e, i;
         page_t pg;
 
-        /* -1 is to prevent exceeding the limit */
-        end = start + (blocks - 1) * MIN_SIZE;
-        
-        for(p = start; p <= end; p += MIN_SIZE) {
-                temp = (pmem_free_list_t)p;
-                temp->next = page->list;
-                page->list = temp;
-        }
-        if(flag) {
-                page->used -= blocks;
+        s = (uint64)start - (uint64)page - PAGE_BLOCK;
+        e = s + blocks;
 
-                if(page->used == 0) {
-                        /* Free the page */
-                        for(pg = pool.list; pg; pg = pg->next) {
+        for(i = s; i < e; i++) {
+                page->bitmap[i / 8] &= ~((0x80) >> (i % 8));
+        }
+
+        page->used -= blocks;
+
+        if(page->used == 0) {
+                /* Free the page */
+                if(page != pool.list) {
+                       for(pg = pool.list; pg; pg = pg->next) {
                                 if(pg->next == page) {
                                         pg->next = page->next;
                                         break;
                                 }
-                        }
-                        if(pg) {
-                              pfree(page);
-                                page = 0;  
-                        }
+                        } 
+                } else {
+                        pg = page;
+                }
+                
+                if(pg) {
+                        pfree(page);
+                        page = 0;  
                 }
         }
 }
 
 /**
  * @description: Malloc a page
-                 This function will call free_core to load the list element to parent
+                 This function will insert page to pool.list
  * @return {*} The pointer of page that be alloced
  */
 static page_t malloc_page(void)
@@ -178,23 +200,7 @@ static page_t malloc_page(void)
         page->next = pool.list;
         pool.list = page;
 
-        free_core(page, (char*)page + sizeof(struct page), PGSIZE / MIN_SIZE, 0);
         return page;
-}
-
-/**
- * @description: Search enough space from pool
- * @param {uint64} blocks: Space blocks number
- * @return {*}: The pointer of page that has enough space
- */
-static page_t search_space(uint64 blocks)
-{
-        page_t page;
-        for(page = pool.list; page; page = page->next) {
-                if(page->used >= blocks)
-                        return page;
-        }
-        return 0;
 }
 
 /**
@@ -206,31 +212,35 @@ static page_t search_space(uint64 blocks)
  */
 void* malloc(uint64 size)
 {
-        int use_blocks;
+        int use_blocks, re_count = 0;
         block_info_t info;
         page_t page;
         void* p;
+        uint64 ret;
 
         if(size == 0)
                 return 0;
 
         use_blocks = USE_BLOCK(size);
 
-        page = search_space(use_blocks + INFO_BLOCK);
-        
-        if(!page) {
+        page = pool.list;
+re:
+        ret = malloc_core(page, use_blocks + INFO_BLOCK);
+        if(ret == -1 && re_count != 1) {
+                re_count++;
                 page = malloc_page();
-                if(!page)
-                        return 0;
+                goto re;
         }
 
-        info = (block_info_t)page->list;
-        /* Get the memory of block_info */
-        malloc_core(page, INFO_BLOCK);
+        if(ret == -1)
+                return 0;
+                
         
-        p = (void*)page->list;
         /* Get the memory that the caller uses */
-        malloc_core(page, use_blocks);
+        info = (block_info_t)(ret + (uint64)page);
+        
+        /* Get the memory of block_info */
+        p = (void*)((uint64)info + INFO_BLOCK * MIN_SIZE); 
 
         /* Change information */
         info->used = use_blocks;
@@ -250,9 +260,8 @@ void free(void* p)
 {
         block_info_t info;
         page_t page;
-        uint64 used;
 
-        info = (block_info_t)((uint64)p + (INFO_BLOCK * MIN_SIZE));
+        info = (block_info_t)((uint64)p - (INFO_BLOCK * MIN_SIZE));
         page = info->parent;
 
         if((char*)p <= (char*)page ||
@@ -260,10 +269,9 @@ void free(void* p)
            p != info->addr || 
            info->magic != MAGIC_NUMBER) {
                 /* Illegal address */
+                printf("free: Illegal address\n");
                 return;
         }
 
-        used = info->used;
-        free_core(page, (char*)info, INFO_BLOCK, 1);
-        free_core(page, info->addr, used, 1);
+        free_core(page, (char*)info, INFO_BLOCK + info->used);
 }
