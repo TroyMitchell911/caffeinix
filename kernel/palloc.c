@@ -123,6 +123,7 @@ static uint64 malloc_core(page_t page, uint64 blocks)
                 mask = 0x80;
                 for(j = 0; j < 8; j++) {
                         if((page->bitmap[i] & mask) == 0) {
+                                page->bitmap[i] |= mask;
                                 if(count == 0) {
                                         start = i * 8 + j;
                                 }

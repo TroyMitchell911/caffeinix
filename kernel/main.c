@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-30 06:23
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-26
+ * @LastEditTime: 2024-05-27
  * @FilePath: /caffeinix/kernel/main.c
  * @Description: 
  * Words are cheap so I do.
@@ -27,6 +27,34 @@
 
 volatile static uint8 start = 0;
 extern char end[];
+
+static void mem_print(int *a, int sz)
+{
+        for(int i = 0; i < sz; i++) {
+                printf("%d ", a[i]);
+        }
+        printf("\n");
+}
+
+static void mem_test(void)
+{
+        int *test1 = malloc(10 * sizeof(int));
+
+        for(int i = 0; i < 10; i++) {
+                test1[i] = i;
+        }
+        
+        int *test2 = malloc(10 * sizeof(int));
+        for(int i = 0; i < 10; i++) {
+                test2[i] = 10 + i;
+        }
+
+        printf("test1:%p test2:%p\n", test1, test2);
+
+        mem_print(test1, 10);
+        mem_print(test2, 10);
+}
+
 void main(void)
 {
         if(cpuid() == 0) {
@@ -49,10 +77,11 @@ void main(void)
                 virtio_disk_init();
                 
                 char *test = malloc(strlen("Hello! Caffeinix\n") + 1);
+                printf("test: %p\n", test);
                 strncpy(test, "Hello! Caffeinix\n", strlen("Hello! Caffeinix\n") + 1);
                 printf(test);
                 free(test);
-
+                mem_test();
                 // thread_test();
                 
                 __sync_synchronize();
