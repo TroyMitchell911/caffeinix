@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-30 06:23
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-18
+ * @LastEditTime: 2024-05-27
  * @FilePath: /caffeinix/kernel/process.c
  * @Description: 
  * Words are cheap so I do.
@@ -22,14 +22,20 @@
 extern char trampoline[];
 
 static struct spinlock pid_lock, wait_lock;
-struct process proc[NPROC];
+// struct process proc[NPROC];
+struct list proc;
 static int next_pid = 1;
 static process_t first;
 
 static void reparent(process_t p)
 {
         process_t pp;
-        for(pp = proc; pp < &proc[NPROC]; pp ++) {
+        list_t l;
+
+        for(l = proc.next; l != &proc; l = l->next) {
+                pp = list_entry(l, struct process, all_tag);
+                if(!pp)
+                        continue;
                 if(pp != p) {
                         spinlock_acquire(&pp->lock);
                         if(pp->parent == p) {
@@ -139,7 +145,12 @@ void wakeup(void* chan)
         process_t p;
         thread_t t;
         int i;
-        for(p = proc; p != &proc[NPROC - 1]; p++) {
+        list_t l;
+
+        for(l = proc.next; l != &proc; l = l->next) {
+                p = list_entry(l, struct process, all_tag);
+                if(!p)
+                        continue;
                 if(p != cur_proc()) {
                         spinlock_acquire(&p->lock);
                         if(p->tnums != 0) {
@@ -192,14 +203,21 @@ static process_t process_alloc(void)
 {
         process_t p;
         thread_t t;
-        for(p = proc; p != &proc[NPROC - 1]; p++) {
-                spinlock_acquire(&p->lock);
-                if(p->state == UNUSED) {
-                        goto found;
-                }
-                spinlock_release(&p->lock);
+        int i;
+        
+        p = malloc(sizeof(struct process));
+        if(!p)
+                return 0;
+        
+        spinlock_init(&p->lock, "process");
+        spinlock_acquire(&p->lock);
+
+        for(i = 0; i < PROC_MAXTHREAD; i++) {
+                p->thread[i] = 0;
         }
-found:
+
+        p->tnums = 0;
+
         t = thread_alloc(p);
         if(!t)
                 goto r0;
@@ -224,6 +242,9 @@ found:
         
         /* Set the context of return address */
         t->context.ra = (uint64)(proc_first_start);
+
+        list_init(&p->all_tag);
+        list_insert_after(&proc, &p->all_tag);
 
         return p;
 r2:
@@ -250,30 +271,33 @@ static void process_free(process_t p)
                         p->thread[i] = 0;
                 }
         }
-        p->pid = 0;
-        p->sz = 0;
-        p->state = UNUSED;
-        p->parent = 0;
-        p->sleep_chan = 0;
-        p->name[0] = 0;
+        list_remove(&p->all_tag);
+        free(p);
+        // p->pid = 0;
+        // p->sz = 0;
+        // p->state = UNUSED;
+        // p->parent = 0;
+        // p->sleep_chan = 0;
+        // p->name[0] = 0;
 }
 
 void process_init(void)
 {
-        process_t p = proc;
-        int i;
+        // process_t p = proc;
+        // int i;
         /* Init the spinlock */
         spinlock_init(&pid_lock, "pid_lock");
         spinlock_init(&wait_lock, "wait_lock");
+        list_init(&proc);
         /* Set the state and starting kernel stack address of each process */
-        for(; p <= &proc[NCPU - 1]; p++) {
-                spinlock_init(&p->lock, "proc");
-                p->state = UNUSED;
-                p->tnums = 0;
-                for(i = 0; i < PROC_MAXTHREAD; i++) {
-                        p->thread[i] = 0;
-                }
-        }
+        // for(; p <= &proc[NCPU - 1]; p++) {
+        //         spinlock_init(&p->lock, "proc");
+        //         p->state = UNUSED;
+        //         p->tnums = 0;
+        //         for(i = 0; i < PROC_MAXTHREAD; i++) {
+        //                 p->thread[i] = 0;
+        //         }
+        // }
 }
 
 /* od -t xC ./user/initcode */
@@ -465,12 +489,17 @@ int wait(uint64 addr)
 {
         process_t p, pp;
         int kids = 0, pid;
+        list_t l;
+
         p = cur_proc();
 
         spinlock_acquire(&wait_lock);
 
         for(;;) {
-                for(pp = proc; pp < &proc[NPROC]; pp++) {
+                for(l = proc.next; l != &proc; l = l->next) {
+                        pp = list_entry(l, struct process, all_tag);
+                        if(!pp)
+                                continue;
                         if(pp->parent == p) {
                                 spinlock_acquire(&pp->lock);
                                 kids = 1;
@@ -515,7 +544,12 @@ int wait(uint64 addr)
 int kill(int pid)
 {
         process_t p;
-        for(p = proc; p < &proc[NPROC]; p++) {
+        list_t l;
+
+        for(l = proc.next; l != &proc; l = l->next) {
+                p = list_entry(l, struct process, all_tag);
+                if(!p)
+                        continue;
                 spinlock_acquire(&p->lock);
                 if(p->pid == pid) {
                         p->killed = 1;

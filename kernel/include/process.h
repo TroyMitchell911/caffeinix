@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-25 09:22
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-17
+ * @LastEditTime: 2024-05-27
  * @FilePath: /caffeinix/kernel/include/process.h
  * @Description: 
  * Words are cheap so I do.
@@ -55,6 +55,8 @@ typedef struct process{
         int tnums;
         thread_t thread[PROC_MAXTHREAD];
         thread_t cur_thread;
+        
+        struct list all_tag;
 }*process_t;
 
 void process_init(void);
