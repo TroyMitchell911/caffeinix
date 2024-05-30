@@ -655,6 +655,8 @@ uint64 sys_getcwd(void)
 
         p = cur_proc();
         strncpy(path, p->cwd_name, n);
+        /* Get the length of path string: the real length or original n */
+        n = strlen(path) + 1;
         ret = copyout(p->pagetable, addr, path, n);
         if(ret)
                 return -1;

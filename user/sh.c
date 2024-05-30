@@ -216,7 +216,11 @@ static void runcmd(cmd_t cmd)
 }
 static int getcmd(char* buf, int max)
 {
-        printf("$ ");
+        char cwd[1024];
+        if(getcwd(cwd, 1024)) {
+                return -1;
+        }
+        printf("%s$ ", cwd);
         gets(buf, max);
         if(buf[0] == 0)
                 return -1;

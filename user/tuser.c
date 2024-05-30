@@ -14,16 +14,6 @@
 
 int main(void)
 {
-        char buf[1024];
-        int ret;
         printf("test user program!\n");
-        mkdir("test");
-        chdir("/test");
-        ret = getcwd(buf, 1024);
-        if(ret) {
-                printf("getcwd failed!\n");
-        } else {
-                printf("getcwd successful: %s\n", buf);
-        }
         return 0;
 }

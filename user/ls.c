@@ -52,7 +52,7 @@ void ls(char *path)
         switch(st.type) {
                 case T_DEVICE:
                 case T_FILE:
-                        printf("%s %d\t%d\t%d\n", name_format(path), st.type, st.ino, st.size);
+                        printf("%s %d %d %d\n", name_format(path), st.type, st.ino, st.size);
                         break;
                 case T_DIR:
                         if(strlen(path) + DIRSIZ + 1 + 1 >= MAXPATH) {
@@ -70,7 +70,7 @@ void ls(char *path)
                                         fprintf(2, "ls: fstat %s failed\n", path);
                                         continue;
                                 }
-                                printf("%s %d\t%d\t%d\n", name_format(buf), st.type, st.ino, st.size);
+                                printf("%s %d %d %d\n", name_format(buf), st.type, st.ino, st.size);
                         }
                         break;
         }

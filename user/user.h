@@ -24,7 +24,7 @@ int unlink(const char*);
 int link(const char*, const char*);
 int mkdir(const char*);
 int chdir(const char*);
-int getcwd(const char*, int);
+int getcwd(char*, int);
 int dup(int);
 int getpid(void);
 char* sbrk(int);
