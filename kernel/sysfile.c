@@ -500,8 +500,15 @@ uint64 sys_chdir(void)
         iput(p->cwd);
         log_end();
         p->cwd = ip;
-        safe_strncpy(p->cwd_name, path, MAXPATH);
-
+        if(path[0] == '/') {
+                safe_strncpy(p->cwd_name, path, MAXPATH);
+        }
+        else {
+                if(p->cwd_name[0] != '/')
+                        strcat(p->cwd_name, "/");
+                strcat(p->cwd_name, path);
+        }
+                
         return 0;
 }
 

@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-30
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-07
+ * @LastEditTime: 2024-05-30
  * @FilePath: /caffeinix/kernel/string.c
  * @Description: 
  * Words are cheap so I do.
@@ -90,4 +90,11 @@ int strncmp(const char *p, const char *q, uint32 n)
         if(n == 0)
                 return 0;
         return (uint8)*p - (uint8)*q;
+}
+
+void strcat(char *p, const char *q)
+{
+        while(*p != '\0') p++;
+        while(*q != '\0') *p++ = *q++;
+        *p = '\0';
 }
