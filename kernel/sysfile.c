@@ -1,8 +1,8 @@
 /*
  * @Author: TroyMitchell
  * @Date: 2024-05-07
- * @LastEditors: GoKo-Son626
- * @LastEditTime: 2024-05-23
+ * @LastEditors: TroyMitchell
+ * @LastEditTime: 2024-05-30
  * @FilePath: /caffeinix/kernel/sysfile.c
  * @Description: 
  * Words are cheap so I do.
@@ -500,6 +500,7 @@ uint64 sys_chdir(void)
         iput(p->cwd);
         log_end();
         p->cwd = ip;
+        safe_strncpy(p->cwd_name, path, MAXPATH);
 
         return 0;
 }
@@ -638,4 +639,25 @@ bad:
         log_end();
 
         return -1;
+}
+
+uint64 sys_getcwd(void)
+{
+        process_t p;
+        uint64 addr;
+        int n, ret;
+        char path[MAXPATH];
+
+        argaddr(0, &addr);
+        argint(1, &n);
+
+        n = n > MAXPATH ? MAXPATH : n;
+
+        p = cur_proc();
+        strncpy(path, p->cwd_name, n);
+        ret = copyout(p->pagetable, addr, path, n);
+        if(ret)
+                return -1;
+        
+        return 0;
 }

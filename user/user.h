@@ -1,8 +1,8 @@
 /*
  * @Author: TroyMitchell
  * @Date: 2024-05-08
- * @LastEditors: GoKo-Son626
- * @LastEditTime: 2024-05-18
+ * @LastEditors: TroyMitchell
+ * @LastEditTime: 2024-05-30
  * @FilePath: /caffeinix/user/user.h
  * @Description: 
  * Words are cheap so I do.
@@ -24,6 +24,7 @@ int unlink(const char*);
 int link(const char*, const char*);
 int mkdir(const char*);
 int chdir(const char*);
+int getcwd(const char*, int);
 int dup(int);
 int getpid(void);
 char* sbrk(int);

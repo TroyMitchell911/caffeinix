@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-25
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-16
+ * @LastEditTime: 2024-05-30
  * @FilePath: /caffeinix/kernel/include/syscall.h
  * @Description: 
  * Words are cheap so I do.
@@ -37,6 +37,7 @@
 #define SYS_mkdir  20
 #define SYS_close  21
 #define SYS_clone  120
+#define SYS_getcwd 121
 
 
 #ifndef __ASSEMBLER__

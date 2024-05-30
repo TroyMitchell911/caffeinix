@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-30 06:23
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-27
+ * @LastEditTime: 2024-05-30
  * @FilePath: /caffeinix/kernel/process.c
  * @Description: 
  * Words are cheap so I do.
@@ -340,6 +340,7 @@ void userinit(void)
         memmove(mem, initcode, sizeof(initcode));
 
         p->cwd = namei("/");
+        safe_strncpy(p->cwd_name, "/", MAXPATH);
 
         /* Set the epc to '0' because we have mapped the code to lowest address */
         t->trapframe->epc = 0;
@@ -418,7 +419,9 @@ int fork(void)
                 newp->ofile[i] = file_dup(oldp->ofile[i]);
         }
         newp->cwd = idup(oldp->cwd);
-
+        /* Copy the name of cwd into newp */
+        safe_strncpy(newp->cwd_name, oldp->cwd_name, MAXPATH);
+        /* Copy the process name into newp */
         safe_strncpy(newp->name, oldp->name, MAXNAME);
 
         spinlock_release(&newp->lock);

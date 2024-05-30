@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-25 09:22
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-27
+ * @LastEditTime: 2024-05-30
  * @FilePath: /caffeinix/kernel/include/process.h
  * @Description: 
  * Words are cheap so I do.
@@ -45,6 +45,7 @@ typedef struct process{
         uint64 sz;
         pagedir_t pagetable;
         inode_t cwd;
+        char cwd_name[MAXPATH];
         file_t ofile[NOFILE];
         void *sleep_chan;
 
