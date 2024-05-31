@@ -6,4 +6,4 @@ CFLAGS_file.o :=
 obj-y += string.o palloc.o spinlock.o thread.o \
 sleeplock.o switchto.o trampoline.o process.o\
 plic.o console.o printf.o scheduler.o \
-exec.o sysfile.o syscall.o driver.o main.o 
+exec.o sysfile.o syscall.o sysproc.o driver.o main.o 
