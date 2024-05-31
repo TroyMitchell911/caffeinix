@@ -19,7 +19,14 @@ void _main(void)
         main();
         exit(0);
 }
-
+/**  
+ * @description: Copies a string  
+ * Copies the string pointed to by `t` (including the terminating null character) into the array  
+ * pointed to by `s`. The copying stops when the terminating null character is reached.  
+ * @param {char~} s Pointer to the destination array where the content is to be copied  
+ * @param {char} t Pointer to the source string to be copied  
+ * @return Returns a pointer to the destination string `s`  
+ */ 
 char* strcpy(char *s, const char *t)
 {
         char *os;
@@ -30,6 +37,16 @@ char* strcpy(char *s, const char *t)
         return os;
 }
 
+/**  
+ * @description:  Copies a string with length limitation  
+ * Copies the first `n` characters of the string pointed to by `t` (not including the terminating null character)  
+ * into the array pointed to by `s`. If the string pointed to by `t` is shorter than `n`, null characters are appended  
+ * to the copy to ensure the total number of characters copied is `n`. The original `s` is always null-terminated.  
+ * @param {char*} s Pointer to the destination array where the content is to be copied  
+ * @param {char*} t Pointer to the source string to be copied  
+ * @param {short} n Number of characters to be copied  
+ * @return Returns a pointer to the destination string `s`  
+ */  
 char* strncpy(char* s, const char* t, unsigned short n)
 {
         char *os;       
@@ -68,7 +85,7 @@ void* memmove(void *dst, const void *src, int n)
  * @description: Added a function that Finds the first occurrence of a given character in a string
  * @param {char*} The string to search for
  * @param {char} The character to look for
- * @return {char*} eturns the position of the first occurrence of the character c in s, or 0 if not found
+ * @return {char*} returns the position of the first occurrence of the character c in s, or 0 if not found
  */
 char* strchr(const char* s, char c)
 {
@@ -180,6 +197,13 @@ void* memcpy(void* dst, const void* src, unsigned int n)
         return memmove(dst, src, n);
 }
 
+/**  
+ *@description:
+ * This function retrieves the status information of a file given its path `path` and stores it in the `struct stat` `st`.  
+ * @param {char} path Path to the file for which status information is to be retrieved  
+ * @param {stat} st Pointer to a `struct stat` where the file status information will be stored  
+ * @return Returns 0 on success, -1 on failure  
+ */
 int stat(const char *path, struct stat *st)
 {
         int fd, ret;
