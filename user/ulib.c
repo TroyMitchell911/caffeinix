@@ -23,7 +23,7 @@ void _main(void)
  * @description: Copies a string  
  * Copies the string pointed to by `t` (including the terminating null character) into the array  
  * pointed to by `s`. The copying stops when the terminating null character is reached.  
- * @param {char} s Pointer to the destination array where the content is to be copied  
+ * @param {char~} s Pointer to the destination array where the content is to be copied  
  * @param {char} t Pointer to the source string to be copied  
  * @return Returns a pointer to the destination string `s`  
  */ 
@@ -85,7 +85,7 @@ void* memmove(void *dst, const void *src, int n)
  * @description: Added a function that Finds the first occurrence of a given character in a string
  * @param {char*} The string to search for
  * @param {char} The character to look for
- * @return {char*} eturns the position of the first occurrence of the character c in s, or 0 if not found
+ * @return {char*} returns the position of the first occurrence of the character c in s, or 0 if not found
  */
 char* strchr(const char* s, char c)
 {
@@ -97,20 +97,40 @@ char* strchr(const char* s, char c)
         return 0;
 }
 
-/**
- * @description: Added a function that Finds the first occurrence of a given character in a string
- * @param {char*} The string to search for
- * @param {char} The character to look for
- * @return {char*} Returns the position of the first occurrence of the character c in s, or 0 if not found
- */
-char* strchr(const char* s, char c)
+int strcmp(const char *p, const char *q)
 {
-        for(; *s; s++) {
-                if(*s == c) {
-                        return (char*)s;
-                }
+        while(*p && *p == *q)
+                p++, q++;
+        return (unsigned char)*p - (unsigned char)*q;
+}
+
+
+int strncmp(const char *p, const char *q, uint32 n)
+{
+        while(n > 0 && *p && *p == *q)
+                n--, p++, q++;
+        if(n == 0)
+                return 0;
+        return (uint8)*p - (uint8)*q;
+}
+
+extern int read(int, void*, int);
+char* gets(char* buf, int max)
+{
+        int ret;
+        ret = read(0, buf, max - 2);
+        if(ret == -1)
+                return 0;
+
+        /* Overflow process*/
+        if(buf[ret - 1] != '\n') {
+                buf[ret] = '\n';
+                ret ++;
+                printf("\n");
         }
-        return 0;
+
+        buf[ret] = '\0';
+        return buf;
 }
 
 /* Get string length */
