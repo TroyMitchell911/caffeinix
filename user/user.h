@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-05-08
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-30
+ * @LastEditTime: 2024-05-31
  * @FilePath: /caffeinix/user/user.h
  * @Description: 
  * Words are cheap so I do.
@@ -49,6 +49,7 @@ void* memset(void*, int, unsigned int);
 int atoi(const char*);
 int memcmp(const void *, const void *, unsigned int);
 void *memcpy(void *, const void *, unsigned int);
+void strcat(char *p, const char *q);
 
 /* From printf.c */
 void fprintf(int, const char*, ...);

@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-05-20
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-22
+ * @LastEditTime: 2024-05-31
  * @FilePath: /caffeinix/user/sh.c
  * @Description: 
  * Words are cheap so I do.
@@ -10,6 +10,9 @@
  */
 #include "user.h"
 #include "fcntl.h"
+#include "stat.h"
+
+#define ENVIRON_FILE                    "/.bashrc"
 
 #define SH_BUF_MAX                      128
 
@@ -35,6 +38,65 @@ typedef struct execcmd {
 
 static const char whitespace[] = " \t\r\n\v";
 static const char symbols[] = "<|>&;()";
+static char *environ = 0;
+
+static int createenv(int fd)
+{
+        int ret;
+        ret = write(fd, "/", 1);
+        close(fd);
+        open(ENVIRON_FILE, O_RDONLY);
+        return ret;
+}
+
+static int parseenv(int fd, uint64 sz)
+{
+        return read(fd, environ, sz);
+}
+
+static int readenv(void)
+{
+        int fd;
+        struct stat st;
+
+        fd = open(ENVIRON_FILE, O_RDONLY);
+        if(fd != -1) {
+read:
+                /* Read environment here */
+                if(createenv(fd) < 0) {
+                        printf("createenv\n");
+                        goto r1;
+                }
+                        
+                /* Get the file size and malloc the memory base on the file size */
+                if(stat(ENVIRON_FILE, &st) < 0){
+                        printf("stat\n");
+                        goto r1;
+                }
+                environ = malloc(st.size + 1);
+                if(!environ)
+                        goto r1;
+                memset(environ, 0, st.size + 1);
+                if(parseenv(fd, st.size) < 0) {
+                        goto r2;
+                }
+                printf("environment: %s\n", environ);
+                return 0;
+        }
+
+        fd = open(ENVIRON_FILE, O_CREATE | O_RDWR);
+        if(fd != -1)
+                goto read; 
+        else
+                goto r0;
+
+r2:
+        free(environ);
+r1:
+        close(fd);
+r0:
+        return -1;
+}
 
 static void panic(char *s)
 {
@@ -200,6 +262,7 @@ static cmd_t parsecmd(char* s)
 static void runcmd(cmd_t cmd)
 {
         execcmd_t ecmd;
+        char buf[1024];
 
         if(cmd == 0)
                 exit(1);
@@ -209,7 +272,12 @@ static void runcmd(cmd_t cmd)
                         ecmd = (execcmd_t)cmd;
                         if(ecmd->argv[0] == 0)
                                 exit(1);
-                        exec(ecmd->argv[0], ecmd->argv);
+                        strcpy(buf, ecmd->argv[0]);
+                        exec(buf, ecmd->argv);
+                        strcpy(buf, environ);
+                        strcat(buf, ecmd->argv[0]);
+                        printf("exec %s failed so exec %s\n", ecmd->argv[0], buf);
+                        exec(buf, ecmd->argv);
                         fprintf(2, "exec %s failed\n", ecmd->argv[0]);
                         break;
         }
@@ -242,6 +310,9 @@ int main(void)
                 printf("sh failed: fd->%d\n", fd);
                 exit(-1);
         }
+
+        if(readenv())
+                panic("sh: failed read env"); 
 
         while(getcmd(buf, SH_BUF_MAX) >= 0) {
                 if(buf[0] == 'c' && buf[1] == 'd' && buf[2] == ' ') {

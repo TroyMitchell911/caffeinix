@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-05-14
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-23
+ * @LastEditTime: 2024-05-31
  * @FilePath: /caffeinix/user/ulib.c
  * @Description: 
  * Words are cheap so I do.
@@ -216,6 +216,13 @@ int stat(const char *path, struct stat *st)
         close(fd);
         
         return ret;
+}
+
+void strcat(char *p, const char *q)
+{
+        while(*p != '\0') p++;
+        while(*q != '\0') *p++ = *q++;
+        *p = '\0';
 }
 
 
