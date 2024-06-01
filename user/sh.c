@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-05-20
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-31
+ * @LastEditTime: 2024-06-01
  * @FilePath: /caffeinix/user/sh.c
  * @Description: 
  * Words are cheap so I do.
@@ -11,8 +11,7 @@
 #include "user.h"
 #include "fcntl.h"
 #include "stat.h"
-
-#define ENVIRON_FILE                    "/.bashrc"
+#include "environ.h"
 
 #define SH_BUF_MAX                      128
 
@@ -40,18 +39,16 @@ static const char whitespace[] = " \t\r\n\v";
 static const char symbols[] = "<|>&;()";
 static char *environ = 0;
 
-static int createenv(int fd)
+static int createenv(void)
 {
-        int ret;
-        ret = write(fd, "/", 1);
-        close(fd);
-        open(ENVIRON_FILE, O_RDONLY);
-        return ret;
+        setenv("PATH", "/");
+        environ = getenv("PATH");
+        return environ == 0 ? -1 : 0;
 }
 
 static int parseenv(int fd, uint64 sz)
 {
-        return read(fd, environ, sz);
+        return 0;
 }
 
 static int readenv(void)
@@ -59,39 +56,32 @@ static int readenv(void)
         int fd;
         struct stat st;
 
+        init_env();
+
         fd = open(ENVIRON_FILE, O_RDONLY);
         if(fd != -1) {
 read:
                 /* Read environment here */
-                if(createenv(fd) < 0) {
-                        printf("createenv\n");
+                if(createenv() < 0)
                         goto r1;
-                }
                         
                 /* Get the file size and malloc the memory base on the file size */
-                if(stat(ENVIRON_FILE, &st) < 0){
-                        printf("stat\n");
+                if(stat(ENVIRON_FILE, &st) < 0)
                         goto r1;
-                }
-                environ = malloc(st.size + 1);
-                if(!environ)
+
+                /* Parse environment variables */
+                if(parseenv(fd, st.size) < 0) 
                         goto r1;
-                memset(environ, 0, st.size + 1);
-                if(parseenv(fd, st.size) < 0) {
-                        goto r2;
-                }
+
                 printf("environment: %s\n", environ);
                 return 0;
         }
-
         fd = open(ENVIRON_FILE, O_CREATE | O_RDWR);
         if(fd != -1)
                 goto read; 
         else
                 goto r0;
 
-r2:
-        free(environ);
 r1:
         close(fd);
 r0:

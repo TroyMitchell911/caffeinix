@@ -1,12 +1,14 @@
 
 
-ULIB = usys.o ulib.o printf.o umalloc.o
+ULIB = usys.o printf.o umalloc.o ulib.o environ.o
 
 usys.S : usys.pl
 	perl usys.pl > usys.S
 
 usys.o : usys.S
 	$(CC) $(CFLAGS) -c -o usys.o usys.S
+
+
 
 .PRECIOUS: %.o
 

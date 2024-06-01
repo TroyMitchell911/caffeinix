@@ -130,7 +130,7 @@ static uint64 malloc_core(page_t page, uint64 blocks)
                                 count++;
                                 if(count == blocks) {
                                         page->used += blocks;
-                                        printf("malloc_core: %d->%d\n", start, start + blocks);
+                                        // printf("malloc_core: %d->%d\n", start, start + blocks);
                                         return start + PAGE_BLOCK;
                                 }
                         } else {
@@ -158,7 +158,7 @@ static void free_core(page_t page, char* start, uint64 blocks)
         s = (uint64)start - (uint64)page - PAGE_BLOCK;
         e = s + blocks;
 
-        printf("free_core: %d->%d\n", e, s);
+        // printf("free_core: %d->%d\n", e, s);
 
         for(i = s; i < e; i++) {
                 page->bitmap[i / 8] &= ~((0x80) >> (i % 8));
