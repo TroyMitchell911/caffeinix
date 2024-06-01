@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-04-30 06:23
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-30
+ * @LastEditTime: 2024-06-01
  * @FilePath: /caffeinix/kernel/main.c
  * @Description: 
  * Words are cheap so I do.
@@ -48,12 +48,8 @@ void main(void)
                 iinit();
                 file_init();
                 virtio_disk_init();
-                
-                char *test = malloc(strlen("Hello! Caffeinix\n") + 1);
-                printf("test: %p\n", test);
-                strncpy(test, "Hello! Caffeinix\n", strlen("Hello! Caffeinix\n") + 1);
-                printf(test);
-                free(test);
+
+                printf("Hello! Caffeinix\n");
                 // thread_test();
                 
                 __sync_synchronize();

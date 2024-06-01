@@ -73,7 +73,6 @@ read:
                 if(parseenv(fd, st.size) < 0) 
                         goto r1;
 
-                printf("environment: %s\n", environ);
                 return 0;
         }
         fd = open(ENVIRON_FILE, O_CREATE | O_RDWR);
@@ -266,9 +265,9 @@ static void runcmd(cmd_t cmd)
                         exec(buf, ecmd->argv);
                         strcpy(buf, environ);
                         strcat(buf, ecmd->argv[0]);
-                        printf("exec %s failed so exec %s\n", ecmd->argv[0], buf);
+                        // printf("exec %s failed so exec %s\n", ecmd->argv[0], buf);
                         exec(buf, ecmd->argv);
-                        fprintf(2, "exec %s failed\n", ecmd->argv[0]);
+                        fprintf(2, "%s: command not found\n", ecmd->argv[0]);
                         break;
         }
 }

@@ -16,15 +16,5 @@
 int main(void)
 {
         printf("test user program!\n");
-
-        init_env();
-        
-        setenv("test2", "test2");
-        setenv("test1", "test1");
-
-        char *test1 = getenv("test1");
-        char *test2 = getenv("test2");
-
-        printf("test1: %s test2:%s\n", test1, test2);
         return 0;
 }
