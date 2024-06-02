@@ -17,8 +17,7 @@ void binit(void)
         spinlock_init(&bio_table.lk, "bio_table");
         
         /* Initial the head */
-        b = &bio_table.head;
-        b->next = b->prev = b;
+        bio_table.head.next = bio_table.head.prev = &bio_table.head;
 
         for(b = bio_table.bios; b <= &bio_table.bios[BIO_NUM - 1]; b++) {
                 sleeplock_init(&b->lk, "bio");
@@ -37,8 +36,8 @@ bio_t bget(uint16 dev, uint16 block)
         spinlock_acquire(&bio_table.lk);
         
         /* Find a bio that the bnum equals block */
-        for(b = bio_table.head.next; b->next != &bio_table.head; b = b->next) {
-                if(b->bnum == block) {
+        for(b = bio_table.head.next; b != &bio_table.head; b = b->next) {
+                if(b->bnum == block && dev == b->dev) {
                         b->ref ++;
                         spinlock_release(&bio_table.lk);
                         sleeplock_acquire(&b->lk);
@@ -47,7 +46,7 @@ bio_t bget(uint16 dev, uint16 block)
         }
 
         /* LRU */
-        for(b = bio_table.head.prev; b->prev != &bio_table.head; b = b->prev) {
+        for(b = bio_table.head.prev; b != &bio_table.head; b = b->prev) {
                 if(b->ref == 0) {
                         b->dev = dev;
                         b->bnum = block;
@@ -55,14 +54,14 @@ bio_t bget(uint16 dev, uint16 block)
                         b->vaild = 0;
 
 
-                        /* Remove */
-                        b->next->prev = b->prev;
-                        b->prev->next = b->next;
-                        /* Insert head */
-                        b->next = bio_table.head.next;
-                        b->prev = &bio_table.head;
-                        bio_table.head.next->prev = b;
-                        bio_table.head.next = b;
+                        // /* Remove */
+                        // b->next->prev = b->prev;
+                        // b->prev->next = b->next;
+                        // /* Insert head */
+                        // b->next = bio_table.head.next;
+                        // b->prev = &bio_table.head;
+                        // bio_table.head.next->prev = b;
+                        // bio_table.head.next = b;
                         spinlock_release(&bio_table.lk);
                         sleeplock_acquire(&b->lk);
                         return b;

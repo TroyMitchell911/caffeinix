@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-05-07
  * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-31
+ * @LastEditTime: 2024-06-02
  * @FilePath: /caffeinix/kernel/sysfile.c
  * @Description: 
  * Words are cheap so I do.
@@ -469,7 +469,7 @@ static int isdirempty(struct inode *dp)
         int off;
         struct dirent de;
 
-        for(off=2*sizeof(de); off<dp->d.size; off+=sizeof(de)) {
+        for(off = 2 * sizeof(de); off < dp->d.size; off += sizeof(de)) {
                 if(readi(dp, 0, (uint64)&de, off, sizeof(de)) != sizeof(de))
                         panic("isdirempty: readi");
                 if(de.inum != 0)
@@ -500,11 +500,12 @@ uint64 sys_unlink(void)
 
         ilock(dp);
 
+        /* You can't delete them */
         ret1 = strncmp(name, ".", DIRSIZ);
         ret2 = strncmp(name, "..", DIRSIZ);
         if(ret1 == 0 || ret2 == 0)
                 goto bad;
-
+        /* Find the file in directory that it belongs to */
         ip = dirlookup(dp, name, &off);
         if(ip == 0)
                 goto bad;
@@ -512,13 +513,15 @@ uint64 sys_unlink(void)
 
         if(ip->d.nlink < 1)
                 panic("unlink: nlink < 1");
+        /* You can't delete a directory when the directory has childs */
         if(ip->d.type == T_DIR && !isdirempty(ip)) {
                 iunlockput(ip);
                 goto bad;
         }
 
         memset(&de, 0, sizeof(de));
-        ret1 = writei(dp, 0, (uint64) & de, off, sizeof(de));
+        /* Write the empty dirent to there */
+        ret1 = writei(dp, 0, (uint64)&de, off, sizeof(de));
         if(ret1 != sizeof(de))
                 panic("unlink: writei");
         if(ip->d.type == T_DIR) {
