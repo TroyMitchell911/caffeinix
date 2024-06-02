@@ -65,6 +65,7 @@ UPROGS = \
 	$(TOPDIR)/user/_touch \
 	$(TOPDIR)/user/_cat \
 	$(TOPDIR)/user/_cp \
+	$(TOPDIR)/user/_rm \
 
 export UPROGS
 
