@@ -42,8 +42,12 @@ static int dev_intr(uint64 scause)
                         uart_intr();
                 } else if(irq == VIRTIO0_IRQ) {
                         virtio_disk_intr();
-                } else{
-                        printf("Unexpected interrupt irq=%d\n");
+                /* 
+                 * irq 0 is reserved to mean “no interrupt”.
+                 * see here: https://five-embeddev.com/riscv-priv-isa-manual/Priv-v1.12/plic.html#interrupt-identifiers-ids
+                 */
+                } else if(irq != 0){
+                        printf("Unexpected interrupt irq=%d\n", irq);
                 }
                 if(irq) {
                         /* Clear the interrupt flag */
