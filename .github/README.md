@@ -51,8 +51,7 @@ Codename:       jammy
 ### Method 1: Using Docker
 
 ```bash
-$ docker run -itd -p 10008:10008 -v /dev/caffeinix:/dev/caffeinix -w /root --name caffeinix --restart=always troymitchell/caffeinix:1.0 /bin/bash
-$ docker restart caffeinix
+$ docker run -itd -p 10008:10008 -v /dev/caffeinix:/dev/caffeinix -w /root --name caffeinix --restart=always troymitchell/caffeinix:latest /bin/bash
 $ docker exec -it caffeinix bash
 ```
 
@@ -70,10 +69,10 @@ $ sudo apt install build-essential gcc make perl dkms git gdb-multiarch qemu-sys
 You need a RISC-V "newlib" tool chain from https://github.com/riscv/riscv-gnu-toolchain
 
 > [!IMPORTANT] 
-> You need to install 'qemu-system-misc' if you are using Docker to deploy otherwise you can't use commands 'make qemu-gdb' and 'make qemu'.
+> The docker image may doesn't have latest source code.
 
 > [!NOTE]  
-> None now
+> None now.
 
 ## Getting the sources
 
