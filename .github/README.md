@@ -51,7 +51,7 @@ Codename:       jammy
 ### Method 1: Using Docker
 
 ```bash
-$ docker run -itd -p 10008:10008 -v /dev/caffeinix:/dev/caffeinix -w /root --name caffeinix --restart=always troymitchell/caffeinix:latest /bin/bash
+$ docker run -itd -p 10008:10008 -v </path/to/develop>:/root -w /root --name caffeinix --restart=always troymitchell/caffeinix:latest /bin/bash
 $ docker exec -it caffeinix bash
 ```
 
