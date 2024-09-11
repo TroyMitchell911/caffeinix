@@ -98,3 +98,20 @@ void strcat(char *p, const char *q)
         while(*q != '\0') *p++ = *q++;
         *p = '\0';
 }
+
+char* strchr(const char *p, int c)
+{
+        for(; *p != '\0' && *p != c; p++);
+
+        return (char*)p;
+}
+
+char* strrchr(const char *p, int c)
+{
+        const char *p_start = p;
+
+        for(; *p != '\0'; p++);
+        for(; p > p_start && *p != c; p--);
+
+        return p == p_start && *p != c ? 0 : (char*)p;
+}

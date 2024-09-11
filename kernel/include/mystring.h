@@ -20,5 +20,7 @@ char* safe_strncpy(char* s, const char* t, uint16 n);
 void* memmove(void *dst, const void *src, uint16 n);
 int strncmp(const char *p, const char *q, uint32 n);
 void strcat(char *p, const char *q);
+char* strchr(const char *p, int c);
+char* strrchr(const char *p, int c);
 
 #endif
