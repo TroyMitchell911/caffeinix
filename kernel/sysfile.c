@@ -373,6 +373,8 @@ uint64 sys_sbrk(void)
 uint64 sys_chdir(void)
 {
         char path[MAXPATH];
+        char *p_cwd_name;
+        int cwd_name_len = 0;
         inode_t ip;
         process_t p = cur_proc();
 
@@ -395,9 +397,23 @@ uint64 sys_chdir(void)
                 safe_strncpy(p->cwd_name, path, MAXPATH);
         }
         else {
-                if(p->cwd_name[0] != '/')
-                        strcat(p->cwd_name, "/");
-                strcat(p->cwd_name, path);
+                if(strncmp(path, "..", 2) == 0 && strlen(p->cwd_name) != 1) {
+                        p_cwd_name = strrchr(p->cwd_name, '/');
+                        if(p_cwd_name != p->cwd_name) 
+                                /* -1 for delete '/' */
+                                cwd_name_len += strlen(p->cwd_name) - strlen(++p_cwd_name) - 1;
+                         else 
+                                /* just save '/' */
+                                cwd_name_len = 1;
+
+                        p->cwd_name[cwd_name_len] = '\0';
+                        
+                        // printf("num:%d str:%s\n", p->cwd_name - p_path, p_path);
+                } else if (path[0] != '.'){
+                        if(p->cwd_name[strlen(p->cwd_name) - 1] != '/')
+                                strcat(p->cwd_name, "/");
+                        strcat(p->cwd_name, path);
+                }
         }
                 
         return 0;
