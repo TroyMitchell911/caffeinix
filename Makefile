@@ -66,6 +66,7 @@ UPROGS = \
 	$(TOPDIR)/user/_cat \
 	$(TOPDIR)/user/_cp \
 	$(TOPDIR)/user/_rm \
+	$(TOPDIR)/user/_pwd \
 
 export UPROGS
 
