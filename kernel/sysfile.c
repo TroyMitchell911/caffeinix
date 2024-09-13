@@ -1,8 +1,8 @@
 /*
  * @Author: TroyMitchell
  * @Date: 2024-05-07
- * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-06-02
+ * @LastEditors: GoKo-Son626
+ * @LastEditTime: 2024-09-13
  * @FilePath: /caffeinix/kernel/sysfile.c
  * @Description: 
  * Words are cheap so I do.
@@ -402,7 +402,7 @@ uint64 sys_chdir(void)
                         if(p_cwd_name != p->cwd_name) 
                                 /* -1 for delete '/' */
                                 cwd_name_len += strlen(p->cwd_name) - strlen(++p_cwd_name) - 1;
-                         else 
+                        else 
                                 /* just save '/' */
                                 cwd_name_len = 1;
 
