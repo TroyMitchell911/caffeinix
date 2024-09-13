@@ -13,7 +13,6 @@ int main(int argc, char *argv[]) {
         char cwd[MAXPATH];
 
         if (getcwd(cwd, MAXPATH)) {
-                printf("%s", "pwd:getcwd failed\n");
                 return -1;
         }
 
