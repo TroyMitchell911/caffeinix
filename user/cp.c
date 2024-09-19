@@ -1,5 +1,13 @@
+/*
+ * @Date: 2024-09-12
+ * @LastEditors: GoKo-Son626
+ * @LastEditTime: 2024-09-19
+ * @FilePath: /caffeinix/user/cp.c
+ * @Description: 
+ */
 #include "user.h"
 #include "fcntl.h"
+#include "stat.h"
 
 #define TAG                     "cp: "
 
@@ -7,6 +15,18 @@ static int cp(char *src, char *dst)
 {
         int sfd, dfd, n;
         char buf[1024];
+        struct stat st;
+
+        if(stat(src, &st) < 0) {
+                printf(TAG"cannot stat '%s': No such file\n", src);
+                goto r0;
+        }
+
+        if(st.type == T_DIR) {
+                printf(TAG"cannot copy '%s': Is a directory\n", src);
+                goto r0;
+        }
+
         sfd = open(src, O_RDONLY);
         if(!sfd) {
                 printf(TAG"cannot stat '%s': No such file or directory\n", src);
