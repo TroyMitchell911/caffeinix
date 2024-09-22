@@ -1,6 +1,6 @@
 
 
-ULIB = usys.o printf.o umalloc.o ulib.o environ.o
+ULIB = usys.o printf.o umalloc.o ulib.o environ.o getopt.o
 
 usys.S : usys.pl
 	perl usys.pl > usys.S
