@@ -11,7 +11,6 @@
 #include <inode.h>
 #include <process.h>
 #include <scheduler.h>
-#include "../user/stat.h"
 #include "vm.h"
 #include <file.h>
 #include <mystring.h>
@@ -211,6 +210,16 @@ int file_write(file_t f, uint64 addr, int n)
 
         return ret;
 }
+
+//TODO: fix
+
+struct stat {
+        int dev;     
+        uint ino;    
+        short type;  
+        short nlink; 
+        uint64 size; 
+};
 
 /**
  * @description: Added a file function "file_stat" for sys_fstat

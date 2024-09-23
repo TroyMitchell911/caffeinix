@@ -56,30 +56,10 @@ obj-y += kernel/fs/
 obj-y += kernel/
 obj-y += arch/riscv/
 
-UPROGS = \
-	$(TOPDIR)/user/_init \
-	$(TOPDIR)/user/_sh \
-	$(TOPDIR)/user/_tuser \
-	$(TOPDIR)/user/_ls \
-	$(TOPDIR)/user/_mkdir \
-	$(TOPDIR)/user/_touch \
-	$(TOPDIR)/user/_cat \
-	$(TOPDIR)/user/_cp \
-	$(TOPDIR)/user/_rm \
-	$(TOPDIR)/user/_pwd \
-
-export UPROGS
-
 TARGET := $(OUTPUT)/kernel
 
 build:
 	bear -- make all
-
-mkfs/mkfs: mkfs/mkfs.c ./kernel/include/file.h ./kernel/include/inode.h
-	gcc -Werror -Wall -I./kernel/include -I./include -I./arch/riscv/include -o mkfs/mkfs mkfs/mkfs.c
-
-fs.img: mkfs/mkfs LICENSE $(UPROGS)
-	mkfs/mkfs mkfs/fs.img LICENSE $(UPROGS)
 
 all : start_recursive_build $(TARGET)
 	@echo $(TARGET) has been built!
@@ -87,10 +67,7 @@ all : start_recursive_build $(TARGET)
 start_recursive_build:
 	make -C ./ -f $(TOPDIR)/Makefile.build
 
-user_build:
-	make -C ./user/ all
-
-$(TARGET) : built-in.o user_build
+$(TARGET) : built-in.o
 	@if [ ! -d $(OUTPUT) ]; then \
         	mkdir $(OUTPUT); \
     	fi
@@ -101,7 +78,7 @@ $(TARGET) : built-in.o user_build
 QEMU = qemu-system-riscv64
 QEMUOPTS = -machine virt -bios none -kernel $(TARGET) -m 128M -smp $(CPUS) -nographic
 QEMUOPTS += -global virtio-mmio.force-legacy=false
-QEMUOPTS += -drive file=./mkfs/fs.img,if=none,format=raw,id=x0
+QEMUOPTS += -drive file=./fs.img,if=none,format=raw,id=x0
 QEMUOPTS += -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
 ifndef CPUS
 CPUS := 1
@@ -113,13 +90,13 @@ QEMUGDB = $(shell if $(QEMU) -help | grep -q '^-gdb'; \
 	then echo "-gdb tcp::$(GDBPORT)"; \
 	else echo "-s -p $(GDBPORT)"; fi)
 
-qemu: all fs.img
+qemu: all
 	$(QEMU) $(QEMUOPTS)
 
 .gdbinit: .gdbinit.tmpl-riscv
 	@sed "s/:1234/:$(GDBPORT)/" < $^ > $@
 
-qemu-gdb: all .gdbinit fs.img
+qemu-gdb: all .gdbinit
 	$(QEMU) $(QEMUOPTS) -S $(QEMUGDB)
 	@echo "*** Now run 'gdb' in another window." 1>&2
 
@@ -134,4 +111,3 @@ clean:
 
 distclean: clean
 	@rm -f compile_commands.json
-	@rm -f ./mkfs/mkfs ./mkfs/fs.img

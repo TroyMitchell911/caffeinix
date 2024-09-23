@@ -9,8 +9,8 @@
 /output/kernel
 /.cache
 compile_commands.json
-/mkfs/mkfs
-/mkfs/fs.img
 /user/usys.S
 /user/_*
 /user/initcode
+/*.img
+/.vscode
