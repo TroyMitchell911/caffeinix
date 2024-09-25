@@ -107,7 +107,6 @@ clean:
 	@rm -f $(shell find -name "*.d")
 	@rm -f output/*
 	@rm -rf .cache/*
-	@make -C ./user/ clean
 
 distclean: clean
 	@rm -f compile_commands.json
