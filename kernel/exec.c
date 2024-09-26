@@ -58,6 +58,9 @@ int exec(char* path, char** argv)
         process_t p = cur_proc();   
         char *name, *path_p;
         
+        char *bss_data = 0;
+        uint64 r1=0, r2=0;
+        
         log_begin();
         ip = namei(path);
         if(!ip) {
@@ -106,6 +109,12 @@ int exec(char* path, char** argv)
                 /* Load seg to memory */
                 if(loadseg(pgdir, ph.vaddr, ip, ph.off, ph.memsz) != 0)
                         goto fail;
+
+                printf("vaddr: %d, filesz: %d, memsz:%d\n", ph.vaddr, ph.filesz, ph.memsz);
+
+                bss_data = (char*)va2pa(pgdir, 0);
+                r1 = ph.filesz, r2=ph.memsz;
+
         }
         iunlockput(ip);
         log_end();
@@ -165,6 +174,10 @@ int exec(char* path, char** argv)
         }
         safe_strncpy(p->name, name, MAXNAME);
         process_freepagedir(oldpgdir, oldsz);
+
+        for(uint64 k = r1; k < r2; k++)
+                        printf("%x ", bss_data[k]);
+                printf("\n");
         
         /* Rid of the last element (ustack[argc ++] = 0;) */
         return --argc;
