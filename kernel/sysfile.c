@@ -2,7 +2,7 @@
  * @Author: TroyMitchell
  * @Date: 2024-05-07
  * @LastEditors: GoKo-Son626
- * @LastEditTime: 2024-09-13
+ * @LastEditTime: 2024-09-26
  * @FilePath: /caffeinix/kernel/sysfile.c
  * @Description: 
  * Words are cheap so I do.
@@ -541,7 +541,7 @@ uint64 sys_unlink(void)
         if(ret1 != sizeof(de))
                 panic("unlink: writei");
         if(ip->d.type == T_DIR) {
-                dp->d.nlink--;
+                ip->d.nlink--;
                 iupdate(dp);
         }
         iunlockput(dp);
