@@ -47,19 +47,6 @@ static int loadseg(pagedir_t pgdir, uint64 va, inode_t ip, uint32 offset, uint32
         return 0;
 }
 
-static void bss_clean(pagedir_t pgdir, struct proghdr* ph)
-{
-	char *bss_data;
-
-	if(ph->filesz >= ph->memsz)
-		return;
-
-	bss_data = (char*)va2pa(pgdir, ph->vaddr + ph->filesz);
-	bss_data += ph->memsz % PGSIZE - (ph->memsz - ph->filesz);
-
-	memset(bss_data, 0, ph->memsz - ph->filesz);
-}
-
 int exec(char* path, char** argv)
 {
         int i, off;
@@ -117,10 +104,8 @@ int exec(char* path, char** argv)
                         goto fail;
                 sz = sz1;
                 /* Load seg to memory */
-                if(loadseg(pgdir, ph.vaddr, ip, ph.off, ph.memsz) != 0)
+                if(loadseg(pgdir, ph.vaddr, ip, ph.off, ph.filesz) != 0)
                         goto fail;
-
-		bss_clean(pgdir, &ph);
         }
         iunlockput(ip);
         log_end();
