@@ -8,6 +8,7 @@
  * Words are cheap so I do.
  * Copyright (c) 2024 by TroyMitchell, All Rights Reserved. 
  */
+#include "fs.h"
 #include <inode.h>
 #include <mystring.h>
 #include <debug.h>
@@ -76,7 +77,7 @@ inode_t idup(inode_t ip)
  */
 uint32 imap(inode_t ip, uint32 vblock)
 {
-        uint32 pblock, *indirect;
+        uint32 pblock, *indirect, indirect_idx;
         bio_t b;
         if(vblock < NDIRECT) {
                 /* It's a direct block */
@@ -93,13 +94,18 @@ uint32 imap(inode_t ip, uint32 vblock)
                 return pblock;
         }
         vblock -= NDIRECT;
-        if(vblock < NINDIRECT) {
-                if(ip->d.addrs[NDIRECT] == 0) {
-                        ip->d.addrs[NDIRECT] = balloc(ip->dev);
-                        if(ip->d.addrs[NDIRECT] == 0)
+
+	indirect_idx = vblock / INDIRECT_BLOCK;
+	vblock %= INDIRECT_BLOCK;
+	indirect_idx += NDIRECT;
+
+	if(vblock < NINDIRECT) {
+                if(ip->d.addrs[indirect_idx] == 0) {
+                        ip->d.addrs[indirect_idx] = balloc(ip->dev);
+                        if(ip->d.addrs[indirect_idx] == 0)
                                 return 0;
                 }
-                b = bread(ip->dev, ip->d.addrs[NDIRECT]);
+                b = bread(ip->dev, ip->d.addrs[indirect_idx]);
                 indirect = (uint32*)b->buf;
                 
                 pblock = indirect[vblock];

@@ -23,8 +23,10 @@
 #define FSSIZE                          2000
 #define MAXFILE                         (NDIRECT + NINDIRECT)
 
-#define NDIRECT                         12
-#define NINDIRECT                       (BSIZE / sizeof(uint32))
+#define NDIRECT 			(32)
+#define INDIRECT_NUM			(93)
+#define INDIRECT_BLOCK 			(BSIZE / sizeof(uint32))
+#define NINDIRECT                       (INDIRECT_BLOCK * INDIRECT_NUM)
 #define DIRSIZ                          14
 #define ROOTINO                         1
 #define ROOTDEV                         1
