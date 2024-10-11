@@ -1,5 +1,5 @@
 ifndef CROSS_COMPILE
-CROSS_COMPILE := riscv64-unknown-linux-gnu-
+CROSS_COMPILE := riscv64-caffeinix-
 endif
 
 AS		= $(CROSS_COMPILE)gas
