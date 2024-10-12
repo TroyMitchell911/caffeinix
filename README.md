@@ -48,39 +48,32 @@ Codename:       jammy
 
 ## Prerequisites
 
-### Method 1: Using Docker
-
-```bash
-$ docker run -itd -p 10008:10008 -v </path/to/develop>:/root/develop -w /root --name caffeinix --restart=always troymitchell/caffeinix:latest /bin/bash
-$ docker exec -it caffeinix bash
-```
-
-### Method 2: Manual Installation 
-
-#### Step 1
+### Step 1
 
 ```bash
 $ sudo apt update
 $ sudo apt install build-essential gcc make perl dkms git gdb-multiarch qemu-system-misc bear
 ```
 
-#### Step 2
+### Step 2
 
-You need a RISC-V "newlib" tool chain from https://github.com/riscv/riscv-gnu-toolchain
+You need a **RISC-V "newlib" tool chain** from [here](https://github.com/TroyMitchell911/riscv-caffeinix-compiler)
 
 > [!IMPORTANT] 
-> The docker image may doesn't have latest source code.
+> None now.
 
 > [!NOTE]  
 > None now.
 
 ## Getting the sources
 
-You don't need this step if you are using **[Method 1: Using Docker](#Method-1-Using-Docker)** because we have put the sources into the directory `~/caffeinix`. But the only thing you need to do is entering the directory `~/caffeinix` then run `git pull origin main` command to avoiding the source is old.
+Congratulations, you have completed the above steps. Now let's get the code.
 
 ```bash
 $ git clone https://github.com/TroyMitchell911/caffeinix.git
 ```
+
+Now you can compile the kernel through the `make` command, but you **cannot boot it through qemu** because you still lack a [file system](https://github.com/TroyMitchell911/caffeinix-rootfs).
 
 ## Building and usage
 
