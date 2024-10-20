@@ -211,16 +211,6 @@ int file_write(file_t f, uint64 addr, int n)
         return ret;
 }
 
-//TODO: fix
-
-struct stat {
-        int dev;     
-        uint ino;    
-        short type;  
-        short nlink; 
-        uint64 size; 
-};
-
 /**
  * @description: Added a file function "file_stat" for sys_fstat
  * @param {file_t} f
@@ -234,11 +224,24 @@ int file_stat(file_t f, uint64 addr)
 
         if (f->type == FD_INODE || f->type == FD_DEVICE) {
                 ilock(f->ip);
-                st.dev = f->ip->dev;
-                st.ino = f->ip->inum;
-                st.type = f->ip->d.type;
-                st.nlink = f->ip->d.nlink;
-                st.size = f->ip->d.size;
+                st.st_dev = f->ip->dev;
+                st.st_ino = f->ip->inum;
+                st.st_nlink = f->ip->d.nlink;
+                st.st_size = f->ip->d.size;
+		switch (f->ip->d.type) {
+		case T_DIR:
+			st.st_mode = _IFDIR;
+			break;
+		case T_FILE:
+			st.st_mode = _IFMT;
+			break;
+		case T_DEVICE:
+			st.st_mode = _IFCHR;
+			break;
+		default:
+			st.st_mode = 0;
+			break;
+		}
                 iunlock(f->ip);
 
                 if (copyout(p->pagetable, addr, (char *)&st, sizeof(st)) < 0) {
@@ -246,5 +249,6 @@ int file_stat(file_t f, uint64 addr)
                 }
                 return 0;
         }
-        return -1;
+	
+	return -1;
 }

@@ -15,6 +15,7 @@
 #include <log.h>
 #include <inode.h>
 #include <fs.h>
+#include <sys/stat.h>
 
 #define MAXPATH                 128
 #define MAXARG                  32
