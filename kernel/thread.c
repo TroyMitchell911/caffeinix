@@ -65,7 +65,10 @@ thread_t thread_alloc(process_t p)
         thread_t t;
 
         for(t = thread; t <= &thread[NTHREAD - 1]; t++) {
-                spinlock_acquire(&t->lock);
+                int ret = spinlock_trylock(&t->lock);
+		if (ret)
+			continue;
+
                 if(t->state == NUSED) {
                         t->home = p;
                         goto found;
