@@ -80,6 +80,26 @@ void spinlock_acquire(spinlock_t lock)
         lock->cpu = cur_cpu();
 }
 
+int spinlock_trylock(spinlock_t lock)
+{
+	int ret;
+
+        enter_critical();
+
+        if(spinlock_holding(lock)) {
+                printf("%s->", lock->name);
+                PANIC("spainlock_acquire");
+        }
+
+	ret = __sync_lock_test_and_set(&lock->locked, 1);
+        __sync_synchronize();
+
+	if (!ret)
+		lock->cpu = cur_cpu();
+
+	return ret;
+}
+
 void spinlock_release(spinlock_t lock)
 {
         if(!spinlock_holding(lock)) {

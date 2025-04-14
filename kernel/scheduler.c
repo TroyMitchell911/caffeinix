@@ -112,7 +112,10 @@ void scheduler(void)
                 intr_on();
 
                 for(t = &thread[0]; t <= &thread[NTHREAD - 1]; t ++) {
-                        spinlock_acquire(&t->lock);
+			int ret = spinlock_trylock(&t->lock);
+			if (ret)
+				continue;
+
                         if(t->state == READY) {
                                 if(!t->home)
                                         PANIC("scheduler");
