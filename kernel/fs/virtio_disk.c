@@ -67,7 +67,7 @@ void virtio_disk_init(void)
 
         if(*R(VIRTIO_MMIO_MAGIC_VALUE) != 0x74726976 ||
         *R(VIRTIO_MMIO_VERSION) != 2 ||
-        *R(VIRTIO_MMIO_DEVICE_ID) != 2 ||
+        *R(VIRTIO_MMIO_DEVICE_ID) != VIRTIO_DEVICE_BLOCK ||
         *R(VIRTIO_MMIO_VENDOR_ID) != 0x554d4551) {
                 panic("could not find virtio disk");
         }

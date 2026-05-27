@@ -24,6 +24,7 @@
 #include <inode.h>
 #include <file.h>
 #include <mystring.h>
+#include <virtio_net.h>
 
 volatile static uint8 start = 0;
 extern char end[];
@@ -48,6 +49,7 @@ void main(void)
                 iinit();
                 file_init();
                 virtio_disk_init();
+                virtio_net_init();
 
                 printf("Hello! Caffeinix\n");
                 // thread_test();

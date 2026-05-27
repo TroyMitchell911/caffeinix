@@ -6,6 +6,7 @@
 #include <printf.h>
 #include <plic.h>
 #include <virtio_disk.h>
+#include <virtio_net.h>
 #include <debug.h>
 
 extern void kernel_vec(void);
@@ -42,6 +43,8 @@ static int dev_intr(uint64 scause)
                         uart_intr();
                 } else if(irq == VIRTIO0_IRQ) {
                         virtio_disk_intr();
+                } else if(irq == VIRTIO1_IRQ) {
+                        virtio_net_intr();
                 /* 
                  * irq 0 is reserved to mean “no interrupt”.
                  * see here: https://five-embeddev.com/riscv-priv-isa-manual/Priv-v1.12/plic.html#interrupt-identifiers-ids
