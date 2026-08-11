@@ -52,6 +52,11 @@ build:
 all : $(TARGET)
 	@echo $(TARGET) has been built!
 
+.PHONY: check-uapi
+check-uapi:
+	$(CC) -std=gnu17 -fsyntax-only -I arch/riscv/include \
+		-I kernel/include tests/linux_uapi.c
+
 .PHONY: start_recursive_build
 start_recursive_build:
 	$(MAKE) -C ./ -f $(TOPDIR)/Makefile.build
