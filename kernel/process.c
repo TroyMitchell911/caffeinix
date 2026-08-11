@@ -17,15 +17,53 @@
 #include <mystring.h>
 #include <file.h>
 #include <dirent.h>
+#include <driver.h>
 
 /* From trampoline.S */
 extern char trampoline[];
+extern int exec_linux(char *path, char **argv, char **envp);
 
 static struct spinlock pid_lock, wait_lock;
 // struct process proc[NPROC];
 struct list proc;
 static int next_pid = 1;
 static process_t first;
+
+static int setup_stdio(void)
+{
+	process_t p = cur_proc();
+	inode_t ip;
+	file_t f;
+
+	if (p->ofile[0] || p->ofile[1] || p->ofile[2])
+		return -1;
+	ip = namei("/console");
+	if (!ip)
+		return -1;
+
+	ilock(ip);
+	if (ip->d.type != T_DEVICE || ip->d.major < 0 ||
+	    ip->d.major >= NDEV) {
+		iunlockput(ip);
+		return -1;
+	}
+
+	f = file_alloc();
+	if (!f) {
+		iunlockput(ip);
+		return -1;
+	}
+	f->type = FD_DEVICE;
+	f->readable = 1;
+	f->writable = 1;
+	f->major = ip->d.major;
+	f->ip = ip;
+	p->ofile[0] = f;
+	p->ofile[1] = file_dup(f);
+	p->ofile[2] = file_dup(f);
+	iunlock(ip);
+	return 0;
+}
 
 static void reparent(process_t p)
 {
@@ -55,55 +93,68 @@ pagedir_t process_pagedir(process_t p)
         pagedir_t pgdir;
         /* Malloc memory for page-talble */
         pgdir = pagedir_alloc();
+	if (!pgdir)
+		return 0;
         /* Map trampoline */
-        ret = vm_map(pgdir, TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
-        if(ret) {
-                pagedir_free(pgdir);
-                return 0;
+	ret = vm_map(pgdir, TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
+	if(ret) {
+		pagedir_free(pgdir);
+		return 0;
         }
         /* Map address of under trampoline to trapframe */
         ret = vm_map(pgdir, TRAPFRAME_INFO, (uint64)p->tinfo, PGSIZE, PTE_W | PTE_R);
-        if(ret){
+	if(ret){
                 /* We don't need free the address that PTE points because it is a code seg */
-                vm_unmap(pgdir, TRAMPOLINE, 1, 0);
-                pagedir_free(pgdir);
-        }
+		vm_unmap(pgdir, TRAMPOLINE, 1, 0);
+		pagedir_free(pgdir);
+		return 0;
+	}
         ret = vm_map(pgdir, TRAPFRAME(0), (uint64)p->cur_thread->trapframe, PGSIZE, PTE_W | PTE_R);
-        if(ret){
+	if(ret){
                 /* We don't need free the address that PTE points because it is a code seg */
-                vm_unmap(pgdir, TRAMPOLINE, 1, 0);
-                vm_unmap(pgdir, TRAPFRAME_INFO, 1, 1);
-                pagedir_free(pgdir);
-        }
+		vm_unmap(pgdir, TRAMPOLINE, 1, 0);
+		vm_unmap(pgdir, TRAPFRAME_INFO, 1, 0);
+		pagedir_free(pgdir);
+		return 0;
+	}
         return pgdir;
 }
 
 void process_freepagedir(pagedir_t pgdir, uint64 sz)
 {
-        trapframe_info_t tinfo;
-        tinfo = cur_proc()->tinfo;
-        /* Save a trapframe page for exec to reuse */
-        for(;tinfo->nums > 1; tinfo->nums --) {
-                vm_unmap(pgdir, TRAPFRAME(tinfo->nums - 1), 1, 1);
-        }
-        vm_unmap(pgdir, TRAPFRAME(0), 1, 0);
-        vm_unmap(pgdir, TRAPFRAME_INFO, 1, 0);
-        vm_unmap(pgdir, TRAMPOLINE, 1, 0);
-        vm_unmap(pgdir, 0, PGROUNDUP(sz) / PGSIZE, 1);
-        pagedir_free(pgdir);
+	int i;
+
+	(void)sz;
+	for (i = 0; i < PROC_MAXTHREAD; i++) {
+		if (vm_mapped(pgdir, TRAPFRAME(i)))
+			vm_unmap(pgdir, TRAPFRAME(i), 1, 0);
+	}
+	if (vm_mapped(pgdir, TRAPFRAME_INFO))
+		vm_unmap(pgdir, TRAPFRAME_INFO, 1, 0);
+	if (vm_mapped(pgdir, TRAMPOLINE))
+		vm_unmap(pgdir, TRAMPOLINE, 1, 0);
+	vm_free_user(pgdir);
+	pagedir_free(pgdir);
 }
 
 /* This function is the first when a process first start */
 static void proc_first_start(void)
 {
-        static uint8 first = 0;
+	static uint8 fs_started;
+	char *argv[] = { "/busybox", "ash", 0 };
+	char *envp[] = { "HOME=/", "PATH=/", "TERM=vt100", 0 };
+
         /* The function scheduler will acquire the lock */
         spinlock_release(&cur_proc()->lock);
         spinlock_release(&cur_proc()->cur_thread->lock);
-        if(!first) {
-                first = 1;
-                fs_init(1);
-        }
+	if (!fs_started) {
+		fs_started = 1;
+		fs_init(1);
+		if (setup_stdio() < 0)
+			PANIC("stdio setup");
+		if (exec_linux("/busybox", argv, envp) < 0)
+			PANIC("exec /busybox");
+	}
         extern void user_trap_ret(void);
         user_trap_ret();
 }
@@ -208,6 +259,7 @@ static process_t process_alloc(void)
         p = malloc(sizeof(struct process));
         if(!p)
                 return 0;
+	memset(p, 0, sizeof(*p));
         
         spinlock_init(&p->lock, "process");
         spinlock_acquire(&p->lock);
@@ -248,14 +300,15 @@ static process_t process_alloc(void)
 
         return p;
 r2:
-        p->cur_thread = 0;
-        pfree(p->tinfo);
+	p->cur_thread = 0;
+	pfree(p->tinfo);
 r1:
-        thread_free(t);
+	thread_free(t);
+	spinlock_release(&t->lock);
 r0:
-        spinlock_release(&t->lock);
-        spinlock_release(&p->lock);
-        return 0;
+	spinlock_release(&p->lock);
+	free(p);
+	return 0;
 }
 
 static void process_free(process_t p)
@@ -271,6 +324,8 @@ static void process_free(process_t p)
                         p->thread[i] = 0;
                 }
         }
+	if (p->tinfo)
+		pfree(p->tinfo);
         list_remove(&p->all_tag);
         free(p);
         // p->pid = 0;
@@ -300,59 +355,27 @@ void process_init(void)
         // }
 }
 
-/* od -t xC ./user/initcode */
-static uint8 initcode[] = {
-        0x17, 0x05, 0x00, 0x00, 0x13, 0x05, 0x45, 0x02,
-        0x97, 0x05, 0x00, 0x00, 0x93, 0x85, 0x35, 0x02,
-        0x93, 0x08, 0x70, 0x00, 0x73, 0x00, 0x00, 0x00,
-        0x93, 0x08, 0x20, 0x00, 0x73, 0x00, 0x00, 0x00,
-        0xef, 0xf0, 0x9f, 0xff, 0x2f, 0x69, 0x6e, 0x69,
-        0x74, 0x00, 0x00, 0x24, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00
-};
-
 void userinit(void)
 {
         process_t p;
         thread_t t;
-        char* mem;
 
         /* Alloc a process */
         p = process_alloc();
-        t = p->cur_thread;
-
-        if(!p) {
+	if (!p)
                 PANIC("userinit");
-        }
-
-        if(sizeof(initcode) > PGSIZE) {
-                PANIC("userinit");
-        }
-        /* Alloc physical memory for the process that we just alloced */
-        mem = palloc();
-        if(!mem) {
-                PANIC("userinit palloc");
-        }
-        memset(mem, 0, PGSIZE);
-        /* Map the lowest virtual address */
-        vm_map(p->pagetable, 0, (uint64)mem, PGSIZE, PTE_U | PTE_R | PTE_W | PTE_X);
-        /* Copy the code of first process into the memory that we just alloced */
-        memmove(mem, initcode, sizeof(initcode));
+	t = p->cur_thread;
 
         p->cwd = namei("/");
         safe_strncpy(p->cwd_name, "/", MAXPATH);
 
-        /* Set the epc to '0' because we have mapped the code to lowest address */
-        t->trapframe->epc = 0;
-        /* Set the stack pointer to highest address in memory we just alloced */
-        /* IMPORTANT: NOT HIGHEST VIRTUAL ADDRESS */
-        // t->trapframe->sp = PGSIZE;
-        t->state = READY,
+	t->state = READY;
+	p->sz = 0;
+	p->brk = 0;
+	p->brk_start = 0;
+	p->mmap_top = USER_MMAP_TOP;
 
-        /* Record how many memory we used */
-        p->sz = PGSIZE;
-
-        safe_strncpy(p->name, "initcode", MAXNAME);
+	safe_strncpy(p->name, "kernel-init", MAXNAME);
         /* Allow schedule */
         p->state = RUNNABLE;
 
@@ -387,7 +410,7 @@ int either_copyin(void *dst, int user_src, uint64 src, uint64 len)
         }
 }
 
-int fork(void)
+int process_fork(uint64 child_stack)
 {
         int pid, i;
         process_t oldp, newp;
@@ -395,34 +418,43 @@ int fork(void)
 
         oldp = cur_proc();
         newp = process_alloc();
+	if(!newp)
+		return -1;
 
         oldt = oldp->cur_thread;
         newt = newp->cur_thread;
 
-        if(!newp)
-                return -1;
-        if(vm_copy(oldp->pagetable, newp->pagetable, oldp->sz) != 0) {
-                process_free(newp);
-                spinlock_release(&newp->lock);
-                return -1;
-        }
+	if(vm_copy(oldp->pagetable, newp->pagetable) != 0) {
+		spinlock_release(&newt->lock);
+		spinlock_release(&newp->lock);
+		process_free(newp);
+		return -1;
+	}
 
         newp->sz = oldp->sz;
-        *newt->trapframe = *oldt->trapframe;
+	newp->brk = oldp->brk;
+	newp->brk_start = oldp->brk_start;
+	newp->mmap_top = oldp->mmap_top;
+	*newt->trapframe = *oldt->trapframe;
+	if (child_stack)
+		newt->trapframe->sp = child_stack;
 
         pid = newp->pid;
         newt->trapframe->a0 = 0;
 
         for(i = 0; i < NOFILE; i++) {
-                if(oldp->ofile[i] == 0)
-                        break;
-                newp->ofile[i] = file_dup(oldp->ofile[i]);
+		if(oldp->ofile[i])
+			newp->ofile[i] = file_dup(oldp->ofile[i]);
+		newp->fd_flags[i] = oldp->fd_flags[i];
         }
         newp->cwd = idup(oldp->cwd);
         /* Copy the name of cwd into newp */
         safe_strncpy(newp->cwd_name, oldp->cwd_name, MAXPATH);
         /* Copy the process name into newp */
-        safe_strncpy(newp->name, oldp->name, MAXNAME);
+	safe_strncpy(newp->name, oldp->name, MAXNAME);
+	newp->signal_mask = oldp->signal_mask;
+	memmove(newp->signal_actions, oldp->signal_actions,
+	        sizeof(newp->signal_actions));
 
         spinlock_release(&newp->lock);
         spinlock_release(&newp->cur_thread->lock);
@@ -488,40 +520,43 @@ void exit(int cause)
         PANIC("exit");
 }
 
-int wait(uint64 addr)
+int process_wait(int target, uint64 status_address, int nohang)
 {
         process_t p, pp;
-        int kids = 0, pid;
+	int exit_status, kids, pid;
         list_t l;
 
         p = cur_proc();
 
         spinlock_acquire(&wait_lock);
 
-        for(;;) {
-                for(l = proc.next; l != &proc; l = l->next) {
+	for(;;) {
+		kids = 0;
+		for(l = proc.next; l != &proc; l = l->next) {
                         pp = list_entry(l, struct process, all_tag);
                         if(!pp)
                                 continue;
-                        if(pp->parent == p) {
+			if(pp->parent == p &&
+			   (target == -1 || target == pp->pid)) {
                                 spinlock_acquire(&pp->lock);
                                 kids = 1;
                                 if(pp->state == ZOMBIE) {
                                         pid = pp->pid;
 
-                                        if(addr && 
-                                           !either_copyout(1,
-                                                                addr,
-                                                                &pp->exit_state,
-                                                                sizeof(pp->exit_state))) {
-                                                spinlock_release(&pp->lock);
-                                                spinlock_release(&wait_lock);
-                                                return -1;
-                                        }
+					exit_status =
+						(pp->exit_state & 0xff) << 8;
+					if(status_address &&
+					   either_copyout(1, status_address,
+					                  &exit_status,
+					                  sizeof(exit_status)) < 0) {
+						spinlock_release(&pp->lock);
+						spinlock_release(&wait_lock);
+						return -2;
+					}
 
-                                        process_free(pp);
-                                        spinlock_release(&pp->lock);
-                                        spinlock_release(&wait_lock);
+					spinlock_release(&pp->lock);
+					process_free(pp);
+					spinlock_release(&wait_lock);
 
                                         return pid;
                                 }
@@ -529,10 +564,14 @@ int wait(uint64 addr)
                         }
                 }
 
-                if(!kids || killed(p)) {
+		if(!kids || killed(p)) {
                         spinlock_release(&wait_lock);
                         return -1;
-                }
+		}
+		if (nohang) {
+			spinlock_release(&wait_lock);
+			return 0;
+		}
 
                 sleep(p, &wait_lock);
         }

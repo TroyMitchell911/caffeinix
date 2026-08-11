@@ -15,7 +15,6 @@
 #include <log.h>
 #include <inode.h>
 #include <fs.h>
-#include <sys/stat.h>
 
 #define MAXPATH                 128
 #define MAXARG                  32
@@ -40,6 +39,5 @@ file_t file_dup(file_t f);
 void file_close(file_t f);
 int file_read(file_t f, uint64 addr, int n);
 int file_write(file_t f, uint64 addr, int n);
-int file_stat(file_t f, uint64 addr);
 
 #endif

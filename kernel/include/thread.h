@@ -89,6 +89,8 @@ typedef struct trapframe {
         /* 264 */ uint64 t4;
         /* 272 */ uint64 t5;
         /* 280 */ uint64 t6;
+	/* 288 */ uint64 f[32];
+	/* 544 */ uint64 fcsr;
 }*trapframe_t;
 
 typedef struct thread {

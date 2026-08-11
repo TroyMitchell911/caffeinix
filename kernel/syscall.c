@@ -1,131 +1,153 @@
-/*
- * @Author: TroyMitchell
- * @Date: 2024-05-07
- * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-30
- * @FilePath: /caffeinix/kernel/syscall.c
- * @Description: 
- * Words are cheap so I do.
- * Copyright (c) 2024 by TroyMitchell, All Rights Reserved. 
- */
-#include "typedefs.h"
-#include <syscall.h>
-#include <scheduler.h>
 #include <debug.h>
+#include <linux_uapi.h>
 #include <mystring.h>
-#include <vm.h>
 #include <printf.h>
+#include <scheduler.h>
+#include <syscall.h>
+#include <vm.h>
 
 static uint64 argraw(int n)
 {
-        process_t p = cur_proc(); 
-        uint64 *args = &p->cur_thread->trapframe->a0;
-        if(n <= 5)
-                return args[n];
+	process_t p = cur_proc();
+	uint64 *args = &p->cur_thread->trapframe->a0;
 
-        PANIC("argraw");
-        return -1;
+	if (n >= 0 && n <= 5)
+		return args[n];
+
+	PANIC("argraw");
+	return 0;
 }
 
-int fetch_str_from_user(uint64 user_addr, char* buf, int max)
+int fetch_str_from_user(uint64 user_addr, char *buf, int max)
 {
-        process_t p = cur_proc();
-        if(copyinstr(p->pagetable, buf, user_addr, max) < 0) {
-                return -1;
-        }
-        return strlen(buf);
+	process_t p = cur_proc();
+
+	if (copyinstr(p->pagetable, buf, user_addr, max) < 0)
+		return -1;
+	return strlen(buf);
 }
 
-int fetch_addr_from_user(uint64 user_addr, uint64* dst)
+int fetch_addr_from_user(uint64 user_addr, uint64 *dst)
 {
         process_t p = cur_proc();
-        if(user_addr >= p->sz || user_addr + sizeof(uint64) > p->sz) 
-                return -1;
-        if(copyin(p->pagetable, (char*)dst, user_addr, sizeof(uint64)) != 0) {
-                return -1;
-        }
-        return 0;
+
+	if (copyin(p->pagetable, (char *)dst, user_addr, sizeof(uint64)) != 0)
+		return -1;
+	return 0;
 }
 
 void argint(int n, int *ip)
 {
-        *ip = argraw(n);
+	*ip = argraw(n);
 }
 
 void argaddr(int n, uint64 *ap)
 {
-        *ap = argraw(n);
+	*ap = argraw(n);
 }
 
 int argstr(int n, char *buf, int max)
 {
-        uint64 addr;
-        /* Get the address of string */
-        argaddr(n, &addr);
-        return fetch_str_from_user(addr, buf, max);
+	uint64 addr;
+
+	argaddr(n, &addr);
+	return fetch_str_from_user(addr, buf, max);
 }
 
-extern uint64 sys_open(void);
-extern uint64 sys_close(void);
-extern uint64 sys_read(void);
-extern uint64 sys_exec(void);
-extern uint64 sys_mknod(void);
-extern uint64 sys_write(void);
-extern uint64 sys_dup(void);
-extern uint64 sys_getpid(void);
-extern uint64 sys_fork(void);
-extern uint64 sys_mkdir(void);
-extern uint64 sys_fstat(void);
-extern uint64 sys_sbrk(void);
-extern uint64 sys_clone(void);
-extern uint64 sys_sleep(void);
-extern uint64 sys_exit(void);
-extern uint64 sys_kill(void);
-extern uint64 sys_wait(void);
-extern uint64 sys_chdir(void);
-extern uint64 sys_link(void);
-extern uint64 sys_unlink(void);
-extern uint64 sys_getcwd(void);
+extern uint64 sys_linux_brk(void);
+extern uint64 sys_linux_chdir(void);
+extern uint64 sys_linux_close(void);
+extern uint64 sys_linux_dup(void);
+extern uint64 sys_linux_dup3(void);
+extern uint64 sys_linux_execve(void);
+extern uint64 sys_linux_exit(void);
+extern uint64 sys_linux_exit_group(void);
+extern uint64 sys_linux_faccessat(void);
+extern uint64 sys_linux_fcntl(void);
+extern uint64 sys_linux_fstat(void);
+extern uint64 sys_linux_getcwd(void);
+extern uint64 sys_linux_getdents64(void);
+extern uint64 sys_linux_getegid(void);
+extern uint64 sys_linux_geteuid(void);
+extern uint64 sys_linux_getgid(void);
+extern uint64 sys_linux_getpid(void);
+extern uint64 sys_linux_getppid(void);
+extern uint64 sys_linux_gettid(void);
+extern uint64 sys_linux_getuid(void);
+extern uint64 sys_linux_ioctl(void);
+extern uint64 sys_linux_lseek(void);
+extern uint64 sys_linux_mkdirat(void);
+extern uint64 sys_linux_mmap(void);
+extern uint64 sys_linux_munmap(void);
+extern uint64 sys_linux_newfstatat(void);
+extern uint64 sys_linux_openat(void);
+extern uint64 sys_linux_prctl(void);
+extern uint64 sys_linux_read(void);
+extern uint64 sys_linux_set_tid_address(void);
+extern uint64 sys_linux_clone(void);
+extern uint64 sys_linux_rt_sigaction(void);
+extern uint64 sys_linux_rt_sigprocmask(void);
+extern uint64 sys_linux_unlinkat(void);
+extern uint64 sys_linux_utimensat(void);
+extern uint64 sys_linux_write(void);
+extern uint64 sys_linux_writev(void);
+extern uint64 sys_linux_wait4(void);
 
 typedef uint64 (*syscall_t)(void);
 
-syscall_t syscalls[] = {
-        [SYS_close] = sys_close,
-        [SYS_open] = sys_open,
-        [SYS_read] = sys_read,
-        [SYS_exec] = sys_exec,
-        [SYS_mknod] = sys_mknod,
-        [SYS_write] = sys_write,
-        [SYS_dup] = sys_dup,
-        [SYS_getpid] = sys_getpid,
-        [SYS_fork] = sys_fork,
-        [SYS_mkdir] = sys_mkdir,
-        [SYS_fstat] = sys_fstat,
-        [SYS_sbrk] = sys_sbrk,
-        [SYS_clone] = sys_clone,
-        [SYS_sleep] = sys_sleep,
-        [SYS_exit] = sys_exit,
-        [SYS_kill] = sys_kill,
-        [SYS_wait] = sys_wait,
-        [SYS_chdir] = sys_chdir,
-        [SYS_link] = sys_link,
-        [SYS_unlink] = sys_unlink,
-        [SYS_getcwd] = sys_getcwd,
-};      
+static syscall_t linux_syscalls[LINUX_SYS_wait4 + 1] = {
+	[LINUX_SYS_getcwd] = sys_linux_getcwd,
+	[LINUX_SYS_dup] = sys_linux_dup,
+	[LINUX_SYS_dup3] = sys_linux_dup3,
+	[LINUX_SYS_fcntl] = sys_linux_fcntl,
+	[LINUX_SYS_ioctl] = sys_linux_ioctl,
+	[LINUX_SYS_mkdirat] = sys_linux_mkdirat,
+	[LINUX_SYS_unlinkat] = sys_linux_unlinkat,
+	[LINUX_SYS_faccessat] = sys_linux_faccessat,
+	[LINUX_SYS_chdir] = sys_linux_chdir,
+	[LINUX_SYS_openat] = sys_linux_openat,
+	[LINUX_SYS_close] = sys_linux_close,
+	[LINUX_SYS_getdents64] = sys_linux_getdents64,
+	[LINUX_SYS_lseek] = sys_linux_lseek,
+	[LINUX_SYS_read] = sys_linux_read,
+	[LINUX_SYS_write] = sys_linux_write,
+	[LINUX_SYS_writev] = sys_linux_writev,
+	[LINUX_SYS_newfstatat] = sys_linux_newfstatat,
+	[LINUX_SYS_fstat] = sys_linux_fstat,
+	[LINUX_SYS_utimensat] = sys_linux_utimensat,
+	[LINUX_SYS_exit] = sys_linux_exit,
+	[LINUX_SYS_exit_group] = sys_linux_exit_group,
+	[LINUX_SYS_set_tid_address] = sys_linux_set_tid_address,
+	[LINUX_SYS_rt_sigaction] = sys_linux_rt_sigaction,
+	[LINUX_SYS_rt_sigprocmask] = sys_linux_rt_sigprocmask,
+	[LINUX_SYS_prctl] = sys_linux_prctl,
+	[LINUX_SYS_getpid] = sys_linux_getpid,
+	[LINUX_SYS_getppid] = sys_linux_getppid,
+	[LINUX_SYS_getuid] = sys_linux_getuid,
+	[LINUX_SYS_geteuid] = sys_linux_geteuid,
+	[LINUX_SYS_getgid] = sys_linux_getgid,
+	[LINUX_SYS_getegid] = sys_linux_getegid,
+	[LINUX_SYS_gettid] = sys_linux_gettid,
+	[LINUX_SYS_brk] = sys_linux_brk,
+	[LINUX_SYS_munmap] = sys_linux_munmap,
+	[LINUX_SYS_clone] = sys_linux_clone,
+	[LINUX_SYS_execve] = sys_linux_execve,
+	[LINUX_SYS_mmap] = sys_linux_mmap,
+	[LINUX_SYS_wait4] = sys_linux_wait4,
+};
 
 void syscall(void)
 {
-        int syscall_num;
-        process_t p = cur_proc();
+	uint64 nr;
+	process_t p = cur_proc();
 
-        syscall_num = p->cur_thread->trapframe->a7;
-        if(syscall_num > 0 && syscall_num < NELEM(syscalls) && syscalls[syscall_num]) {
-                // printf("syscall_num: %d\n", syscall_num);
-                p->cur_thread->trapframe->a0 = syscalls[syscall_num]();
-        } else {
-                p->cur_thread->trapframe->a0 = -1;
-                printf("Unknown syscall number %d from this process-> pid:%d name:%s\n", 
-                        syscall_num, p->pid, p->name);
-                PANIC("unknown");
-        }
+	nr = p->cur_thread->trapframe->a7;
+	if (nr < NELEM(linux_syscalls) && linux_syscalls[nr]) {
+		p->cur_thread->trapframe->a0 = linux_syscalls[nr]();
+		return;
+	}
+
+	printf("Unsupported Linux syscall %d from pid %d (%s)\n",
+	       nr, p->pid, p->name);
+	p->cur_thread->trapframe->a0 = -LINUX_ENOSYS;
 }

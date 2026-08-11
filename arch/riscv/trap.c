@@ -155,6 +155,8 @@ void user_trap_ret(void)
         sstatus = sstatus_r();
         /* Set the interrupt is from user mode */
         sstatus &= ~SSTATUS_SPP; 
+	sstatus &= ~SSTATUS_FS_MASK;
+	sstatus |= SSTATUS_FS_DIRTY;
         /* Enable interrupt */
         sstatus |= SSTATUS_SPIE; 
         sstatus_w(sstatus);

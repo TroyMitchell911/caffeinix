@@ -196,16 +196,43 @@ void vm_unmap(pagedir_t pgdir, uint64 va, uint64 npages, int do_free)
         }
 }
 
+int vm_mapped(pagedir_t pgdir, uint64 va)
+{
+	pte_t *pte = PTE(pgdir, va, 0);
+
+	return pte && (*pte & PTE_V) && (*pte & (PTE_R | PTE_W | PTE_X));
+}
+
+void vm_unmap_range(pagedir_t pgdir, uint64 va, uint64 size)
+{
+	uint64 addr, end, pa;
+	pte_t *pte;
+
+	if (!size)
+		return;
+	addr = PGROUNDDOWN(va);
+	end = PGROUNDUP(va + size);
+	for (; addr < end; addr += PGSIZE) {
+		pte = PTE(pgdir, addr, 0);
+		if (!pte || !(*pte & PTE_V) ||
+		    !(*pte & (PTE_R | PTE_W | PTE_X)))
+			continue;
+		pa = PTE2PA(*pte);
+		*pte = 0;
+		pfree((void *)pa);
+	}
+	sfence_vma();
+}
+
 /* Free page-table from oldsz to newsz */
 uint64 vm_dealloc(pagedir_t pgdir, uint64 oldsz, uint64 newsz)
 {
         if(newsz >= oldsz)
                 return oldsz;
 
-        if(PGROUNDUP(newsz) < PGROUNDUP(oldsz)){
-                int npages = (PGROUNDUP(oldsz) - PGROUNDUP(newsz)) / PGSIZE;
-                vm_unmap(pgdir, PGROUNDUP(newsz), npages, 1);
-        }
+        if(PGROUNDUP(newsz) < PGROUNDUP(oldsz))
+		vm_unmap_range(pgdir, PGROUNDUP(newsz),
+		               PGROUNDUP(oldsz) - PGROUNDUP(newsz));
         return newsz;
 }
 
@@ -218,7 +245,7 @@ uint64 vm_alloc(pagedir_t pgdir, uint64 oldsz, uint64 newsz, int eperm)
                 return oldsz;
 
         oldsz = PGROUNDUP(oldsz);
-        for(addr = oldsz; addr < newsz;addr += PGSIZE) {
+	for(addr = oldsz; addr < newsz;addr += PGSIZE) {
                 mem = palloc();
                 if(!mem) {
                         vm_dealloc(pgdir, addr, oldsz);
@@ -230,9 +257,10 @@ uint64 vm_alloc(pagedir_t pgdir, uint64 oldsz, uint64 newsz, int eperm)
                         pfree(mem);
                         vm_dealloc(pgdir, addr, oldsz);
                         return 0;
-                }
-        }
+		}
+	}
 
+	sfence_vma();
         return newsz;
 }
 
@@ -246,34 +274,74 @@ void vm_clear(pagedir_t pgdir, uint64 va)
         }
 }
 
-int vm_copy(pagedir_t old, pagedir_t new, uint64 sz)
+static int vm_copy_walk(pagedir_t old, pagedir_t new, int level,
+			uint64 base)
 {
-        int addr;
-        pte_t *pte;
-        uint64 mem, pa;
+	uint64 mem, pa, va;
+	pte_t pte;
+	int i;
 
-        sz = PGROUNDUP(sz);
+	for (i = 0; i < PGSIZE / sizeof(pte_t); i++) {
+		pte = old[i];
+		if (!(pte & PTE_V))
+			continue;
+		va = base | ((uint64)i << (PGSHIFT + 9 * level));
+		if (!(pte & (PTE_R | PTE_W | PTE_X))) {
+			if (level == 0 ||
+			    vm_copy_walk((pagedir_t)PTE2PA(pte), new,
+			                 level - 1, va) < 0)
+				return -1;
+			continue;
+		}
+		if (!(pte & PTE_U))
+			continue;
+		pa = PTE2PA(pte);
+		mem = (uint64)palloc();
+		if (!mem)
+			return -1;
+		memmove((char *)mem, (char *)pa, PGSIZE);
+		if (vm_map(new, va, mem, PGSIZE, pte & 0x3ff) < 0) {
+			pfree((void *)mem);
+			return -1;
+		}
+	}
+	return 0;
+}
 
-        for(addr = 0; addr < sz; addr += PGSIZE) {
-                pte = PTE(old, addr, 0);
-                if(!pte)
-                        PANIC("vm_copy pte");
-                if(((*pte) & PTE_V) == 0) 
-                        PANIC("vm_copy PTE_V");
-                pa = PTE2PA(*pte);
-                mem = (uint64)palloc();
-                if(!mem)
-                        goto fail;
-                memmove((char*)mem, (char*)pa, PGSIZE);
-                if(vm_map(new, addr, mem, PGSIZE, *pte & 0x3ff) != 0) {
-                        pfree((void*)mem);
-                        goto fail;
-                }
-        }
-        return 0;
-fail:
-        vm_unmap(new, 0, addr, 1);
-        return -1;
+int vm_copy(pagedir_t old, pagedir_t new)
+{
+	if (vm_copy_walk(old, new, 2, 0) < 0) {
+		vm_free_user(new);
+		return -1;
+	}
+	return 0;
+}
+
+static void vm_free_user_walk(pagedir_t pgdir, int level)
+{
+	pte_t pte;
+	int i;
+
+	for (i = 0; i < PGSIZE / sizeof(pte_t); i++) {
+		pte = pgdir[i];
+		if (!(pte & PTE_V))
+			continue;
+		if (!(pte & (PTE_R | PTE_W | PTE_X))) {
+			if (level > 0)
+				vm_free_user_walk((pagedir_t)PTE2PA(pte),
+				                  level - 1);
+			continue;
+		}
+		if (pte & PTE_U) {
+			pfree((void *)PTE2PA(pte));
+			pgdir[i] = 0;
+		}
+	}
+}
+
+void vm_free_user(pagedir_t pgdir)
+{
+	vm_free_user_walk(pgdir, 2);
 }
 
 int copyout(pagedir_t pgdir, uint64 dstva, char* src, uint64 len)

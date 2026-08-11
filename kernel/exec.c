@@ -4,6 +4,7 @@
 #include <inode.h>
 #include <linux_uapi.h>
 #include <log.h>
+#include <mem_layout.h>
 #include <mystring.h>
 #include <printf.h>
 #include <scheduler.h>
@@ -190,27 +191,30 @@ int exec_linux(char *path, char **argv, char **envp)
 	logged = 0;
 
 	sz = PGROUNDUP(sz);
-	sz1 = vm_alloc(pgdir, sz, sz + PGSIZE * 2, PTE_W);
+	sz1 = vm_alloc(pgdir, USER_STACK_BASE, USER_STACK_TOP, PTE_W);
 	if (!sz1)
 		goto fail;
-	sp = sz1;
-	stackbase = sp - PGSIZE;
-	vm_clear(pgdir, sp - PGSIZE * 2);
+	sp = USER_STACK_TOP;
+	stackbase = USER_STACK_BASE;
 
 	argc = build_linux_stack(pgdir, sp, stackbase, argv, envp, phdr,
 	                         &elf, &sp);
 	if (argc < 0)
 		goto fail;
-	sz = sz1;
-
 	oldpgdir = p->pagetable;
 	oldsz = p->sz;
 	p->pagetable = pgdir;
 	p->sz = sz;
+	p->brk = sz;
+	p->brk_start = sz;
+	p->mmap_top = USER_MMAP_TOP;
 	p->cur_thread->trapframe->a0 = argc;
 	p->cur_thread->trapframe->a1 = sp + sizeof(uint64);
 	p->cur_thread->trapframe->sp = sp;
 	p->cur_thread->trapframe->epc = elf.entry;
+	memset(p->cur_thread->trapframe->f, 0,
+	       sizeof(p->cur_thread->trapframe->f));
+	p->cur_thread->trapframe->fcsr = 0;
 
 	for (name = path_p = path; *path_p; path_p++) {
 		if (*path_p == '/')
@@ -228,12 +232,4 @@ fail:
 	if (logged)
 		log_end();
 	return -1;
-}
-
-/* Temporary source-level bridge for code removed by the Linux UAPI switch. */
-int exec(char *path, char **argv)
-{
-	char *envp[] = { 0 };
-
-	return exec_linux(path, argv, envp);
 }
