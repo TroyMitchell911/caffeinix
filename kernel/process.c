@@ -142,6 +142,8 @@ static void proc_first_start(void)
 		if (vfs_get_root(&process->root) < 0)
 			PANIC("process root");
 		vfs_path_copy(&process->cwd, &process->root);
+		if (vfs_mount("devfs", 0, "/dev", 0) < 0)
+			PANIC("mount devfs");
 		if (setup_stdio() < 0)
 			PANIC("stdio setup");
 		if (exec_linux(INIT_PATH, argv, envp) < 0)
