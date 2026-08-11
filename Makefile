@@ -1,8 +1,8 @@
 ifndef CROSS_COMPILE
-CROSS_COMPILE := riscv64-caffeinix-
+CROSS_COMPILE := riscv64-linux-gnu-
 endif
 
-AS		= $(CROSS_COMPILE)gas
+AS		= $(CROSS_COMPILE)as
 LD		= $(CROSS_COMPILE)ld
 CC		= $(CROSS_COMPILE)gcc
 CPP		= $(CC) -E
@@ -19,20 +19,13 @@ export AS LD CC CPP AR NM
 export STRIP OBJCOPY OBJDUMP
 
 
-CFLAGS = -Wall -Werror -O -fno-omit-frame-pointer -ggdb -gdwarf-2
+CFLAGS = -Wall -Werror -O -std=gnu17 -fno-omit-frame-pointer -ggdb -gdwarf-2
 CFLAGS += -MD
-CFLAGS += -mcmodel=medany
-CFLAGS += -ffreestanding -fno-common -nostdlib -mno-relax
+CFLAGS += -march=rv64gc -mabi=lp64d -mcmodel=medany
+CFLAGS += -ffreestanding -fno-builtin -fno-common -nostdlib -mno-relax
+CFLAGS += -nostdinc -isystem $(shell $(CC) -print-file-name=include)
+CFLAGS += -fno-stack-protector -fno-pie
 CFLAGS += -I.
-CFLAGS += $(shell $(CC) -fno-stack-protector -E -x c /dev/null >/dev/null 2>&1 && echo -fno-stack-protector)
-
-# Disable PIE when possible (for Ubuntu 16.10 toolchain)
-ifneq ($(shell $(CC) -dumpspecs 2>/dev/null | grep -e '[^f]no-pie'),)
-CFLAGS += -fno-pie -no-pie
-endif
-ifneq ($(shell $(CC) -dumpspecs 2>/dev/null | grep -e '[^f]nopie'),)
-CFLAGS += -fno-pie -nopie
-endif
 
 LDFLAGS = -z max-page-size=4096
 export CFLAGS LDFLAGS
