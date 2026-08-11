@@ -6,6 +6,10 @@ subdir-y :=
 EXTRA_CFLAGS :=
 EXTRA_LDFLAGS :=
 
+# Tell the top-level Makefile that it is being parsed by the recursive build
+# engine, so it does not add the top-level bootstrap dependency again.
+KBUILD_RECURSIVE := 1
+
 # include the Makefile in the current directory. 
 # Note that when executing the command, the working directory will be switched through 
 # the make -C command.
@@ -44,19 +48,18 @@ ifneq ($(dep_files),)
   include $(dep_files)
 endif
 
-# Append each subdirectory name (excluding "/") to the pseudo target
-PHONY += $(subdir-y)
+# Recursive objects must always be reconsidered because their real source
+# dependencies live in the child make invocation.
+PHONY += $(subdir_objs)
 
 # Define rules (target: dependencies)
-__build : $(subdir-y) built-in.o
+__build : built-in.o
 
-    # Target each item in the subdirectory, and each item is a directory name
-    $(subdir-y):
-	@echo subdir-y = $@
-
-    # Enter each subdirectory ($@ represents the target name), 
-    # find and execute the Makefile.build of the top directory
-	make -C $@ -f $(TOPDIR)/Makefile.build
+# Build the object as the recursive target itself.  This makes the producer of
+# each subdirectory built-in.o explicit and keeps parallel builds ordered.
+$(subdir_objs): %/built-in.o:
+	@echo subdir-y = $*
+	$(MAKE) -C $* -f $(TOPDIR)/Makefile.build
 
 # Define built-in.o dependency rules
 # cur_objs Ordinary files (.o files) filtered from obj-y

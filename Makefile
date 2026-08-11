@@ -52,11 +52,17 @@ TARGET := $(OUTPUT)/kernel
 build:
 	bear -- make all
 
-all : start_recursive_build $(TARGET)
+all : $(TARGET)
 	@echo $(TARGET) has been built!
 
+.PHONY: start_recursive_build
 start_recursive_build:
 	make -C ./ -f $(TOPDIR)/Makefile.build
+
+ifndef KBUILD_RECURSIVE
+.PHONY: built-in.o
+built-in.o: start_recursive_build
+endif
 
 $(TARGET) : built-in.o
 	@if [ ! -d $(OUTPUT) ]; then \
