@@ -23,6 +23,7 @@
 #include <file.h>
 #include <mystring.h>
 #include <ext4fs.h>
+#include <fatfs.h>
 #include <devfs.h>
 #include <tmpfs.h>
 #include <vfs.h>
@@ -49,6 +50,7 @@ void main(void)
                 file_init();
 		vfs_init();
 		ext4fs_init();
+		fatfs_init();
 		devfs_init();
 		tmpfs_init();
                 virtio_disk_init();

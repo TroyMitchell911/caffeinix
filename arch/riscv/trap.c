@@ -40,8 +40,9 @@ static int dev_intr(uint64 scause)
                 irq = plic_claim();
                 if(irq == UART0_IRQ) {
                         uart_intr();
-                } else if(irq == VIRTIO0_IRQ) {
-                        virtio_disk_intr();
+		} else if (irq >= VIRTIO0_IRQ &&
+		           irq < VIRTIO0_IRQ + VIRTIO_MMIO_SLOTS) {
+			virtio_disk_intr(irq);
                 /* 
                  * irq 0 is reserved to mean “no interrupt”.
                  * see here: https://five-embeddev.com/riscv-priv-isa-manual/Priv-v1.12/plic.html#interrupt-identifiers-ids
@@ -148,7 +149,8 @@ void user_trap_ret(void)
         stvec_w(trampoline_uservec);
 
         p->cur_thread->trapframe->kernel_satp = satp_r();
-        p->cur_thread->trapframe->kernel_sp = p->cur_thread->kstack + PGSIZE;
+	p->cur_thread->trapframe->kernel_sp =
+		p->cur_thread->kstack + KSTACK_SIZE;
         p->cur_thread->trapframe->kernel_hartid = tp_r();
         p->cur_thread->trapframe->kernel_trap = (uint64)user_trap_entry;
 

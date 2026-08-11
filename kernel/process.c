@@ -146,6 +146,9 @@ static void proc_first_start(void)
 			PANIC("mount devfs");
 		if (vfs_mount("tmpfs", 0, "/tmp", 0) < 0)
 			PANIC("mount tmpfs");
+		if (block_device_get(2) &&
+		    vfs_mount("fat", block_device_get(2), "/mnt/fat", 0) < 0)
+			PANIC("mount fat");
 		if (setup_stdio() < 0)
 			PANIC("stdio setup");
 		if (exec_linux(INIT_PATH, argv, envp) < 0)

@@ -114,8 +114,9 @@ static pagedir_t kernel_pagedir_t_create(void)
         
         memset(pgdir, 0, PGSIZE);
 
-        /* Map virtio mmio disk interface */
-        vm_map(pgdir, VIRTIO0, VIRTIO0, PGSIZE, PTE_R | PTE_W);
+	/* Map the QEMU virt machine's virtio MMIO transports. */
+	vm_map(pgdir, VIRTIO0, VIRTIO0, VIRTIO_MMIO_SLOTS * PGSIZE,
+	       PTE_R | PTE_W);
         /* Map the UART0 */
         vm_map(pgdir, UART0, UART0, PGSIZE, PTE_R | PTE_W);
         /* Map the trampoline */        
