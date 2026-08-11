@@ -11,10 +11,10 @@
 #include <mystring.h>
 
 /* Clear n bytes of memory pointing to dst as c */
-void* memset(void* dst, char c, uint32 n)
+void* memset(void* dst, int c, size_t n)
 {
         char* d = (char*)dst;
-        int i;
+	size_t i;
         
         for(i = 0; i < n; i++) {
                 d[i] = c;
@@ -31,7 +31,16 @@ size_t strlen(const char* s)
         return (p - s - 1);
 }
 
-char* strncpy(char* s, const char* t, uint16 n)
+char* strcpy(char* s, const char* t)
+{
+	char *original = s;
+
+	while ((*s++ = *t++))
+		;
+	return original;
+}
+
+char* strncpy(char* s, const char* t, size_t n)
 {
         char *os;       
 
@@ -43,7 +52,7 @@ char* strncpy(char* s, const char* t, uint16 n)
         return os;  
 }
 
-char* safe_strncpy(char* s, const char* t, uint16 n)
+char* safe_strncpy(char* s, const char* t, size_t n)
 {
         char *os;
 
@@ -56,7 +65,7 @@ char* safe_strncpy(char* s, const char* t, uint16 n)
         return os;  
 }
 
-void* memmove(void *dst, const void *src, uint16 n)
+void* memmove(void *dst, const void *src, size_t n)
 {
         const char *s;
         char *d;
@@ -78,12 +87,35 @@ void* memmove(void *dst, const void *src, uint16 n)
         return dst;
 }
 
-void* memcpy(void* dst, const void* src, uint16 n)
+void* memcpy(void* dst, const void* src, size_t n)
 {
         return memmove(dst, src, n);
 }
 
-int strncmp(const char *p, const char *q, uint32 n)
+int memcmp(const void *left, const void *right, size_t n)
+{
+	const uint8 *p = left;
+	const uint8 *q = right;
+
+	while (n--) {
+		if (*p != *q)
+			return *p - *q;
+		p++;
+		q++;
+	}
+	return 0;
+}
+
+int strcmp(const char *p, const char *q)
+{
+	while (*p && *p == *q) {
+		p++;
+		q++;
+	}
+	return (uint8)*p - (uint8)*q;
+}
+
+int strncmp(const char *p, const char *q, size_t n)
 {
         while(n > 0 && *p && *p == *q)
                 n--, p++, q++;
@@ -92,18 +124,24 @@ int strncmp(const char *p, const char *q, uint32 n)
         return (uint8)*p - (uint8)*q;
 }
 
-void strcat(char *p, const char *q)
+char* strcat(char *p, const char *q)
 {
+	char *original = p;
+
         while(*p != '\0') p++;
         while(*q != '\0') *p++ = *q++;
         *p = '\0';
+	return original;
 }
 
 char* strchr(const char *p, int c)
 {
-        for(; *p != '\0' && *p != c; p++);
-
-        return (char*)p;
+	for (;; p++) {
+		if (*p == c)
+			return (char *)p;
+		if (!*p)
+			return 0;
+	}
 }
 
 char* strrchr(const char *p, int c)
@@ -113,5 +151,32 @@ char* strrchr(const char *p, int c)
         for(; *p != '\0'; p++);
         for(; p > p_start && *p != c; p--);
 
-        return p == p_start && *p != c ? 0 : (char*)p;
+	return p == p_start && *p != c ? 0 : (char*)p;
+}
+
+static void byte_swap(uint8 *left, uint8 *right, size_t size)
+{
+	while (size--) {
+		uint8 value = *left;
+
+		*left++ = *right;
+		*right++ = value;
+	}
+}
+
+void qsort(void *base, size_t count, size_t size,
+	   int (*compare)(const void *, const void *))
+{
+	uint8 *array = base;
+	size_t i, j;
+
+	if (!array || !size || count < 2)
+		return;
+	for (i = 1; i < count; i++) {
+		for (j = i; j &&
+		     compare(array + (j - 1) * size,
+		             array + j * size) > 0; j--)
+			byte_swap(array + (j - 1) * size,
+			          array + j * size, size);
+	}
 }

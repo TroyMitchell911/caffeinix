@@ -19,8 +19,6 @@
 /* TODO:Delete this macro */
 // #define PROCESS_NO_SCHED                1
 
-typedef struct inode *inode_t;
-
 typedef enum process_state{
         UNUSED,
         ALLOCED,
@@ -53,8 +51,9 @@ typedef struct process{
 	uint64 brk_start;
 	uint64 mmap_top;
         pagedir_t pagetable;
-        inode_t cwd;
-        char cwd_name[MAXPATH];
+	struct vfs_path root;
+	struct vfs_path cwd;
+	uint32 umask;
         file_t ofile[NOFILE];
 	uint8 fd_flags[NOFILE];
         void *sleep_chan;

@@ -20,11 +20,10 @@
 #include <process.h>
 #include <virtio_disk.h>
 #include <block_device.h>
-#include <bio.h>
-#include <log.h>
-#include <inode.h>
 #include <file.h>
 #include <mystring.h>
+#include <ext4fs.h>
+#include <vfs.h>
 
 volatile static uint8 start = 0;
 extern char end[];
@@ -45,9 +44,9 @@ void main(void)
                 trap_init();
                 process_init();
                 block_device_init();
-                binit();
-                iinit();
                 file_init();
+		vfs_init();
+		ext4fs_init();
                 virtio_disk_init();
 		userinit();
 

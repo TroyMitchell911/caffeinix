@@ -16,8 +16,8 @@
 #include <scheduler.h>
 #include <mystring.h>
 #include <file.h>
-#include <dirent.h>
-#include <driver.h>
+#include <block_device.h>
+#include <vfs.h>
 
 /* From trampoline.S */
 extern char trampoline[];
@@ -32,36 +32,18 @@ static process_t first;
 static int setup_stdio(void)
 {
 	process_t p = cur_proc();
-	inode_t ip;
-	file_t f;
+	int fd;
 
 	if (p->ofile[0] || p->ofile[1] || p->ofile[2])
 		return -1;
-	ip = namei("/console");
-	if (!ip)
+	if (vfs_open("/dev/console", VFS_OPEN_READ | VFS_OPEN_WRITE, 0,
+	             &fd) < 0 ||
+	    fd != 0)
 		return -1;
-
-	ilock(ip);
-	if (ip->d.type != T_DEVICE || ip->d.major < 0 ||
-	    ip->d.major >= NDEV) {
-		iunlockput(ip);
+	if (vfs_dup(0, 0, 0, &fd) < 0 || fd != 1)
 		return -1;
-	}
-
-	f = file_alloc();
-	if (!f) {
-		iunlockput(ip);
+	if (vfs_dup(0, 0, 0, &fd) < 0 || fd != 2)
 		return -1;
-	}
-	f->type = FD_DEVICE;
-	f->readable = 1;
-	f->writable = 1;
-	f->major = ip->d.major;
-	f->ip = ip;
-	p->ofile[0] = f;
-	p->ofile[1] = file_dup(f);
-	p->ofile[2] = file_dup(f);
-	iunlock(ip);
 	return 0;
 }
 
@@ -141,19 +123,29 @@ void process_freepagedir(pagedir_t pgdir, uint64 sz)
 static void proc_first_start(void)
 {
 	static uint8 fs_started;
-	char *argv[] = { "/busybox", "ash", 0 };
-	char *envp[] = { "HOME=/", "PATH=/", "TERM=vt100", 0 };
+	char *argv[] = { INIT_PATH, 0 };
+	char *envp[] = {
+		"HOME=/",
+		"PATH=/sbin:/bin:/usr/sbin:/usr/bin",
+		"TERM=vt100",
+		0,
+	};
+	process_t process = cur_proc();
 
         /* The function scheduler will acquire the lock */
         spinlock_release(&cur_proc()->lock);
         spinlock_release(&cur_proc()->cur_thread->lock);
 	if (!fs_started) {
 		fs_started = 1;
-		fs_init(1);
+		if (vfs_mount_root(ROOT_FILESYSTEM, block_device_get(1), 0) < 0)
+			PANIC("mount root");
+		if (vfs_get_root(&process->root) < 0)
+			PANIC("process root");
+		vfs_path_copy(&process->cwd, &process->root);
 		if (setup_stdio() < 0)
 			PANIC("stdio setup");
-		if (exec_linux("/busybox", argv, envp) < 0)
-			PANIC("exec /busybox");
+		if (exec_linux(INIT_PATH, argv, envp) < 0)
+			PANIC("exec init");
 	}
         extern void user_trap_ret(void);
         user_trap_ret();
@@ -260,6 +252,7 @@ static process_t process_alloc(void)
         if(!p)
                 return 0;
 	memset(p, 0, sizeof(*p));
+	p->umask = 0022;
         
         spinlock_init(&p->lock, "process");
         spinlock_acquire(&p->lock);
@@ -365,10 +358,6 @@ void userinit(void)
 	if (!p)
                 PANIC("userinit");
 	t = p->cur_thread;
-
-        p->cwd = namei("/");
-        safe_strncpy(p->cwd_name, "/", MAXPATH);
-
 	t->state = READY;
 	p->sz = 0;
 	p->brk = 0;
@@ -435,6 +424,7 @@ int process_fork(uint64 child_stack)
 	newp->brk = oldp->brk;
 	newp->brk_start = oldp->brk_start;
 	newp->mmap_top = oldp->mmap_top;
+	newp->umask = oldp->umask;
 	*newt->trapframe = *oldt->trapframe;
 	if (child_stack)
 		newt->trapframe->sp = child_stack;
@@ -447,9 +437,8 @@ int process_fork(uint64 child_stack)
 			newp->ofile[i] = file_dup(oldp->ofile[i]);
 		newp->fd_flags[i] = oldp->fd_flags[i];
         }
-        newp->cwd = idup(oldp->cwd);
-        /* Copy the name of cwd into newp */
-        safe_strncpy(newp->cwd_name, oldp->cwd_name, MAXPATH);
+	vfs_path_copy(&newp->root, &oldp->root);
+	vfs_path_copy(&newp->cwd, &oldp->cwd);
         /* Copy the process name into newp */
 	safe_strncpy(newp->name, oldp->name, MAXNAME);
 	newp->signal_mask = oldp->signal_mask;
@@ -489,9 +478,8 @@ void exit(int cause)
                 }
         }
 
-        log_begin();
-        iput(p->cwd);
-        log_end();
+	vfs_path_put(&p->cwd);
+	vfs_path_put(&p->root);
 
         spinlock_acquire(&wait_lock);
 

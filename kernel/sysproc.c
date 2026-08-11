@@ -175,6 +175,17 @@ uint64 sys_linux_gettid(void)
 	return cur_proc()->cur_thread->tid;
 }
 
+uint64 sys_linux_umask(void)
+{
+	process_t process = cur_proc();
+	uint32 old_mask = process->umask;
+	int mask;
+
+	argint(0, &mask);
+	process->umask = mask & 0777;
+	return old_mask;
+}
+
 uint64 sys_linux_rt_sigaction(void)
 {
 	struct linux_sigaction action;

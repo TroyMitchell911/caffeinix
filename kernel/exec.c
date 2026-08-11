@@ -1,13 +1,10 @@
-#include <debug.h>
-#include <dirent.h>
 #include <elf.h>
-#include <inode.h>
+#include <file.h>
 #include <linux_uapi.h>
-#include <log.h>
 #include <mem_layout.h>
 #include <mystring.h>
-#include <printf.h>
 #include <scheduler.h>
+#include <vfs.h>
 #include <vm.h>
 
 struct linux_auxv_entry {
@@ -26,7 +23,7 @@ static int flags2perm(int flags)
 	return perm;
 }
 
-static int loadseg(pagedir_t pgdir, uint64 va, inode_t ip,
+static int loadseg(pagedir_t pgdir, uint64 va, file_t file,
 		   uint64 offset, uint64 size)
 {
 	uint64 page_offset, pa, n;
@@ -40,7 +37,7 @@ static int loadseg(pagedir_t pgdir, uint64 va, inode_t ip,
 		n = PGSIZE - page_offset;
 		if (n > size)
 			n = size;
-		if (readi(ip, 0, pa + page_offset, offset, n) != n)
+		if (vfs_file_pread(file, 0, pa + page_offset, n, offset) != n)
 			return -1;
 
 		va += n;
@@ -130,23 +127,20 @@ static int build_linux_stack(pagedir_t pgdir, uint64 stack_top,
 
 int exec_linux(char *path, char **argv, char **envp)
 {
-	int argc, i, logged = 0;
+	int argc, i;
 	uint64 off, oldsz, phdr = 0, sz = 0, sz1, sp, stackbase;
-	inode_t ip = 0;
+	file_t file = 0;
 	struct elfhdr elf;
 	struct proghdr ph;
 	pagedir_t oldpgdir, pgdir = 0;
 	process_t p = cur_proc();
 	char *name, *path_p;
 
-	log_begin();
-	logged = 1;
-	ip = namei(path);
-	if (!ip)
+	if (vfs_open_file(path, VFS_OPEN_READ, 0, &file) < 0)
 		goto fail;
-	ilock(ip);
 
-	if (readi(ip, 0, (uint64)&elf, 0, sizeof(elf)) != sizeof(elf))
+	if (vfs_file_pread(file, 0, (uint64)&elf, sizeof(elf), 0) !=
+	    sizeof(elf))
 		goto fail;
 	if (elf.magic != ELF_MAGIC || elf.elf[0] != ELF_CLASS_64 ||
 	    elf.elf[1] != ELF_DATA_LSB || elf.type != ELF_TYPE_EXEC ||
@@ -160,7 +154,8 @@ int exec_linux(char *path, char **argv, char **envp)
 
 	for (i = 0, off = elf.phoff; i < elf.phnum;
 	     i++, off += sizeof(ph)) {
-		if (readi(ip, 0, (uint64)&ph, off, sizeof(ph)) != sizeof(ph))
+		if (vfs_file_pread(file, 0, (uint64)&ph, sizeof(ph), off) !=
+		    sizeof(ph))
 			goto fail;
 		if (ph.type != ELF_PROG_LOAD)
 			continue;
@@ -179,16 +174,14 @@ int exec_linux(char *path, char **argv, char **envp)
 		if (!sz1)
 			goto fail;
 		sz = sz1;
-		if (loadseg(pgdir, ph.vaddr, ip, ph.off, ph.filesz) < 0)
+		if (loadseg(pgdir, ph.vaddr, file, ph.off, ph.filesz) < 0)
 			goto fail;
 	}
 	if (!phdr)
 		goto fail;
 
-	iunlockput(ip);
-	ip = 0;
-	log_end();
-	logged = 0;
+	vfs_file_put(file);
+	file = 0;
 
 	sz = PGROUNDUP(sz);
 	sz1 = vm_alloc(pgdir, USER_STACK_BASE, USER_STACK_TOP, PTE_W);
@@ -227,9 +220,7 @@ int exec_linux(char *path, char **argv, char **envp)
 fail:
 	if (pgdir)
 		process_freepagedir(pgdir, sz);
-	if (ip)
-		iunlockput(ip);
-	if (logged)
-		log_end();
+	if (file)
+		vfs_file_put(file);
 	return -1;
 }

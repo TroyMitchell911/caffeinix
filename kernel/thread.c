@@ -35,16 +35,18 @@ static int tid_alloc(void)
 /* Be called by vm_create */
 void map_kernel_stack(pagedir_t pgdir)
 {
-        int i;
+	int i, page;
         uint64 pa, va;
         /* Assign kernel stack space to each process and map it */
         for(i = 0; i < NTHREAD; i++) {
-                pa = (uint64)palloc();
-                if(!pa) {
-                        PANIC("process_map_kernel_stack");
-                }
-                va = KSTACK((int)(i));
-                vm_map(pgdir, va, pa, PGSIZE, PTE_R | PTE_W);
+		va = KSTACK(i);
+		for (page = 0; page < KSTACK_PAGES; page++) {
+			pa = (uint64)palloc();
+			if (!pa)
+				PANIC("process_map_kernel_stack");
+			vm_map(pgdir, va + page * PGSIZE, pa, PGSIZE,
+			       PTE_R | PTE_W);
+		}
         }
 }
 
@@ -96,7 +98,7 @@ found:
         /* Set the address of kernel stack */
         memset(&t->context, 0, sizeof(struct context));
         /* Set the context of stack pointer */
-        t->context.sp = t->kstack + PGSIZE;
+		t->context.sp = t->kstack + KSTACK_SIZE;
 
         return t;
 r2:
