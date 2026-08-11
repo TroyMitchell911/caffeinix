@@ -3,6 +3,9 @@
 
 #include <typedefs.h>
 
+/* Block size of the legacy xv6-derived filesystem. */
+#define BSIZE                           1024
+
 /* Max loaded inode */
 #define NINODES                         50
 /* Max opened file per system */

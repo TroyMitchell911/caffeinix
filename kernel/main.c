@@ -19,6 +19,7 @@
 #include <plic.h>
 #include <process.h>
 #include <virtio_disk.h>
+#include <block_device.h>
 #include <bio.h>
 #include <log.h>
 #include <inode.h>
@@ -43,6 +44,7 @@ void main(void)
                 trap_init_lock();
                 trap_init();
                 process_init();
+                block_device_init();
                 binit();
                 iinit();
                 file_init();

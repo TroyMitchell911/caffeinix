@@ -1,4 +1,5 @@
 #include <log.h>
+#include <block_device.h>
 #include <debug.h>
 #include <process.h>
 #include <mystring.h>
@@ -18,6 +19,12 @@ struct log {
         uint8 commiting;
         struct log_info info;
 }log;
+
+static void log_flush(void)
+{
+        if (block_device_flush(block_device_get(log.dev)))
+                PANIC("log flush");
+}
 
 static void log_head_write(void)
 {
@@ -87,13 +94,17 @@ static void commit(void)
 {
         if(log.info.n > 0) {
                 log_temp_write();
+                log_flush();
                 log_head_write();
+                log_flush();
                 log_trans(0);
+                log_flush();
 #ifndef LOG_TEST
                 spinlock_acquire(&log.lk);
                 log.info.n = 0;
                 spinlock_release(&log.lk);
                 log_head_write();
+                log_flush();
 #endif
         }
 }
@@ -103,10 +114,12 @@ static void recover(void)
         log_head_read();
         if(log.info.n > 0) {
                 log_trans(1);
+                log_flush();
                 spinlock_acquire(&log.lk);
                 log.info.n = 0;
                 spinlock_release(&log.lk);
                 log_head_write();
+                log_flush();
         }
 }
 

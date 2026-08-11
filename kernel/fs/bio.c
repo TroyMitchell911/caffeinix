@@ -1,4 +1,5 @@
 #include <bio.h>
+#include <block_device.h>
 #include <debug.h>
 #include <printf.h>
 
@@ -29,7 +30,7 @@ void binit(void)
         }
 }
 
-bio_t bget(uint16 dev, uint16 block)
+static bio_t bget(uint32 dev, uint64 block)
 {
         bio_t b;
 
@@ -94,11 +95,24 @@ void brelse(bio_t bio)
         spinlock_release(&bio_table.lk);
 }
 
-bio_t bread(uint32 dev, uint32 block)
+bio_t bread(uint32 dev, uint64 block)
 {
+        struct block_device *device;
+        uint32 sectors;
         bio_t bio = bget(dev, block);
+
         if(bio->vaild == 0) {
-                virtio_disk_rw(bio, 0);
+                device = block_device_get(dev);
+                if (!device || BSIZE % device->sector_size) {
+                        brelse(bio);
+                        return 0;
+                }
+                sectors = BSIZE / device->sector_size;
+                if (block_device_read(device, block * sectors,
+                                      bio->buf, sectors)) {
+                        brelse(bio);
+                        return 0;
+                }
                 bio->vaild = 1;
         }
         return bio;
@@ -106,9 +120,18 @@ bio_t bread(uint32 dev, uint32 block)
 
 void bwrite(bio_t bio)
 {
+        struct block_device *device;
+        uint32 sectors;
+
         if(!sleeplock_holding(&bio->lk))
                 PANIC("bio_write");
-        virtio_disk_rw(bio,1);
+        device = block_device_get(bio->dev);
+        if (!device || BSIZE % device->sector_size)
+                PANIC("bio device");
+        sectors = BSIZE / device->sector_size;
+        if (block_device_write(device, bio->bnum * sectors,
+                               bio->buf, sectors))
+                PANIC("bio write");
 }
 
 void bpin(bio_t bio)
