@@ -24,6 +24,7 @@
 #include <mystring.h>
 #include <ext4fs.h>
 #include <devfs.h>
+#include <tmpfs.h>
 #include <vfs.h>
 
 volatile static uint8 start = 0;
@@ -49,6 +50,7 @@ void main(void)
 		vfs_init();
 		ext4fs_init();
 		devfs_init();
+		tmpfs_init();
                 virtio_disk_init();
 		userinit();
 
