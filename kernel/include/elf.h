@@ -16,6 +16,10 @@
 #include <typedefs.h>
 
 #define ELF_MAGIC 0x464C457FU  // "\x7FELF" in little endian
+#define ELF_CLASS_64            2
+#define ELF_DATA_LSB            1
+#define ELF_TYPE_EXEC           2
+#define ELF_MACHINE_RISCV     243
 
 // File header
 struct elfhdr {

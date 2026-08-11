@@ -16,8 +16,8 @@
 #include <mystring.h>
 #include <debug.h>
 #include <printf.h>
-#include <sysfile.h>
 #include <driver.h>
+#include <vfs.h>
 
 #define TEST_W          0
 #define TEST_R          0
@@ -90,9 +90,10 @@ file_t file_alloc(void)
 
         spinlock_acquire(&ftable.lk);
 
-        for(f = ftable.f; f != &ftable.f[NFILE - 1]; f++) {
-                if(f->ref == 0) {
-                        f->ref = 1;
+	for(f = ftable.f; f != &ftable.f[NFILE]; f++) {
+		if(f->ref == 0) {
+			memset(f, 0, sizeof(*f));
+			f->ref = 1;
                         spinlock_release(&ftable.lk);
                         return f;
                 }
@@ -152,7 +153,7 @@ int file_read(file_t f, uint64 addr, int n)
         if(!f->readable)
                 return -1;
 
-        if(f->type == FD_INODE) {
+	if(f->type == FD_INODE) {
                 ilock(f->ip);
                 ret = readi(f->ip, 1, addr, f->off, n);
                 if(ret > 0)
@@ -187,7 +188,9 @@ int file_write(file_t f, uint64 addr, int n)
                         w_n = w_n > max ? max : w_n;
                         log_begin();
                         ilock(f->ip);
-                        ret = writei(f->ip, 1, addr + i, f->off + i, w_n);
+				if (f->flags & VFS_OPEN_APPEND)
+					f->off = f->ip->d.size;
+				ret = writei(f->ip, 1, addr + i, f->off, w_n);
                         if(ret > 0)
                                 f->off += ret;
                         iunlock(f->ip);
@@ -209,46 +212,4 @@ int file_write(file_t f, uint64 addr, int n)
         }
 
         return ret;
-}
-
-/**
- * @description: Added a file function "file_stat" for sys_fstat
- * @param {file_t} f
- * @param {uint64} addr
- * @return {0}
- */
-int file_stat(file_t f, uint64 addr)
-{
-        process_t p = cur_proc();
-        struct stat st;
-
-        if (f->type == FD_INODE || f->type == FD_DEVICE) {
-                ilock(f->ip);
-                st.st_dev = f->ip->dev;
-                st.st_ino = f->ip->inum;
-                st.st_nlink = f->ip->d.nlink;
-                st.st_size = f->ip->d.size;
-		switch (f->ip->d.type) {
-		case T_DIR:
-			st.st_mode = _IFDIR;
-			break;
-		case T_FILE:
-			st.st_mode = _IFMT;
-			break;
-		case T_DEVICE:
-			st.st_mode = _IFCHR;
-			break;
-		default:
-			st.st_mode = 0;
-			break;
-		}
-                iunlock(f->ip);
-
-                if (copyout(p->pagetable, addr, (char *)&st, sizeof(st)) < 0) {
-                        return -1;
-                }
-                return 0;
-        }
-	
-	return -1;
 }

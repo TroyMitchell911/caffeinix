@@ -5,3 +5,4 @@ CFLAGS_file.o :=
 
 obj-y += virtio_disk.o bio.o log.o balloc.o \
 inode.o file.o dirent.o
+obj-y += vfs.o

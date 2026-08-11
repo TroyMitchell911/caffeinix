@@ -22,6 +22,12 @@
 #define TRAMPOLINE      (MAXVA - PGSIZE)
 #define TRAPFRAME_INFO   (TRAMPOLINE - PGSIZE)
 #define TRAPFRAME(x)    (TRAPFRAME_INFO - ((PGSIZE) * (x + 1)))
+
+/* Keep the userspace stack separate from the ELF break and mmap area. */
+#define USER_STACK_TOP   0x40000000L
+#define USER_STACK_SIZE  (64 * PGSIZE)
+#define USER_STACK_BASE  (USER_STACK_TOP - USER_STACK_SIZE)
+#define USER_MMAP_TOP    (USER_STACK_BASE - PGSIZE)
 /* 
         map kernel stacks beneath the trampoline,
         each surrounded by invalid guard pages.

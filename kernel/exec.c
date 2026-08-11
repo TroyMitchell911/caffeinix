@@ -1,180 +1,235 @@
-/*
- * @Author: TroyMitchell
- * @Date: 2024-05-07
- * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-18
- * @FilePath: /caffeinix/kernel/exec.c
- * @Description: 
- * Words are cheap so I do.
- * Copyright (c) 2024 by TroyMitchell, All Rights Reserved. 
- */
-#include <elf.h>
-#include <log.h>
-#include <inode.h>
-#include <dirent.h>
-#include <scheduler.h>
-#include <vm.h>
 #include <debug.h>
+#include <dirent.h>
+#include <elf.h>
+#include <inode.h>
+#include <linux_uapi.h>
+#include <log.h>
+#include <mem_layout.h>
 #include <mystring.h>
 #include <printf.h>
+#include <scheduler.h>
+#include <vm.h>
+
+struct linux_auxv_entry {
+	uint64 type;
+	uint64 value;
+};
 
 static int flags2perm(int flags)
 {
-        int perm = 0;
-        if(flags & 0x1)
-                perm = PTE_X;
-        if(flags & 0x2)
-                perm |= PTE_W;
-        return perm;
+	int perm = 0;
+
+	if (flags & ELF_PROG_FLAG_EXEC)
+		perm |= PTE_X;
+	if (flags & ELF_PROG_FLAG_WRITE)
+		perm |= PTE_W;
+	return perm;
 }
 
-static int loadseg(pagedir_t pgdir, uint64 va, inode_t ip, uint32 offset, uint32 sz)
+static int loadseg(pagedir_t pgdir, uint64 va, inode_t ip,
+		   uint64 offset, uint64 size)
 {
-        uint32 i, n;
-        uint64 pa;
+	uint64 page_offset, pa, n;
 
-        for(i = 0; i < sz; i += PGSIZE) {
-                pa = va2pa(pgdir, va + i);
-                if(pa == 0)
-                        PANIC("load_seg");
-                if(sz - i < PGSIZE)
-                        n = sz - i;
-                else
-                        n = PGSIZE;
-                if(readi(ip, 0, pa, offset + i, n) != n)
-                        return -1;
-        }
-        return 0;
+	while (size) {
+		pa = va2pa(pgdir, va);
+		if (!pa)
+			return -1;
+
+		page_offset = va & (PGSIZE - 1);
+		n = PGSIZE - page_offset;
+		if (n > size)
+			n = size;
+		if (readi(ip, 0, pa + page_offset, offset, n) != n)
+			return -1;
+
+		va += n;
+		offset += n;
+		size -= n;
+	}
+	return 0;
 }
 
-int exec(char* path, char** argv)
+static int build_linux_stack(pagedir_t pgdir, uint64 stack_top,
+			     uint64 stack_base, char **argv, char **envp,
+			     uint64 phdr, struct elfhdr *elf,
+			     uint64 *new_sp)
 {
-        int i, off;
-        uint64 argc, oldsz, sz = 0, sz1, sp, ustack[MAXARG], stackbase;
-        inode_t ip;
-        struct elfhdr elf;
-        struct proghdr ph;
-        pagedir_t oldpgdir, pgdir = 0;
-        process_t p = cur_proc();   
-        char *name, *path_p;
-        
-        log_begin();
-        ip = namei(path);
-        if(!ip) {
-                log_end();
-                return -1;
-        }
-        ilock(ip);
-        /* Read elf head */
-        if(readi(ip, 0, (uint64)&elf, 0, sizeof(elf)) != sizeof(elf)) {
-                goto fail;
-        }
-        /* Check magic number */
-        if(elf.magic != ELF_MAGIC) 
-                goto fail;
-        /* 
-                Create a page-table that has trapframe and trampoline.
-                The trampoline follow previous process instead of new.
-        */
-        pgdir = process_pagedir(p);
-        if(!pgdir)
-                goto fail;
-        // printf("elf.phoff = %d; elf.phnum = %d\n", elf.phoff, elf.phnum);
-        for(i = 0, off = elf.phoff; i < elf.phnum; i++, off += sizeof(ph)) {
-                
-                if(readi(ip, 0, (uint64)&ph, off, sizeof(ph)) != sizeof(ph))
-                        goto fail;
-                // printf("ph.type = %d\n", ph.type);
-                // printf("ph.off = %x; ph.filesize:%x\n", ph.off, ph.filesz);
-                if(ph.type != ELF_PROG_LOAD)
-                        continue;
-                        
-                /* Overflow */
-                /* 2024-05-09 Fixed a overflow bug by TroyMitchell */
-                if(ph.vaddr + ph.memsz < ph.vaddr)
-                        goto fail;
-                if(ph.memsz < ph.filesz)
-                        goto fail;
-                /* Aligned? */
-                if(ph.vaddr % PGSIZE != 0)
-                        goto fail;
-                /* Extend virtual address and alloc physical memory */
-                // printf("vm_alloc: %x->%x\n",sz, ph.vaddr + ph.memsz);
-                if((sz1 = vm_alloc(pgdir, sz, ph.vaddr + ph.memsz, flags2perm(ph.flags))) == 0)
-                        goto fail;
-                sz = sz1;
-                /* Load seg to memory */
-                if(loadseg(pgdir, ph.vaddr, ip, ph.off, ph.filesz) != 0)
-                        goto fail;
-        }
-        iunlockput(ip);
-        log_end();
+	uint64 argv_address[MAXARG];
+	uint64 envp_address[MAXARG];
+	uint64 words[4 * MAXARG + 32];
+	uint64 random[2];
+	uint64 sp = stack_top;
+	uint64 length;
+	int argc, envc, nwords = 0;
 
-        sz = PGROUNDUP(sz);
+	for (argc = 0; argv[argc]; argc++) {
+		if (argc >= MAXARG - 1)
+			return -1;
+		length = strlen(argv[argc]) + 1;
+		sp -= length;
+		if (sp < stack_base ||
+		    copyout(pgdir, sp, argv[argc], length) < 0)
+			return -1;
+		argv_address[argc] = sp;
+	}
+	for (envc = 0; envp[envc]; envc++) {
+		if (envc >= MAXARG - 1)
+			return -1;
+		length = strlen(envp[envc]) + 1;
+		sp -= length;
+		if (sp < stack_base ||
+		    copyout(pgdir, sp, envp[envc], length) < 0)
+			return -1;
+		envp_address[envc] = sp;
+	}
 
-        /* Alloc memory of stack */
-        sz1 = vm_alloc(pgdir, sz, sz + PGSIZE * 2, PTE_W);
-        if(sz1 == 0)
-                goto fail;
-        sz = sp = sz1;
-        stackbase = sp - PGSIZE;
-        /* Set guard page */
-        vm_clear(pgdir, sp - PGSIZE * 2);
+	random[0] = 0x4341464645494e49ULL;
+	random[1] = 0x582d4d55534c2d58ULL;
+	sp -= sizeof(random);
+	if (sp < stack_base ||
+	    copyout(pgdir, sp, (char *)random, sizeof(random)) < 0)
+		return -1;
+	length = sp;
 
-        for(argc = 0; argv[argc] != 0; argc++) {
-                if(argc >= MAXARG)
-                        goto fail;
-                sp -= strlen(argv[argc]);
-                /* riscv sp must be 16-byte aligned */
-                sp -= sp % 16;
-                if(sp < stackbase)
-                        goto fail;
-                if(copyout(pgdir, sp, argv[argc], strlen(argv[argc])) != 0)
-                        goto fail;
-                ustack[argc] = sp;
-        }
-        ustack[argc ++] = 0;
+	words[nwords++] = argc;
+	for (int i = 0; i < argc; i++)
+		words[nwords++] = argv_address[i];
+	words[nwords++] = 0; /* argv terminator */
+	for (int i = 0; i < envc; i++)
+		words[nwords++] = envp_address[i];
+	words[nwords++] = 0; /* envp terminator */
 
-        sp -= argc * sizeof(uint64);
-        /* riscv sp must be 16-byte aligned */
-        sp -= sp % 16;
-        if(sp < stackbase)
-                goto fail;
-        if(copyout(pgdir, sp, (char*)ustack, argc * sizeof(uint64)) != 0)
-                goto fail;
+#define AUX(tag, value) do { \
+	words[nwords++] = (tag); \
+	words[nwords++] = (value); \
+} while (0)
+	AUX(LINUX_AT_PHDR, phdr);
+	AUX(LINUX_AT_PHENT, sizeof(struct proghdr));
+	AUX(LINUX_AT_PHNUM, elf->phnum);
+	AUX(LINUX_AT_PAGESZ, PGSIZE);
+	AUX(LINUX_AT_ENTRY, elf->entry);
+	AUX(LINUX_AT_UID, 0);
+	AUX(LINUX_AT_EUID, 0);
+	AUX(LINUX_AT_GID, 0);
+	AUX(LINUX_AT_EGID, 0);
+	AUX(LINUX_AT_SECURE, 0);
+	AUX(LINUX_AT_RANDOM, length);
+	AUX(LINUX_AT_EXECFN, argc ? argv_address[0] : 0);
+	AUX(LINUX_AT_NULL, 0);
+#undef AUX
 
-        /* Save page-table */
-        oldpgdir = p->pagetable;
-        oldsz = p->sz;
-        
-        p->pagetable = pgdir;
-        p->sz = sz;
-        /* 
-                Arguments to user main(argc, argv).
-                We just set a1 bcs the a0 via return to set.
-        */
-        p->cur_thread->trapframe->a1 = sp;
-        p->cur_thread->trapframe->sp = sp;
-        p->cur_thread->trapframe->epc = elf.entry;
+	length = nwords * sizeof(uint64);
+	sp = (sp - length) & ~15ULL;
+	if (sp < stack_base || copyout(pgdir, sp, (char *)words, length) < 0)
+		return -1;
 
+	*new_sp = sp;
+	return argc;
+}
 
-        for(name = path_p = path; *path_p != '\0'; path_p ++) {
-                if(*path_p == '/')
-                        /* Ignore character '/' */
-                        name = path_p + 1;
-        }
-        safe_strncpy(p->name, name, MAXNAME);
-        process_freepagedir(oldpgdir, oldsz);
-        
-        /* Rid of the last element (ustack[argc ++] = 0;) */
-        return --argc;
+int exec_linux(char *path, char **argv, char **envp)
+{
+	int argc, i, logged = 0;
+	uint64 off, oldsz, phdr = 0, sz = 0, sz1, sp, stackbase;
+	inode_t ip = 0;
+	struct elfhdr elf;
+	struct proghdr ph;
+	pagedir_t oldpgdir, pgdir = 0;
+	process_t p = cur_proc();
+	char *name, *path_p;
+
+	log_begin();
+	logged = 1;
+	ip = namei(path);
+	if (!ip)
+		goto fail;
+	ilock(ip);
+
+	if (readi(ip, 0, (uint64)&elf, 0, sizeof(elf)) != sizeof(elf))
+		goto fail;
+	if (elf.magic != ELF_MAGIC || elf.elf[0] != ELF_CLASS_64 ||
+	    elf.elf[1] != ELF_DATA_LSB || elf.type != ELF_TYPE_EXEC ||
+	    elf.machine != ELF_MACHINE_RISCV ||
+	    elf.phentsize != sizeof(struct proghdr))
+		goto fail;
+
+	pgdir = process_pagedir(p);
+	if (!pgdir)
+		goto fail;
+
+	for (i = 0, off = elf.phoff; i < elf.phnum;
+	     i++, off += sizeof(ph)) {
+		if (readi(ip, 0, (uint64)&ph, off, sizeof(ph)) != sizeof(ph))
+			goto fail;
+		if (ph.type != ELF_PROG_LOAD)
+			continue;
+		if (ph.vaddr + ph.memsz < ph.vaddr || ph.memsz < ph.filesz)
+			goto fail;
+		if ((ph.vaddr & (PGSIZE - 1)) !=
+		    (ph.off & (PGSIZE - 1)))
+			goto fail;
+
+		if (elf.phoff >= ph.off &&
+		    elf.phoff + elf.phnum * sizeof(ph) <= ph.off + ph.filesz)
+			phdr = ph.vaddr + (elf.phoff - ph.off);
+
+		sz1 = vm_alloc(pgdir, sz, ph.vaddr + ph.memsz,
+		               flags2perm(ph.flags));
+		if (!sz1)
+			goto fail;
+		sz = sz1;
+		if (loadseg(pgdir, ph.vaddr, ip, ph.off, ph.filesz) < 0)
+			goto fail;
+	}
+	if (!phdr)
+		goto fail;
+
+	iunlockput(ip);
+	ip = 0;
+	log_end();
+	logged = 0;
+
+	sz = PGROUNDUP(sz);
+	sz1 = vm_alloc(pgdir, USER_STACK_BASE, USER_STACK_TOP, PTE_W);
+	if (!sz1)
+		goto fail;
+	sp = USER_STACK_TOP;
+	stackbase = USER_STACK_BASE;
+
+	argc = build_linux_stack(pgdir, sp, stackbase, argv, envp, phdr,
+	                         &elf, &sp);
+	if (argc < 0)
+		goto fail;
+	oldpgdir = p->pagetable;
+	oldsz = p->sz;
+	p->pagetable = pgdir;
+	p->sz = sz;
+	p->brk = sz;
+	p->brk_start = sz;
+	p->mmap_top = USER_MMAP_TOP;
+	p->cur_thread->trapframe->a0 = argc;
+	p->cur_thread->trapframe->a1 = sp + sizeof(uint64);
+	p->cur_thread->trapframe->sp = sp;
+	p->cur_thread->trapframe->epc = elf.entry;
+	memset(p->cur_thread->trapframe->f, 0,
+	       sizeof(p->cur_thread->trapframe->f));
+	p->cur_thread->trapframe->fcsr = 0;
+
+	for (name = path_p = path; *path_p; path_p++) {
+		if (*path_p == '/')
+			name = path_p + 1;
+	}
+	safe_strncpy(p->name, name, MAXNAME);
+	process_freepagedir(oldpgdir, oldsz);
+	return argc;
+
 fail:
-        if(pgdir) {
-                process_freepagedir(pgdir, sz);
-        }
-        if(ip) {
-                iunlockput(ip);
-        }
-        log_end();
-        return -1;
+	if (pgdir)
+		process_freepagedir(pgdir, sz);
+	if (ip)
+		iunlockput(ip);
+	if (logged)
+		log_end();
+	return -1;
 }

@@ -1,23 +1,32 @@
-name: CI with Docker for Ubuntu 22.04
+name: Kernel build
 
 on:
   pull_request:
     branches:
       - main
 
+permissions:
+  contents: read
+
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v2
+      - name: Check out source
+        uses: actions/checkout@v4
 
-      - name: Set up Docker container
+      - name: Install RISC-V GNU tools
         run: |
-          docker run --name build-env -v ${{ github.workspace }}:/workspace -w /workspace -d troymitchell/caffeinix:1.0 sleep 3600
-      - name: Build
-        run: |
-          docker exec build-env bash -c "export PATH=$PATH:/opt/riscv/bin && make"
-      - name: Cleanup
-        run: docker stop build-env
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential \
+            gcc-riscv64-linux-gnu \
+            binutils-riscv64-linux-gnu \
+            libc6-dev-riscv64-cross
+
+      - name: Build kernel
+        run: make -j"$(nproc)"
+
+      - name: Check Linux UAPI layouts
+        run: make check-uapi

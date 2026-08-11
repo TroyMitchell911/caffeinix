@@ -1,559 +1,545 @@
-/*
- * @Author: TroyMitchell
- * @Date: 2024-05-07
- * @LastEditors: GoKo-Son626
- * @LastEditTime: 2024-09-26
- * @FilePath: /caffeinix/kernel/sysfile.c
- * @Description: 
- * Words are cheap so I do.
- * Copyright (c) 2024 by TroyMitchell, All Rights Reserved. 
- */
-#include <fs.h>
-#include <inode.h>
-#include <log.h>
-#include <sysfile.h>
-#include <inode.h>
 #include <file.h>
-#include <dirent.h>
-#include <scheduler.h>
-#include <process.h>
-#include <syscall.h>
+#include <linux_uapi.h>
 #include <mystring.h>
 #include <palloc.h>
-#include <debug.h>
+#include <process.h>
+#include <scheduler.h>
+#include <syscall.h>
+#include <vfs.h>
 #include <vm.h>
-#include <myfcntl.h>
 
-extern int exec(char* path, char** argv);
+extern int exec_linux(char *path, char **argv, char **envp);
 
-static int fdalloc(file_t f)
+static int copy_user_vector(uint64 user_vector, char **vector)
 {
-        int fd;
-        process_t p = cur_proc();
+	uint64 user_string;
+	int i;
 
-        for(fd = 0; fd < NOFILE; fd++) {
-                if(p->ofile[fd] == 0) {
-                        p->ofile[fd] = f;
-                        return fd;
-                }
-        }
-        return -1;
+	memset(vector, 0, MAXARG * sizeof(*vector));
+	if (!user_vector)
+		return 0;
+
+	for (i = 0; i < MAXARG; i++) {
+		if (fetch_addr_from_user(user_vector + i * sizeof(uint64),
+		                         &user_string) < 0)
+			return -1;
+		if (!user_string)
+			return 0;
+
+		vector[i] = palloc();
+		if (!vector[i])
+			return -1;
+		if (fetch_str_from_user(user_string, vector[i], PGSIZE) < 0)
+			return -1;
+	}
+	return -1;
 }
 
-static inode_t create(char* path, short type, short major, short minor)
+static void free_user_vector(char **vector)
 {
-        inode_t dp, ip;
-        char name[DIRSIZ];
-        dp = nameiparent(path, name);
-        if(!dp) {
-                return 0;
-        }
+	int i;
 
-        ilock(dp);
-        ip = dirlookup(dp, name, 0);
-        /* If we have found this name in the dirent */
-        if(ip) {
-                iunlockput(dp);
-                ilock(ip); 
-                /* If we wanna create a file and this existing name is file or device so we can return this inode */
-                if(type == T_FILE && (ip->d.type == T_FILE || ip->d.type == T_DEVICE))
-                        return ip;
-                iunlockput(ip);
-                return 0;
-        }
-
-        ip = ialloc(dp->dev, type);
-        if(!ip) {
-                iunlockput(dp);
-                return 0;
-        }
-
-        ilock(ip);
-        ip->d.nlink = 1;
-        if(type == T_DEVICE) {
-                ip->d.major = major;
-                ip->d.minor = minor;
-        }
-        iupdate(ip);
-
-        /* Create the local reference and the previous reference */
-        if(type == T_DIR) {
-                if(dirlink(ip, ".", ip->inum) ||
-                   dirlink(ip, "..", dp->inum)) {
-                        goto fail;
-                }
-        }
-
-        if(dirlink(dp, name, ip->inum) != 0)
-                goto fail;
-
-        iunlockput(dp);
-        return ip;
-
-fail:
-        ip->d.nlink = 0;
-        iupdate(ip);
-        iunlockput(dp);
-        iunlockput(ip);
-        return 0;
+	for (i = 0; i < MAXARG && vector[i]; i++)
+		pfree(vector[i]);
 }
 
-uint64 sys_dup(void)
+static uint64 linux_error(int result)
 {
-        file_t f;
-        int fd;
-
-        argint(0, &fd);
-
-        f = cur_proc()->ofile[fd];
-        if(f) {
-                /* Alloc a fd number */
-                fd = fdalloc(f);
-                if (fd < 0) {
-                        return -1;
-                }
-                /* Execute this function 'file_dup' to increase reference of file descriptor*/
-                file_dup(f);
-                return fd;
-        }
-        return -1;
+	switch (result) {
+	case VFS_ERR_PERM:
+		return -LINUX_EPERM;
+	case VFS_ERR_NOENT:
+		return -LINUX_ENOENT;
+	case VFS_ERR_BADF:
+		return -LINUX_EBADF;
+	case VFS_ERR_EXIST:
+		return -LINUX_EEXIST;
+	case VFS_ERR_NOTDIR:
+		return -LINUX_ENOTDIR;
+	case VFS_ERR_ISDIR:
+		return -LINUX_EISDIR;
+	case VFS_ERR_INVAL:
+		return -LINUX_EINVAL;
+	case VFS_ERR_MFILE:
+		return -LINUX_EMFILE;
+	case VFS_ERR_NOSPC:
+		return -LINUX_ENOSPC;
+	case VFS_ERR_NOTEMPTY:
+		return -LINUX_ENOTEMPTY;
+	case VFS_ERR_NODEV:
+		return -LINUX_ENODEV;
+	default:
+		return -LINUX_EIO;
+	}
 }
 
-uint64 sys_getpid(void)
+static int linux_open_flags(int linux_flags, uint32 *vfs_flags)
 {
-        return cur_proc()->pid;
+	uint32 flags = 0;
+
+	switch (linux_flags & LINUX_O_ACCMODE) {
+	case LINUX_O_RDONLY:
+		flags |= VFS_OPEN_READ;
+		break;
+	case LINUX_O_WRONLY:
+		flags |= VFS_OPEN_WRITE;
+		break;
+	case LINUX_O_RDWR:
+		flags |= VFS_OPEN_READ | VFS_OPEN_WRITE;
+		break;
+	default:
+		return -1;
+	}
+	if (linux_flags & LINUX_O_CREAT)
+		flags |= VFS_OPEN_CREATE;
+	if (linux_flags & LINUX_O_EXCL)
+		flags |= VFS_OPEN_EXCLUSIVE;
+	if (linux_flags & LINUX_O_TRUNC)
+		flags |= VFS_OPEN_TRUNCATE;
+	if (linux_flags & LINUX_O_APPEND)
+		flags |= VFS_OPEN_APPEND;
+	if (linux_flags & LINUX_O_DIRECTORY)
+		flags |= VFS_OPEN_DIRECTORY;
+	*vfs_flags = flags;
+	return 0;
 }
 
-uint64 sys_open(void)
+static void make_linux_stat(struct linux_stat *linux_stat,
+			    struct vfs_stat *vfs_stat)
 {
-        inode_t ip;
-        char path[MAXPATH];
-        int fd, flag;
-        file_t f;
-
-        argint(1, &flag);
-        if(argstr(0, path, MAXPATH) < 0) {
-                return -1;
-        }
-
-        log_begin();
-        /* If the caller need to create and open a file */
-        if(flag & O_CREATE) {
-                ip = create(path, T_FILE, 0, 0);
-                /* Create failed */
-                if(ip == 0)
-                        goto fail1;      
-        } else{
-                /* The caller just wants to open the file */
-                ip = namei(path);
-                if(ip == 0)
-                        goto fail1;
-                ilock(ip);
-                /* Caffeinix doesn't allow user to open a dirent through the syscall 'open' */
-                if(ip->d.type == T_DIR && flag != O_RDONLY)
-                        goto fail2;
-        }
-        /* Check the major of device */
-        if(ip->d.type == T_DEVICE && (ip->d.major < 0))
-                goto fail2;
-        
-        if((f = file_alloc()) == 0 || (fd = fdalloc(f)) < 0) {
-                if(f) {
-                        file_close(f);
-                }
-                goto fail2;
-        }
-
-        if(ip->d.type == T_DEVICE) {
-                f->type = FD_DEVICE;
-                f->major = ip->d.major;
-        } else {
-                f->type = FD_INODE;
-                f->off = 0;
-        }
-
-        f->ip = ip;
-        f->readable = !(flag & O_WRONLY);
-        f->writable = (flag & O_WRONLY) || (flag & O_RDWR);
-        if((flag & O_TRUNC) && ip->d.type == T_FILE) {
-                itrunc(ip);
-        }
-
-        iunlock(ip);
-        log_end();
-
-        return fd;
-
-fail2:
-        iunlockput(ip);
-fail1:
-        log_end();
-        return -1;
+	memset(linux_stat, 0, sizeof(*linux_stat));
+	linux_stat->dev = vfs_stat->dev;
+	linux_stat->ino = vfs_stat->ino;
+	linux_stat->nlink = vfs_stat->nlink;
+	linux_stat->rdev = vfs_stat->rdev;
+	linux_stat->size = vfs_stat->size;
+	linux_stat->blksize = BSIZE;
+	linux_stat->blocks = (vfs_stat->size + 511) / 512;
+	if (vfs_stat->type == T_DIR)
+		linux_stat->mode = LINUX_S_IFDIR | 0755;
+	else if (vfs_stat->type == T_DEVICE)
+		linux_stat->mode = LINUX_S_IFCHR | 0666;
+	else
+		linux_stat->mode = LINUX_S_IFREG | 0644;
 }
 
-uint64 sys_mknod(void)
+uint64 sys_linux_openat(void)
 {
-        int ret = -1;
-        char path[MAXPATH];
-        int major, minor;
-        inode_t ip;
+	char path[MAXPATH];
+	uint32 flags;
+	int dirfd, fd, linux_flags, result;
 
-        log_begin();
-
-        /* Get major and minor from user */
-        argint(1, &major);
-        argint(2, &minor);
-        if(major < 0 || minor < 0)
-                goto fail;
-        /* Get the path from user */
-        if(argstr(0, path, MAXPATH) == -1)
-                goto fail;
-        /* Create a device file that be filled major and minor */
-        ip = create(path, T_DEVICE, major, minor);
-        if(!ip)
-                goto fail;
-        /* Bcs the function 'create' will return a inode that be locked and got */
-        iunlockput(ip);
-        ret = 0;
-fail:
-        log_end();
-        return ret;
+	argint(0, &dirfd);
+	argint(2, &linux_flags);
+	if (argstr(1, path, sizeof(path)) < 0)
+		return -LINUX_EFAULT;
+	if (path[0] != '/' && dirfd != LINUX_AT_FDCWD)
+		return -LINUX_EBADF;
+	if (linux_open_flags(linux_flags, &flags) < 0)
+		return -LINUX_EINVAL;
+	result = vfs_open(path, flags, &fd);
+	if (result < 0)
+		return linux_error(result);
+	if (linux_flags & LINUX_O_CLOEXEC)
+		vfs_set_fd_flags(fd, VFS_FD_CLOEXEC);
+	return fd;
 }
 
-uint64 sys_read(void)
+uint64 sys_linux_close(void)
 {
-        file_t f;
-        int fd, n;
-        uint64 dst;
+	int fd, result;
 
-        argint(0, &fd);
-        argint(2, &n);
-        argaddr(1, &dst);
-
-        f = cur_proc()->ofile[fd];
-        if(f)
-                return file_read(f, dst, n); 
-        return -1;
+	argint(0, &fd);
+	result = vfs_close(fd);
+	return result < 0 ? linux_error(result) : 0;
 }
 
-uint64 sys_write(void)
+uint64 sys_linux_read(void)
 {
-        file_t f;
-        int fd, n;
-        uint64 src;
+	uint64 address;
+	int fd, length, result;
 
-        argint(0, &fd);
-        argint(2, &n);
-        argaddr(1, &src);
-
-        f = cur_proc()->ofile[fd];
-        if(f)
-                return file_write(f, src, n); 
-        return -1;
+	argint(0, &fd);
+	argaddr(1, &address);
+	argint(2, &length);
+	result = vfs_read(fd, address, length);
+	return result < 0 ? linux_error(result) : result;
 }
 
-uint64 sys_close(void)
+uint64 sys_linux_write(void)
 {
-        file_t f;
-        int fd;
+	uint64 address;
+	int fd, length, result;
 
-        argint(0, &fd);
-
-        f = cur_proc()->ofile[fd];
-        if(!f)
-                return -1;
-        cur_proc()->ofile[fd] = 0;
-        file_close(f);
-        return 0;
+	argint(0, &fd);
+	argaddr(1, &address);
+	argint(2, &length);
+	result = vfs_write(fd, address, length);
+	return result < 0 ? linux_error(result) : result;
 }
 
-uint64 sys_exec(void)
+uint64 sys_linux_lseek(void)
 {
-        char path[MAXPATH], *argv[MAXARG];
-        int i, ret = 0;
-        uint64 uargv, uarg;
-        /* Get parameters */
-        argaddr(1, &uargv);
-        if(argstr(0, path, MAXPATH) < 0) {
-                return -1;
-        }
-        /* Clear buffer */
-        memset(argv, 0, sizeof(argv));
+	uint64 result;
+	int fd, whence, status;
+	int64 offset;
 
-        for(i = 0; ;i++) {
-                if(i > NELEM(argv))
-                        goto fail;
-                if(fetch_addr_from_user(uargv + i * sizeof(uint64), &uarg) < 0)
-                        goto fail;
-                if(uarg == 0)
-                        break;
-                argv[i] = palloc();
-                if(argv[i] == 0)
-                        goto fail;
-                if(fetch_str_from_user(uarg, argv[i], PGSIZE) < 0)
-                        goto fail;
-        }
-
-        ret = exec(path, argv);
-
-        for(i = 0; i < NELEM(argv) && argv[i] != 0; i++)
-                pfree(argv[i]);
-
-        return ret;
-fail:
-        for(i = 0; i < NELEM(argv) && argv[i] != 0; i++)
-                pfree(argv[i]);
-        return -1;
-}
-/*
-Added a system call function sys_mkdir
-test in user/init.c, but it's not succeed
-
-2024-05-15 create by GoKo-Son626 
-2024-05-15 fix by TroyMitchell
-*/
-uint64 sys_mkdir(void)
-{
-        int ret;
-        char path[MAXPATH];
-        struct inode *ip;
-
-        log_begin();
-        ret = argstr(0, path, MAXPATH);
-        if(ret < 0) 
-                goto fail;
-        ip = create(path, T_DIR, 0, 0);
-        if(ip == 0)
-                goto fail;
-        iunlockput(ip);
-        log_end();
-        return 0;
-fail:
-        log_end();
-        return -1;
+	argint(0, &fd);
+	argaddr(1, (uint64 *)&offset);
+	argint(2, &whence);
+	status = vfs_seek(fd, offset, whence, &result);
+	return status < 0 ? linux_error(status) : result;
 }
 
-/**
- * @description: Added a system call function "file_stat"
- * @return {0}
- */
-uint64 sys_fstat(void)
+uint64 sys_linux_fstat(void)
 {
-        file_t f;
-        int fd;
-        uint64 st;
+	struct linux_stat linux_stat;
+	struct vfs_stat stat;
+	process_t process = cur_proc();
+	uint64 address;
+	int fd, result;
 
-        argint(0, &fd);
-        argaddr(1, &st);
-
-        f = cur_proc()->ofile[fd];
-        if (f) {
-                return file_stat(f, st);
-        }
-        return -1;
+	argint(0, &fd);
+	argaddr(1, &address);
+	result = vfs_stat_fd(fd, &stat);
+	if (result < 0)
+		return linux_error(result);
+	make_linux_stat(&linux_stat, &stat);
+	if (copyout(process->pagetable, address, (char *)&linux_stat,
+	            sizeof(linux_stat)) < 0)
+		return -LINUX_EFAULT;
+	return 0;
 }
 
-uint64 sys_sbrk(void)
+uint64 sys_linux_newfstatat(void)
 {
-        uint64 addr;
-        int n, ret;
-        
-        argint(0, &n);
-        addr = cur_proc()->sz;
-        ret = process_grow(n);
-        if(ret != 0)
-                return -1;
-        return addr;
+	struct linux_stat linux_stat;
+	struct vfs_stat stat;
+	process_t process = cur_proc();
+	char path[MAXPATH];
+	uint64 address;
+	int dirfd, flags, result;
+
+	argint(0, &dirfd);
+	argaddr(2, &address);
+	argint(3, &flags);
+	if (argstr(1, path, sizeof(path)) < 0)
+		return -LINUX_EFAULT;
+	if (path[0] != '/' && dirfd != LINUX_AT_FDCWD)
+		return -LINUX_EBADF;
+	if (flags & ~(LINUX_AT_SYMLINK_NOFOLLOW))
+		return -LINUX_EINVAL;
+	result = vfs_stat_path(path, &stat);
+	if (result < 0)
+		return linux_error(result);
+	make_linux_stat(&linux_stat, &stat);
+	if (copyout(process->pagetable, address, (char *)&linux_stat,
+	            sizeof(linux_stat)) < 0)
+		return -LINUX_EFAULT;
+	return 0;
 }
 
-/**
- * @description: Changing the working directory of current process
- * @return {int}: Returns 0 if the working directory was changed successfully, or 1 if not
- */
-uint64 sys_chdir(void)
+uint64 sys_linux_getdents64(void)
 {
-        char path[MAXPATH];
-        char *p_cwd_name;
-        int cwd_name_len = 0;
-        inode_t ip;
-        process_t p = cur_proc();
+	struct {
+		uint64 ino;
+		int64 offset;
+		uint16 reclen;
+		uint8 type;
+		char name[DIRSIZ + 1];
+	} linux_dirent;
+	struct vfs_dirent dirent;
+	process_t process = cur_proc();
+	uint64 address;
+	int fd, length, result = 0, used = 0;
+	int name_length, record_length;
 
-        log_begin();
-        if (argstr(0, path, MAXPATH) < 0 || (ip = namei(path)) == 0) {
-                log_end();
-                return -1;
-        }
-        ilock(ip);
-        if (ip->d.type != T_DIR) {
-                iunlock(ip);
-                log_end();
-                return -1;
-        }
-        iunlock(ip);
-        iput(p->cwd);
-        log_end();
-        p->cwd = ip;
-        if(path[0] == '/') {
-                safe_strncpy(p->cwd_name, path, MAXPATH);
-        }
-        else {
-                if(strncmp(path, "..", 2) == 0 && strlen(p->cwd_name) != 1) {
-                        p_cwd_name = strrchr(p->cwd_name, '/');
-                        if(p_cwd_name != p->cwd_name) 
-                                /* -1 for delete '/' */
-                                cwd_name_len += strlen(p->cwd_name) - strlen(++p_cwd_name) - 1;
-                        else 
-                                /* just save '/' */
-                                cwd_name_len = 1;
-
-                        p->cwd_name[cwd_name_len] = '\0';
-                        
-                        // printf("num:%d str:%s\n", p->cwd_name - p_path, p_path);
-                } else if (path[0] != '.'){
-                        if(p->cwd_name[strlen(p->cwd_name) - 1] != '/')
-                                strcat(p->cwd_name, "/");
-                        strcat(p->cwd_name, path);
-                }
-        }
-                
-        return 0;
+	argint(0, &fd);
+	argaddr(1, &address);
+	argint(2, &length);
+	if (length < (int)sizeof(linux_dirent))
+		return -LINUX_EINVAL;
+	while (length - used >= (int)sizeof(linux_dirent) &&
+	       (result = vfs_next_dirent(fd, &dirent)) > 0) {
+		name_length = strlen(dirent.name);
+		record_length = (19 + name_length + 1 + 7) & ~7;
+		if (used + record_length > length)
+			return used ? used : -LINUX_EINVAL;
+		memset(&linux_dirent, 0, sizeof(linux_dirent));
+		linux_dirent.ino = dirent.ino;
+		linux_dirent.offset = dirent.next_offset;
+		linux_dirent.reclen = record_length;
+		linux_dirent.type = dirent.type;
+		safe_strncpy(linux_dirent.name, dirent.name,
+		             sizeof(linux_dirent.name));
+		if (copyout(process->pagetable, address + used,
+		            (char *)&linux_dirent, record_length) < 0)
+			return used ? used : -LINUX_EFAULT;
+		used += record_length;
+	}
+	if (result < 0)
+		return used ? used : linux_error(result);
+	return used;
 }
 
-/**
- * @description: Create the path new as a link to the same inode as old_path
- * @return {int}: Returns 0 on successful creation and -1 on failure
- */
-uint64 sys_link(void)
+uint64 sys_linux_fcntl(void)
 {
-        char name[DIRSIZ], new_path[MAXPATH], old_path[MAXPATH];
-        inode_t dp, ip;
-        int ret;
+	uint32 file_flags;
+	uint8 fd_flags;
+	int command, fd, newfd, value, result;
 
-        ret = argstr(0, old_path, MAXPATH);
-        if(ret < 0)
-                return -1;
-        ret = argstr(1, new_path, MAXPATH);
-        if(ret < 0)
-                return -1;
-
-        log_begin();
-
-        ip = namei(old_path);
-        if (!ip)
-                goto r0;
-
-        ilock(ip);
-
-        if (ip->d.type == T_DIR)
-                goto r1;
-
-        ip->d.nlink++;
-        iupdate(ip);
-        iunlock(ip);
-
-        dp = nameiparent(new_path, name);
-
-        if (!dp) {
-              goto bad;  
-        }
-
-        ilock(dp);
-
-        if (dp->dev != ip->dev || dirlink(dp, name, ip->inum)) {
-                iunlockput(dp);
-                goto bad;
-        }
-        iunlockput(dp);
-        iput(ip);
-        log_end();
-
-        return 0;
-
-bad:
-        ilock(ip);
-        ip->d.nlink--;
-        iupdate(ip);
-r1:
-        iunlockput(ip);
-r0:
-        log_end();
-        return -1;
+	argint(0, &fd);
+	argint(1, &command);
+	argint(2, &value);
+	if (command == LINUX_F_DUPFD ||
+	    command == LINUX_F_DUPFD_CLOEXEC) {
+		result = vfs_dup(fd, value,
+		                 command == LINUX_F_DUPFD_CLOEXEC ?
+		                 VFS_FD_CLOEXEC : 0, &newfd);
+		return result < 0 ? linux_error(result) : newfd;
+	}
+	if (command == LINUX_F_GETFD) {
+		result = vfs_get_fd_flags(fd, &fd_flags);
+		return result < 0 ? linux_error(result) : fd_flags;
+	}
+	if (command == LINUX_F_SETFD) {
+		result = vfs_set_fd_flags(fd, value & LINUX_FD_CLOEXEC);
+		return result < 0 ? linux_error(result) : 0;
+	}
+	if (command == LINUX_F_GETFL) {
+		result = vfs_get_file_flags(fd, &file_flags);
+		if (result < 0)
+			return linux_error(result);
+		if ((file_flags & (VFS_OPEN_READ | VFS_OPEN_WRITE)) ==
+		    (VFS_OPEN_READ | VFS_OPEN_WRITE))
+			value = LINUX_O_RDWR;
+		else if (file_flags & VFS_OPEN_WRITE)
+			value = LINUX_O_WRONLY;
+		else
+			value = LINUX_O_RDONLY;
+		if (file_flags & VFS_OPEN_APPEND)
+			value |= LINUX_O_APPEND;
+		return value;
+	}
+	return -LINUX_EINVAL;
 }
 
-static int isdirempty(struct inode *dp)
+uint64 sys_linux_mkdirat(void)
 {
-        int off;
-        struct dirent de;
+	char path[MAXPATH];
+	int dirfd, result;
 
-        for(off = 2 * sizeof(de); off < dp->d.size; off += sizeof(de)) {
-                if(readi(dp, 0, (uint64)&de, off, sizeof(de)) != sizeof(de))
-                        panic("isdirempty: readi");
-                if(de.inum != 0)
-                        return 0;
-        }
-        
-        return 1;
+	argint(0, &dirfd);
+	if (argstr(1, path, sizeof(path)) < 0)
+		return -LINUX_EFAULT;
+	if (path[0] != '/' && dirfd != LINUX_AT_FDCWD)
+		return -LINUX_EBADF;
+	result = vfs_mkdir(path);
+	return result < 0 ? linux_error(result) : 0;
 }
 
-uint64 sys_unlink(void)
+uint64 sys_linux_unlinkat(void)
 {
-        int ret1,ret2;
-        inode_t ip, dp;
-        struct dirent de;
-        char name[DIRSIZ], path[MAXPATH];
-        uint off;
+	char path[MAXPATH];
+	int dirfd, flags, result;
 
-        ret1 = argstr(0, path, MAXPATH);
-        if(ret1 < 0)
-                return -1;
+	argint(0, &dirfd);
+	argint(2, &flags);
+	if (argstr(1, path, sizeof(path)) < 0)
+		return -LINUX_EFAULT;
+	if (path[0] != '/' && dirfd != LINUX_AT_FDCWD)
+		return -LINUX_EBADF;
+	if (flags & ~LINUX_AT_REMOVEDIR)
+		return -LINUX_EINVAL;
+	result = vfs_unlink(path, flags & LINUX_AT_REMOVEDIR);
+	return result < 0 ? linux_error(result) : 0;
+}
 
-        log_begin();
-        dp = nameiparent(path, name);
-        if(dp == 0) {
-                log_end();
-                return -1;
-        }
+uint64 sys_linux_faccessat(void)
+{
+	char path[MAXPATH];
+	int dirfd, result;
 
-        ilock(dp);
+	argint(0, &dirfd);
+	if (argstr(1, path, sizeof(path)) < 0)
+		return -LINUX_EFAULT;
+	if (path[0] != '/' && dirfd != LINUX_AT_FDCWD)
+		return -LINUX_EBADF;
+	result = vfs_access(path);
+	return result < 0 ? linux_error(result) : 0;
+}
 
-        /* You can't delete them */
-        ret1 = strncmp(name, ".", DIRSIZ);
-        ret2 = strncmp(name, "..", DIRSIZ);
-        if(ret1 == 0 || ret2 == 0)
-                goto bad;
-        /* Find the file in directory that it belongs to */
-        ip = dirlookup(dp, name, &off);
-        if(ip == 0)
-                goto bad;
-        ilock(ip);
+uint64 sys_linux_utimensat(void)
+{
+	char path[MAXPATH];
+	int dirfd, result;
 
-        if(ip->d.nlink < 1)
-                panic("unlink: nlink < 1");
-        /* You can't delete a directory when the directory has childs */
-        if(ip->d.type == T_DIR && !isdirempty(ip)) {
-                iunlockput(ip);
-                goto bad;
-        }
+	argint(0, &dirfd);
+	if (argstr(1, path, sizeof(path)) < 0)
+		return -LINUX_EFAULT;
+	if (path[0] != '/' && dirfd != LINUX_AT_FDCWD)
+		return -LINUX_EBADF;
+	/* Caffeinix does not persist inode timestamps yet. */
+	result = vfs_access(path);
+	return result < 0 ? linux_error(result) : 0;
+}
 
-        memset(&de, 0, sizeof(de));
-        /* Write the empty dirent to there */
-        ret1 = writei(dp, 0, (uint64)&de, off, sizeof(de));
-        if(ret1 != sizeof(de))
-                panic("unlink: writei");
-        if(ip->d.type == T_DIR) {
-                ip->d.nlink--;
-                iupdate(dp);
-        }
-        iunlockput(dp);
+uint64 sys_linux_chdir(void)
+{
+	char path[MAXPATH];
+	int result;
 
-        ip->d.nlink--;
-        iupdate(ip);
-        iunlockput(ip);
-        log_end();
-        return 0;
-bad:
-        iunlockput(dp);
-        log_end();
+	if (argstr(0, path, sizeof(path)) < 0)
+		return -LINUX_EFAULT;
+	result = vfs_chdir(path);
+	return result < 0 ? linux_error(result) : 0;
+}
 
-        return -1;
+uint64 sys_linux_getcwd(void)
+{
+	process_t process = cur_proc();
+	uint64 address, size, length;
+
+	argaddr(0, &address);
+	argaddr(1, &size);
+	length = strlen(process->cwd_name) + 1;
+	if (size < length)
+		return -LINUX_ERANGE;
+	if (copyout(process->pagetable, address, process->cwd_name, length) < 0)
+		return -LINUX_EFAULT;
+	return length;
+}
+
+uint64 sys_linux_dup(void)
+{
+	int oldfd, fd, result;
+
+	argint(0, &oldfd);
+	result = vfs_dup(oldfd, 0, 0, &fd);
+	return result < 0 ? linux_error(result) : fd;
+}
+
+uint64 sys_linux_dup3(void)
+{
+	int oldfd, newfd, flags, result;
+
+	argint(0, &oldfd);
+	argint(1, &newfd);
+	argint(2, &flags);
+	if (flags & ~LINUX_O_CLOEXEC)
+		return -LINUX_EINVAL;
+	result = vfs_dup_to(oldfd, newfd,
+	                    flags & LINUX_O_CLOEXEC ? VFS_FD_CLOEXEC : 0);
+	return result < 0 ? linux_error(result) : newfd;
+}
+
+uint64 sys_linux_ioctl(void)
+{
+	struct linux_termios termios;
+	struct linux_winsize winsize;
+	process_t process = cur_proc();
+	uint64 address;
+	int fd, request, terminal;
+
+	argint(0, &fd);
+	argint(1, &request);
+	argaddr(2, &address);
+	terminal = vfs_is_terminal(fd);
+	if (terminal < 0)
+		return linux_error(terminal);
+	if (!terminal)
+		return -LINUX_ENOTTY;
+	if (request == LINUX_TCGETS) {
+		memset(&termios, 0, sizeof(termios));
+		termios.iflag = LINUX_ICRNL;
+		termios.cflag = LINUX_B38400 | LINUX_CS8 |
+		                 LINUX_CREAD | LINUX_CLOCAL;
+		termios.lflag = LINUX_ICANON | LINUX_ECHO |
+		                 LINUX_ECHOE | LINUX_ECHOK;
+		termios.control[LINUX_VINTR] = 3;
+		termios.control[LINUX_VERASE] = 0x7f;
+		termios.control[LINUX_VEOF] = 4;
+		termios.control[LINUX_VMIN] = 1;
+		if (copyout(process->pagetable, address, (char *)&termios,
+		            sizeof(termios)) < 0)
+			return -LINUX_EFAULT;
+		return 0;
+	}
+	if (request == LINUX_TIOCGWINSZ) {
+		memset(&winsize, 0, sizeof(winsize));
+		winsize.rows = 24;
+		winsize.columns = 80;
+		if (copyout(process->pagetable, address, (char *)&winsize,
+		            sizeof(winsize)) < 0)
+			return -LINUX_EFAULT;
+		return 0;
+	}
+
+	return -LINUX_ENOTTY;
+}
+
+uint64 sys_linux_writev(void)
+{
+	process_t p = cur_proc();
+	struct linux_iovec iov;
+	uint64 iov_address;
+	uint64 total = 0;
+	file_t f;
+	int fd, count, i, written;
+
+	argint(0, &fd);
+	argaddr(1, &iov_address);
+	argint(2, &count);
+
+	if (fd < 0 || fd >= NOFILE || !(f = p->ofile[fd]))
+		return -LINUX_EBADF;
+	if (count < 0 || count > LINUX_IOV_MAX)
+		return -LINUX_EINVAL;
+
+	for (i = 0; i < count; i++) {
+		if (copyin(p->pagetable, (char *)&iov,
+		           iov_address + i * sizeof(iov), sizeof(iov)) < 0)
+			return total ? total : -LINUX_EFAULT;
+		if (iov.len > 0x7fffffff)
+			return total ? total : -LINUX_EINVAL;
+
+		written = vfs_write(fd, iov.base, iov.len);
+		if (written < 0)
+			return total ? total : linux_error(written);
+		total += written;
+		if ((uint64)written != iov.len)
+			break;
+	}
+
+	return total;
+}
+
+uint64 sys_linux_execve(void)
+{
+	char path[MAXPATH], *argv[MAXARG], *envp[MAXARG];
+	uint64 user_argv, user_envp;
+	int ret;
+
+	argaddr(1, &user_argv);
+	argaddr(2, &user_envp);
+	if (argstr(0, path, MAXPATH) < 0)
+		return -LINUX_EFAULT;
+
+	memset(argv, 0, sizeof(argv));
+	memset(envp, 0, sizeof(envp));
+	if (copy_user_vector(user_argv, argv) < 0 ||
+	    copy_user_vector(user_envp, envp) < 0)
+		goto fault;
+
+	ret = exec_linux(path, argv, envp);
+	if (ret >= 0)
+		vfs_close_on_exec();
+	free_user_vector(argv);
+	free_user_vector(envp);
+	return ret < 0 ? -LINUX_EFAULT : 0;
+
+fault:
+	free_user_vector(argv);
+	free_user_vector(envp);
+	return -LINUX_EFAULT;
 }

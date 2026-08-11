@@ -35,6 +35,12 @@ typedef struct trapframe_info {
         uint64 nums;
 }*trapframe_info_t;
 
+struct process_signal_action {
+	uint64 handler;
+	uint64 flags;
+	uint64 mask;
+};
+
 typedef struct process{
         struct spinlock lock;
 
@@ -43,14 +49,21 @@ typedef struct process{
         process_state_t state;
         
         uint64 sz;
+	uint64 brk;
+	uint64 brk_start;
+	uint64 mmap_top;
         pagedir_t pagetable;
         inode_t cwd;
         char cwd_name[MAXPATH];
         file_t ofile[NOFILE];
+	uint8 fd_flags[NOFILE];
         void *sleep_chan;
 
         int exit_state;
         int killed;
+	uint64 clear_child_tid;
+	uint64 signal_mask;
+	struct process_signal_action signal_actions[64];
         struct process *parent;
         trapframe_info_t tinfo;
         int tnums;
@@ -64,6 +77,8 @@ void process_init(void);
 pagedir_t process_pagedir(process_t p);
 void process_freepagedir(pagedir_t pgdir, uint64 sz);
 int process_grow(int n);
+int process_fork(uint64 child_stack);
+int process_wait(int target, uint64 status_address, int nohang);
 
 int killed(process_t p);
 void sleep(void* chan, spinlock_t lk);

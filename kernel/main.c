@@ -43,11 +43,11 @@ void main(void)
                 trap_init_lock();
                 trap_init();
                 process_init();
-                userinit();
                 binit();
                 iinit();
                 file_init();
                 virtio_disk_init();
+		userinit();
 
                 printf("Hello! Caffeinix\n");
                 // thread_test();

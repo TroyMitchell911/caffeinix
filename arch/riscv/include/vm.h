@@ -19,12 +19,15 @@ void kvm_init(void);
 /* For general */
 int vm_map(pagedir_t pgdir, uint64 va, uint64 pa, uint64 size, int perm);
 void vm_unmap(pagedir_t pgdir, uint64 va, uint64 npages, int do_free);
+void vm_unmap_range(pagedir_t pgdir, uint64 va, uint64 size);
 pte_t *PTE(pagedir_t pgdir, uint64 va, int flag);
 uint64 va2pa(pagedir_t pgdir, uint64 va);
+int vm_mapped(pagedir_t pgdir, uint64 va);
 uint64 vm_alloc(pagedir_t pgdir, uint64 oldsz, uint64 newsz, int eperm);
 uint64 vm_dealloc(pagedir_t pgdir, uint64 oldsz, uint64 newsz);
 void vm_clear(pagedir_t pgdir, uint64 va);
-int vm_copy(pagedir_t old, pagedir_t new, uint64 sz);
+int vm_copy(pagedir_t old, pagedir_t new);
+void vm_free_user(pagedir_t pgdir);
 /* For page-table */
 pagedir_t pagedir_alloc(void);
 void pagedir_free(pagedir_t pgdir);
