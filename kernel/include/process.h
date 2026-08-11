@@ -47,6 +47,7 @@ typedef struct process{
         inode_t cwd;
         char cwd_name[MAXPATH];
         file_t ofile[NOFILE];
+	uint8 fd_flags[NOFILE];
         void *sleep_chan;
 
         int exit_state;

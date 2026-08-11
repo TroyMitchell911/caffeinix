@@ -29,6 +29,7 @@ typedef struct file{
         struct inode *ip;       // FD_INODE and FD_DEVICE
         uint32 off;             // FD_INODE
         short major;            // FD_DEVICE
+	uint32 flags;
 }*file_t;
 
 void fs_init(uint32 dev);

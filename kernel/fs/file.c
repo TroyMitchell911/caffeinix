@@ -18,6 +18,7 @@
 #include <printf.h>
 #include <sysfile.h>
 #include <driver.h>
+#include <vfs.h>
 
 #define TEST_W          0
 #define TEST_R          0
@@ -90,9 +91,10 @@ file_t file_alloc(void)
 
         spinlock_acquire(&ftable.lk);
 
-        for(f = ftable.f; f != &ftable.f[NFILE - 1]; f++) {
-                if(f->ref == 0) {
-                        f->ref = 1;
+	for(f = ftable.f; f != &ftable.f[NFILE]; f++) {
+		if(f->ref == 0) {
+			memset(f, 0, sizeof(*f));
+			f->ref = 1;
                         spinlock_release(&ftable.lk);
                         return f;
                 }
@@ -152,7 +154,7 @@ int file_read(file_t f, uint64 addr, int n)
         if(!f->readable)
                 return -1;
 
-        if(f->type == FD_INODE) {
+	if(f->type == FD_INODE) {
                 ilock(f->ip);
                 ret = readi(f->ip, 1, addr, f->off, n);
                 if(ret > 0)
@@ -187,7 +189,9 @@ int file_write(file_t f, uint64 addr, int n)
                         w_n = w_n > max ? max : w_n;
                         log_begin();
                         ilock(f->ip);
-                        ret = writei(f->ip, 1, addr + i, f->off + i, w_n);
+				if (f->flags & VFS_OPEN_APPEND)
+					f->off = f->ip->d.size;
+				ret = writei(f->ip, 1, addr + i, f->off, w_n);
                         if(ret > 0)
                                 f->off += ret;
                         iunlock(f->ip);
