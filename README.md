@@ -1,103 +1,155 @@
-<h4 align="center">A Unix-like system that hopes to pursue efficiency.</h4>
+# Caffeinix
 
-<p align="center">
-    <a href="https://github.com/TroyMitchell911/Caffeinix/commits/main/">
-    <img src="https://img.shields.io/github/last-commit/TroyMitchell911/Caffeinix.svg?style=flat-square&logo=github&logoColor=white"
-         alt="GitHub last commit">
-    <a href="https://github.com/TroyMitchell911/Caffeinix/issues">
-    <img src="https://img.shields.io/github/issues-raw/TroyMitchell911/Caffeinix.svg?style=flat-square&logo=github&logoColor=white"
-         alt="GitHub issues">
-    <a href="https://github.com/TroyMitchell911/Caffeinix/pulls">
-    <img src="https://img.shields.io/github/issues-pr-raw/TroyMitchell911/Caffeinix.svg?style=flat-square&logo=github&logoColor=white"
-         alt="GitHub pull requests">
-</p>
+Caffeinix is a small Unix-like RISC-V operating system, written with an
+Americano close at hand. It keeps its own kernel design while exposing a
+Linux RISC-V UAPI subset to userspace.
 
-<p align="center">
-  <a href="#installation">Installation</a> •
-  <a href="#updating">Updating</a> •
-  <a href="#features">Features</a> •
-  <a href="#wiki">Wiki</a> •
-  <a href="#contributing">Contributing</a> •
-  <a href="#credits">Credits</a> •
-  <a href="#support">Support</a> •
-  <a href="#license">License</a>
-</p>
+The current milestone boots an unmodified, statically linked musl BusyBox on
+QEMU `virt`. Basic `ash`, file, directory, and process operations work without
+a private GCC, libc, or userspace syscall layer.
 
----
+## Supported target
 
-<table>
-<tr>
-<td>
-
-**Caffeinix** is a **Unix-like system**. As the name suggests, **Caffeinix (Caffeine + Unix)**, this was written by me while drinking Americano. I hope that it can improve the efficiency of you and me like caffeine. **Of course, the efficiency may not be very high. I also said this is just a hope.**
-
-</td>
-</tr>
-</table>
-
-## Operating environment
-
-This is not **absolute**, just what we **recommend**.
-
-```bash
-Distributor ID: Ubuntu
-Description:    Ubuntu 22.04.4 LTS
-Release:        22.04
-Codename:       jammy
-```
+- Architecture: RISC-V 64-bit little-endian
+- ISA and ABI: RV64GC with LP64D
+- Machine: QEMU `virt`, one hart tested
+- Userspace: static non-PIE musl ELF executables
+- UAPI reference: Linux 6.10 RISC-V headers
 
 ## Prerequisites
 
-### Step 1
+Both supported hosts use the same standard `riscv64-linux-gnu-*` tools. The
+Makefiles contain no distribution detection or distribution-specific build
+path.
+
+### On Ubuntu
+
+Ubuntu 22.04 or later:
 
 ```bash
-$ sudo apt update
-$ sudo apt install build-essential gcc make perl dkms git gdb-multiarch qemu-system-misc bear
+sudo apt update
+sudo apt install \
+  build-essential git \
+  gcc-riscv64-linux-gnu binutils-riscv64-linux-gnu \
+  libc6-dev-riscv64-cross qemu-system-misc
 ```
 
-### Step 2
+Install `gdb-multiarch` as well if you plan to use `make qemu-gdb`.
 
-You need a **RISC-V "newlib" tool chain** from [here](https://github.com/TroyMitchell911/riscv-caffeinix-compiler)
-
-> [!IMPORTANT] 
-> None now.
-
-> [!NOTE]  
-> None now.
-
-## Getting the sources
-
-Congratulations, you have completed the above steps. Now let's get the code.
+### On Arch
 
 ```bash
-$ git clone https://github.com/TroyMitchell911/caffeinix.git
+sudo pacman -S --needed \
+  base-devel git riscv64-linux-gnu-gcc qemu-system-riscv
 ```
 
-Now you can compile the kernel through the `make` command, but you **cannot boot it through qemu** because you still lack a [file system](https://github.com/TroyMitchell911/caffeinix-rootfs).
+The kernel does not use musl, a libc sysroot, or BusyBox. Those are userspace
+build inputs and are documented by the rootfs project.
 
-## Building and usage
+## Getting the kernel source
 
-- `make`：Compile and build
-- `make qemu`：Start qemu running after compiling and building
-- `make qemu-gdb`：Start debugging
+```bash
+git clone \
+  https://github.com/TroyMitchell911/caffeinix.git \
+  /absolute/path/to/caffeinix-kernel
+```
 
-## Updating
+The destination is arbitrary. The kernel does not assume a workspace layout.
 
-## Features
+## Building
 
-## Wiki
+```bash
+make -C /absolute/path/to/caffeinix-kernel \
+  -j"$(nproc)"
+make -C /absolute/path/to/caffeinix-kernel check-uapi
+```
 
-Do you **need some help**? Check out the _articles_ on the [wiki](https://github.com/TroyMitchell911/Caffeinix/wiki/).
+Useful targets:
+
+- `make`: build `output/kernel`
+- `make check-uapi`: compare the supported ABI with Linux headers
+- `make clean`: remove kernel build output
+
+The optional `make build` target uses `bear` to generate a compilation
+database. Normal builds do not require it.
+
+## Building the root filesystem
+
+Build userspace separately with
+[caffeinix-rootfs](https://github.com/TroyMitchell911/caffeinix-rootfs).
+Its README explains how to create an external musl sysroot. The rootfs build
+requires both external paths explicitly:
+
+```bash
+make -C /absolute/path/to/caffeinix-rootfs \
+  -j"$(nproc)" \
+  MUSL_SYSROOT=/absolute/path/to/riscv64-linux-musl \
+  BUSYBOX_DIR=/absolute/path/to/busybox-1.38.0
+```
+
+Neither path is passed to the kernel build.
+
+## Running
+
+Pass the completed image path explicitly:
+
+```bash
+make -C /absolute/path/to/caffeinix-kernel qemu \
+  FS_IMG=/absolute/path/to/caffeinix-rootfs/fs.img
+```
+
+There is no default `FS_IMG`, so the kernel and rootfs may live anywhere.
+QEMU attaches the selected file as a raw virtio block device. At the shell
+prompt, try:
+
+```sh
+mkdir /demo
+echo hello > /demo/message
+cat /demo/message
+ls /
+rm /demo/message
+```
+
+Press `Ctrl-a`, then `x`, to leave QEMU. Replace `qemu` with `qemu-gdb` to stop
+at reset and expose the QEMU GDB stub.
+
+## Root filesystem image
+
+`fs.img` is a raw, little-endian Caffeinix filesystem image derived from the
+xv6 layout. It has 1 KiB blocks containing a superblock, journal, inode table,
+free-block bitmap, and data blocks. It is not an ext4 image and is not expected
+to mount directly on the host.
+
+The generated root directory contains:
+
+- `/busybox`: static musl BusyBox and all enabled standalone applets
+- `/LICENSE`: the rootfs repository license text
+- `/console`: the character device used for standard descriptors
+
+## Current features
+
+- Linux RISC-V syscall numbers and boundary structures for supported calls
+- Linux-compatible static ELF startup stack and auxiliary vector
+- Basic VFS operations and Linux file metadata conversion
+- Sparse user mappings, `brk`, `mmap`, and `munmap`
+- Basic `clone`, `execve`, `wait4`, descriptor, and process-ID operations
+- Interactive BusyBox `ash`, plus `cat`, `cp`, `echo`, `ls`, `mkdir`, `pwd`,
+  `rm`, and `touch`
+
+## Current limitations
+
+- Only a Linux RISC-V UAPI subset is implemented.
+- Pipelines, job control, polling, and real signal delivery are not ready.
+- Dynamic ELF loading, shared libraries, threads, and networking are not ready.
+- Docker is not supported; it also needs namespaces, cgroups, mounts,
+  networking, `/proc`, and a much wider syscall surface.
+- Real boards still need platform boot, interrupt, timer, and device drivers.
 
 ## Contributing
 
-Got **something interesting** you'd like to **share**? Learn about [contributing](#).    
-## Credits
-
-## Support
-
-Reach out to me via the **[profile addresses](https://github.com/TroyMitchell911)**.
+Bug reports and focused changes are welcome through
+[GitHub issues](https://github.com/TroyMitchell911/Caffeinix/issues).
 
 ## License
 
-[![License: GPL-3.0](https://img.shields.io/badge/License-GPL%203.0-green)](https://www.tldrlegal.com/license/gnu-general-public-license-v3-gpl-3)
+Caffeinix is distributed under the GNU GPL version 3. See [LICENSE](LICENSE).
