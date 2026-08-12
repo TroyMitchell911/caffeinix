@@ -68,6 +68,22 @@ static uint64 linux_error(int result)
 		return -LINUX_ENOTEMPTY;
 	case VFS_ERR_NODEV:
 		return -LINUX_ENODEV;
+	case VFS_ERR_NOMEM:
+		return -LINUX_ENOMEM;
+	case VFS_ERR_NOTSUPP:
+		return -LINUX_EOPNOTSUPP;
+	case VFS_ERR_NAMETOOLONG:
+		return -LINUX_ENAMETOOLONG;
+	case VFS_ERR_BUSY:
+		return -LINUX_EBUSY;
+	case VFS_ERR_LOOP:
+		return -LINUX_ELOOP;
+	case VFS_ERR_XDEV:
+		return -LINUX_EXDEV;
+	case VFS_ERR_MLINK:
+		return -LINUX_EMLINK;
+	case VFS_ERR_IO:
+		return -LINUX_EIO;
 	default:
 		return -LINUX_EIO;
 	}
@@ -104,40 +120,64 @@ static int linux_open_flags(int linux_flags, uint32 *vfs_flags)
 	return 0;
 }
 
+static uint64 linux_encode_device(uint64 device)
+{
+	uint32 major = VFS_DEVICE_MAJOR(device);
+	uint32 minor = VFS_DEVICE_MINOR(device);
+
+	return (minor & 0xff) | ((major & 0xfff) << 8) |
+	       ((uint64)(minor & ~0xff) << 12) |
+	       ((uint64)(major & ~0xfff) << 32);
+}
+
 static void make_linux_stat(struct linux_stat *linux_stat,
 			    struct vfs_stat *vfs_stat)
 {
 	memset(linux_stat, 0, sizeof(*linux_stat));
 	linux_stat->dev = vfs_stat->dev;
 	linux_stat->ino = vfs_stat->ino;
+	linux_stat->uid = vfs_stat->uid;
+	linux_stat->gid = vfs_stat->gid;
 	linux_stat->nlink = vfs_stat->nlink;
-	linux_stat->rdev = vfs_stat->rdev;
+	linux_stat->rdev = linux_encode_device(vfs_stat->rdev);
 	linux_stat->size = vfs_stat->size;
-	linux_stat->blksize = BSIZE;
-	linux_stat->blocks = (vfs_stat->size + 511) / 512;
-	if (vfs_stat->type == T_DIR)
-		linux_stat->mode = LINUX_S_IFDIR | 0755;
-	else if (vfs_stat->type == T_DEVICE)
-		linux_stat->mode = LINUX_S_IFCHR | 0666;
+	linux_stat->blksize = vfs_stat->block_size;
+	linux_stat->blocks = vfs_stat->blocks;
+	linux_stat->mode = vfs_stat->mode & VFS_MODE_PERMISSIONS;
+	if (vfs_stat->type == VFS_INODE_DIRECTORY)
+		linux_stat->mode |= LINUX_S_IFDIR;
+	else if (vfs_stat->type == VFS_INODE_CHAR_DEVICE)
+		linux_stat->mode |= LINUX_S_IFCHR;
+	else if (vfs_stat->type == VFS_INODE_BLOCK_DEVICE)
+		linux_stat->mode |= LINUX_S_IFBLK;
+	else if (vfs_stat->type == VFS_INODE_SYMLINK)
+		linux_stat->mode |= LINUX_S_IFLNK;
+	else if (vfs_stat->type == VFS_INODE_FIFO)
+		linux_stat->mode |= LINUX_S_IFIFO;
+	else if (vfs_stat->type == VFS_INODE_SOCKET)
+		linux_stat->mode |= LINUX_S_IFSOCK;
 	else
-		linux_stat->mode = LINUX_S_IFREG | 0644;
+		linux_stat->mode |= LINUX_S_IFREG;
 }
 
 uint64 sys_linux_openat(void)
 {
 	char path[MAXPATH];
 	uint32 flags;
-	int dirfd, fd, linux_flags, result;
+	int dirfd, fd, linux_flags, mode, result;
 
 	argint(0, &dirfd);
 	argint(2, &linux_flags);
+	argint(3, &mode);
 	if (argstr(1, path, sizeof(path)) < 0)
 		return -LINUX_EFAULT;
 	if (path[0] != '/' && dirfd != LINUX_AT_FDCWD)
 		return -LINUX_EBADF;
 	if (linux_open_flags(linux_flags, &flags) < 0)
 		return -LINUX_EINVAL;
-	result = vfs_open(path, flags, &fd);
+	mode &= VFS_MODE_PERMISSIONS;
+	mode &= ~cur_proc()->umask;
+	result = vfs_open(path, flags, mode, &fd);
 	if (result < 0)
 		return linux_error(result);
 	if (linux_flags & LINUX_O_CLOEXEC)
@@ -229,7 +269,9 @@ uint64 sys_linux_newfstatat(void)
 		return -LINUX_EBADF;
 	if (flags & ~(LINUX_AT_SYMLINK_NOFOLLOW))
 		return -LINUX_EINVAL;
-	result = vfs_stat_path(path, &stat);
+	result = vfs_stat_path(path,
+	                       !(flags & LINUX_AT_SYMLINK_NOFOLLOW),
+	                       &stat);
 	if (result < 0)
 		return linux_error(result);
 	make_linux_stat(&linux_stat, &stat);
@@ -246,7 +288,7 @@ uint64 sys_linux_getdents64(void)
 		int64 offset;
 		uint16 reclen;
 		uint8 type;
-		char name[DIRSIZ + 1];
+		char name[VFS_NAME_MAX + 1];
 	} linux_dirent;
 	struct vfs_dirent dirent;
 	process_t process = cur_proc();
@@ -257,9 +299,9 @@ uint64 sys_linux_getdents64(void)
 	argint(0, &fd);
 	argaddr(1, &address);
 	argint(2, &length);
-	if (length < (int)sizeof(linux_dirent))
+	if (length < 24)
 		return -LINUX_EINVAL;
-	while (length - used >= (int)sizeof(linux_dirent) &&
+	while (length - used >= 24 &&
 	       (result = vfs_next_dirent(fd, &dirent)) > 0) {
 		name_length = strlen(dirent.name);
 		record_length = (19 + name_length + 1 + 7) & ~7;
@@ -327,14 +369,17 @@ uint64 sys_linux_fcntl(void)
 uint64 sys_linux_mkdirat(void)
 {
 	char path[MAXPATH];
-	int dirfd, result;
+	int dirfd, mode, result;
 
 	argint(0, &dirfd);
+	argint(2, &mode);
 	if (argstr(1, path, sizeof(path)) < 0)
 		return -LINUX_EFAULT;
 	if (path[0] != '/' && dirfd != LINUX_AT_FDCWD)
 		return -LINUX_EBADF;
-	result = vfs_mkdir(path);
+	mode &= VFS_MODE_PERMISSIONS;
+	mode &= ~cur_proc()->umask;
+	result = vfs_mkdir(path, mode);
 	return result < 0 ? linux_error(result) : 0;
 }
 
@@ -353,6 +398,122 @@ uint64 sys_linux_unlinkat(void)
 		return -LINUX_EINVAL;
 	result = vfs_unlink(path, flags & LINUX_AT_REMOVEDIR);
 	return result < 0 ? linux_error(result) : 0;
+}
+
+uint64 sys_linux_symlinkat(void)
+{
+	char target[MAXPATH], path[MAXPATH];
+	int dirfd, result;
+
+	argint(1, &dirfd);
+	if (argstr(0, target, sizeof(target)) < 0 ||
+	    argstr(2, path, sizeof(path)) < 0)
+		return -LINUX_EFAULT;
+	if (path[0] != '/' && dirfd != LINUX_AT_FDCWD)
+		return -LINUX_EBADF;
+	result = vfs_symlink(target, path);
+	return result < 0 ? linux_error(result) : 0;
+}
+
+uint64 sys_linux_linkat(void)
+{
+	char old_path[MAXPATH], new_path[MAXPATH];
+	int old_dirfd, new_dirfd, flags, result;
+
+	argint(0, &old_dirfd);
+	argint(2, &new_dirfd);
+	argint(4, &flags);
+	if (argstr(1, old_path, sizeof(old_path)) < 0 ||
+	    argstr(3, new_path, sizeof(new_path)) < 0)
+		return -LINUX_EFAULT;
+	if ((old_path[0] != '/' && old_dirfd != LINUX_AT_FDCWD) ||
+	    (new_path[0] != '/' && new_dirfd != LINUX_AT_FDCWD))
+		return -LINUX_EBADF;
+	if (flags & ~LINUX_AT_SYMLINK_FOLLOW)
+		return -LINUX_EINVAL;
+	result = vfs_link(old_path, new_path,
+	                  flags & LINUX_AT_SYMLINK_FOLLOW);
+	return result < 0 ? linux_error(result) : 0;
+}
+
+static uint64 linux_rename(uint32 flags)
+{
+	char old_path[MAXPATH], new_path[MAXPATH];
+	uint32 vfs_flags = 0;
+	int old_dirfd, new_dirfd, result;
+
+	argint(0, &old_dirfd);
+	argint(2, &new_dirfd);
+	if (argstr(1, old_path, sizeof(old_path)) < 0 ||
+	    argstr(3, new_path, sizeof(new_path)) < 0)
+		return -LINUX_EFAULT;
+	if ((old_path[0] != '/' && old_dirfd != LINUX_AT_FDCWD) ||
+	    (new_path[0] != '/' && new_dirfd != LINUX_AT_FDCWD))
+		return -LINUX_EBADF;
+	if (flags & ~LINUX_RENAME_NOREPLACE)
+		return -LINUX_EINVAL;
+	if (flags & LINUX_RENAME_NOREPLACE)
+		vfs_flags |= VFS_RENAME_NOREPLACE;
+	result = vfs_rename(old_path, new_path, vfs_flags);
+	return result < 0 ? linux_error(result) : 0;
+}
+
+uint64 sys_linux_renameat2(void)
+{
+	int flags;
+
+	argint(4, &flags);
+	return linux_rename(flags);
+}
+
+uint64 sys_linux_readlinkat(void)
+{
+	process_t process = cur_proc();
+	char path[MAXPATH];
+	char *target;
+	uint64 address, size;
+	int dirfd, result;
+
+	argint(0, &dirfd);
+	argaddr(2, &address);
+	argaddr(3, &size);
+	if (argstr(1, path, sizeof(path)) < 0)
+		return -LINUX_EFAULT;
+	if (path[0] != '/' && dirfd != LINUX_AT_FDCWD)
+		return -LINUX_EBADF;
+	if (!size)
+		return -LINUX_EINVAL;
+	if (size > VFS_PATH_MAX)
+		size = VFS_PATH_MAX;
+	target = palloc();
+	result = vfs_readlink(path, target, size);
+	if (result >= 0 &&
+	    copyout(process->pagetable, address, target, result) < 0)
+		result = -LINUX_EFAULT;
+	else if (result < 0)
+		result = linux_error(result);
+	pfree(target);
+	return result;
+}
+
+uint64 sys_linux_sync(void)
+{
+	(void)vfs_sync();
+	return 0;
+}
+
+uint64 sys_linux_fsync(void)
+{
+	int fd, result;
+
+	argint(0, &fd);
+	result = vfs_fsync(fd);
+	return result < 0 ? linux_error(result) : 0;
+}
+
+uint64 sys_linux_fdatasync(void)
+{
+	return sys_linux_fsync();
 }
 
 uint64 sys_linux_faccessat(void)
@@ -398,14 +559,22 @@ uint64 sys_linux_chdir(void)
 uint64 sys_linux_getcwd(void)
 {
 	process_t process = cur_proc();
-	uint64 address, size, length;
+	char path[VFS_PATH_MAX];
+	uint64 address, size;
+	int length;
 
 	argaddr(0, &address);
 	argaddr(1, &size);
-	length = strlen(process->cwd_name) + 1;
-	if (size < length)
+	if (!size)
+		return -LINUX_EINVAL;
+	if (size > sizeof(path))
+		size = sizeof(path);
+	length = vfs_getcwd(path, size);
+	if (length == VFS_ERR_NOSPC)
 		return -LINUX_ERANGE;
-	if (copyout(process->pagetable, address, process->cwd_name, length) < 0)
+	if (length < 0)
+		return linux_error(length);
+	if (copyout(process->pagetable, address, path, length) < 0)
 		return -LINUX_EFAULT;
 	return length;
 }

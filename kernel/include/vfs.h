@@ -1,9 +1,28 @@
 #ifndef __CAFFEINIX_KERNEL_VFS_H
 #define __CAFFEINIX_KERNEL_VFS_H
 
-#include <file.h>
-#include <fs.h>
+#include <block_device.h>
 #include <typedefs.h>
+
+#define VFS_NAME_MAX 255
+#define VFS_PATH_MAX 512
+
+#define VFS_OPEN_READ       (1U << 0)
+#define VFS_OPEN_WRITE      (1U << 1)
+#define VFS_OPEN_CREATE     (1U << 2)
+#define VFS_OPEN_EXCLUSIVE  (1U << 3)
+#define VFS_OPEN_TRUNCATE   (1U << 4)
+#define VFS_OPEN_DIRECTORY  (1U << 5)
+#define VFS_OPEN_APPEND     (1U << 6)
+
+#define VFS_FD_CLOEXEC      (1U << 0)
+
+#define VFS_MODE_PERMISSIONS 07777U
+
+#define VFS_MAKE_DEVICE(major, minor) \
+	(((uint64)(uint32)(major) << 32) | (uint32)(minor))
+#define VFS_DEVICE_MAJOR(device) ((uint32)((device) >> 32))
+#define VFS_DEVICE_MINOR(device) ((uint32)(device))
 
 enum vfs_result {
 	VFS_OK = 0,
@@ -19,35 +38,201 @@ enum vfs_result {
 	VFS_ERR_NOSPC = -10,
 	VFS_ERR_NOTEMPTY = -11,
 	VFS_ERR_NODEV = -12,
+	VFS_ERR_NOMEM = -13,
+	VFS_ERR_NOTSUPP = -14,
+	VFS_ERR_NAMETOOLONG = -15,
+	VFS_ERR_BUSY = -16,
+	VFS_ERR_LOOP = -17,
+	VFS_ERR_XDEV = -18,
+	VFS_ERR_MLINK = -19,
 };
 
-#define VFS_OPEN_READ       (1 << 0)
-#define VFS_OPEN_WRITE      (1 << 1)
-#define VFS_OPEN_CREATE     (1 << 2)
-#define VFS_OPEN_EXCLUSIVE  (1 << 3)
-#define VFS_OPEN_TRUNCATE   (1 << 4)
-#define VFS_OPEN_DIRECTORY  (1 << 5)
-#define VFS_OPEN_APPEND     (1 << 6)
+#define VFS_RENAME_NOREPLACE (1U << 0)
 
-#define VFS_FD_CLOEXEC      (1 << 0)
+enum vfs_inode_type {
+	VFS_INODE_NONE = 0,
+	VFS_INODE_REGULAR,
+	VFS_INODE_DIRECTORY,
+	VFS_INODE_CHAR_DEVICE,
+	VFS_INODE_BLOCK_DEVICE,
+	VFS_INODE_SYMLINK,
+	VFS_INODE_FIFO,
+	VFS_INODE_SOCKET,
+};
+
+enum vfs_dirent_type {
+	VFS_DT_UNKNOWN = 0,
+	VFS_DT_FIFO = 1,
+	VFS_DT_CHAR = 2,
+	VFS_DT_DIR = 4,
+	VFS_DT_BLOCK = 6,
+	VFS_DT_REGULAR = 8,
+	VFS_DT_SYMLINK = 10,
+	VFS_DT_SOCKET = 12,
+};
+
+struct vfs_dentry;
+struct vfs_file;
+struct vfs_filesystem_type;
+struct vfs_inode;
+struct vfs_mount;
+struct vfs_super_block;
 
 struct vfs_stat {
 	uint64 dev;
 	uint64 ino;
-	uint32 type;
+	enum vfs_inode_type type;
+	uint32 mode;
+	uint32 uid;
+	uint32 gid;
 	uint32 nlink;
 	uint64 rdev;
 	uint64 size;
+	uint64 blocks;
+	uint32 block_size;
 };
 
 struct vfs_dirent {
 	uint64 ino;
 	uint64 next_offset;
 	uint8 type;
-	char name[DIRSIZ + 1];
+	char name[VFS_NAME_MAX + 1];
 };
 
-int vfs_open(const char *path, uint32 flags, int *fd_out);
+struct vfs_inode_operations {
+	int (*lookup)(struct vfs_inode *directory, const char *name,
+	              struct vfs_inode **result);
+	int (*create)(struct vfs_inode *directory, const char *name,
+	              uint32 mode, struct vfs_inode **result);
+	int (*mkdir)(struct vfs_inode *directory, const char *name,
+	             uint32 mode, struct vfs_inode **result);
+	int (*unlink)(struct vfs_inode *directory, const char *name);
+	int (*rmdir)(struct vfs_inode *directory, const char *name);
+	int (*rename)(struct vfs_inode *old_directory, const char *old_name,
+	              struct vfs_inode *new_directory, const char *new_name,
+	              uint32 flags);
+	int (*link)(struct vfs_inode *inode, struct vfs_inode *directory,
+	            const char *name);
+	int (*symlink)(struct vfs_inode *directory, const char *name,
+	               const char *target, struct vfs_inode **result);
+	int (*readlink)(struct vfs_inode *inode, char *buffer, uint32 size);
+	int (*truncate)(struct vfs_inode *inode, uint64 size);
+	int (*getattr)(struct vfs_inode *inode, struct vfs_stat *stat);
+};
+
+struct vfs_file_operations {
+	int (*open)(struct vfs_inode *inode, struct vfs_file *file);
+	void (*release)(struct vfs_file *file);
+	int64 (*read)(struct vfs_file *file, int user_destination,
+	              uint64 destination, uint64 count, uint64 *position);
+	int64 (*write)(struct vfs_file *file, int user_source, uint64 source,
+	               uint64 count, uint64 *position);
+	int (*readdir)(struct vfs_file *file, struct vfs_dirent *dirent);
+	int (*fsync)(struct vfs_file *file);
+};
+
+struct vfs_super_operations {
+	void (*put_inode)(struct vfs_inode *inode);
+	int (*sync)(struct vfs_super_block *superblock);
+	void (*unmount)(struct vfs_super_block *superblock);
+};
+
+struct vfs_filesystem_type {
+	const char *name;
+	uint32 flags;
+	int (*mount)(struct vfs_filesystem_type *type,
+	             struct block_device *device, const void *data,
+	             struct vfs_super_block **result);
+};
+
+#define VFS_FS_REQUIRES_DEVICE (1U << 0)
+
+struct vfs_super_block {
+	int ref;
+	struct vfs_filesystem_type *type;
+	struct block_device *device;
+	struct vfs_inode *root;
+	const struct vfs_super_operations *operations;
+	uint32 block_size;
+	void *private;
+};
+
+struct vfs_inode {
+	int ref;
+	struct vfs_super_block *superblock;
+	uint64 number;
+	enum vfs_inode_type type;
+	uint32 mode;
+	uint32 uid;
+	uint32 gid;
+	uint32 nlink;
+	uint64 device;
+	uint64 size;
+	uint64 blocks;
+	const struct vfs_inode_operations *operations;
+	const struct vfs_file_operations *file_operations;
+	void *private;
+};
+
+struct vfs_dentry {
+	int ref;
+	struct vfs_dentry *parent;
+	struct vfs_inode *inode;
+	char name[VFS_NAME_MAX + 1];
+};
+
+struct vfs_path {
+	struct vfs_mount *mount;
+	struct vfs_dentry *dentry;
+};
+
+struct vfs_mount {
+	int ref;
+	struct vfs_super_block *superblock;
+	struct vfs_dentry *root;
+	struct vfs_mount *parent;
+	struct vfs_path mountpoint;
+	uint32 flags;
+};
+
+struct vfs_file {
+	int ref;
+	struct vfs_path path;
+	const struct vfs_file_operations *operations;
+	uint64 position;
+	uint32 flags;
+	void *private;
+};
+
+void vfs_init(void);
+int vfs_register_filesystem(struct vfs_filesystem_type *type);
+struct vfs_super_block *vfs_super_alloc(struct vfs_filesystem_type *type,
+					struct block_device *device);
+void vfs_super_free(struct vfs_super_block *superblock);
+struct vfs_inode *vfs_inode_alloc(struct vfs_super_block *superblock);
+struct vfs_inode *vfs_inode_get(struct vfs_inode *inode);
+void vfs_inode_put(struct vfs_inode *inode);
+int vfs_inode_stat_default(struct vfs_inode *inode,
+			   struct vfs_stat *stat);
+int vfs_inode_stat(struct vfs_inode *inode, struct vfs_stat *stat);
+
+int vfs_mount_root(const char *filesystem, struct block_device *device,
+		   const void *data);
+int vfs_mount(const char *filesystem, struct block_device *device,
+	      const char *target, const void *data);
+int vfs_get_root(struct vfs_path *path);
+void vfs_path_copy(struct vfs_path *destination,
+		   const struct vfs_path *source);
+void vfs_path_put(struct vfs_path *path);
+
+int vfs_open_file(const char *path, uint32 flags, uint32 mode,
+		  struct vfs_file **result);
+struct vfs_file *vfs_file_get(struct vfs_file *file);
+void vfs_file_put(struct vfs_file *file);
+int64 vfs_file_pread(struct vfs_file *file, int user_destination,
+		     uint64 destination, uint64 count, uint64 offset);
+
+int vfs_open(const char *path, uint32 flags, uint32 mode, int *fd_out);
 int vfs_close(int fd);
 int vfs_dup(int oldfd, int minimum, uint8 flags, int *fd_out);
 int vfs_dup_to(int oldfd, int newfd, uint8 flags);
@@ -55,11 +240,21 @@ int vfs_read(int fd, uint64 address, int length);
 int vfs_write(int fd, uint64 address, int length);
 int vfs_seek(int fd, int64 offset, int whence, uint64 *result);
 int vfs_stat_fd(int fd, struct vfs_stat *stat);
-int vfs_stat_path(const char *path, struct vfs_stat *stat);
+int vfs_stat_path(const char *path, int follow_symlink,
+		  struct vfs_stat *stat);
 int vfs_next_dirent(int fd, struct vfs_dirent *dirent);
-int vfs_mkdir(const char *path);
+int vfs_mkdir(const char *path, uint32 mode);
 int vfs_unlink(const char *path, int remove_directory);
+int vfs_link(const char *old_path, const char *new_path,
+	     int follow_symlink);
+int vfs_symlink(const char *target, const char *link_path);
+int vfs_readlink(const char *path, char *buffer, uint32 size);
+int vfs_rename(const char *old_path, const char *new_path,
+	       uint32 flags);
+int vfs_fsync(int fd);
+int vfs_sync(void);
 int vfs_chdir(const char *path);
+int vfs_getcwd(char *buffer, uint32 size);
 int vfs_access(const char *path);
 int vfs_get_fd_flags(int fd, uint8 *flags);
 int vfs_set_fd_flags(int fd, uint8 flags);

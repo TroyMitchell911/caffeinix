@@ -77,11 +77,16 @@ $(TARGET) : built-in.o
 
 QEMU ?= qemu-system-riscv64
 FS_IMG ?=
+FAT_IMG ?=
 QEMUOPTS = -machine virt -bios none -kernel $(TARGET)
 QEMUOPTS += -m 128M -smp $(CPUS) -nographic
 QEMUOPTS += -global virtio-mmio.force-legacy=false
 QEMUOPTS += -drive file=$(FS_IMG),if=none,format=raw,id=x0
 QEMUOPTS += -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
+ifneq ($(strip $(FAT_IMG)),)
+QEMUOPTS += -drive file=$(FAT_IMG),if=none,format=raw,id=x1
+QEMUOPTS += -device virtio-blk-device,drive=x1,bus=virtio-mmio-bus.1
+endif
 ifndef CPUS
 CPUS := 1
 endif
@@ -100,6 +105,9 @@ check-fs-img:
 	@test -f "$(FS_IMG)" || { \
 		echo "missing filesystem image: $(FS_IMG)"; exit 1; \
 	}
+	@if [ -n "$(FAT_IMG)" ] && [ ! -f "$(FAT_IMG)" ]; then \
+		echo "missing FAT image: $(FAT_IMG)"; exit 1; \
+	fi
 
 qemu: all check-fs-img
 	$(QEMU) $(QEMUOPTS)

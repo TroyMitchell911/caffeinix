@@ -11,6 +11,8 @@
 #define LINUX_SYS_ioctl              29
 #define LINUX_SYS_mkdirat            34
 #define LINUX_SYS_unlinkat           35
+#define LINUX_SYS_symlinkat          36
+#define LINUX_SYS_linkat             37
 #define LINUX_SYS_faccessat          48
 #define LINUX_SYS_chdir              49
 #define LINUX_SYS_openat             56
@@ -21,14 +23,19 @@
 #define LINUX_SYS_read               63
 #define LINUX_SYS_write              64
 #define LINUX_SYS_writev             66
+#define LINUX_SYS_readlinkat         78
 #define LINUX_SYS_newfstatat         79
 #define LINUX_SYS_fstat              80
+#define LINUX_SYS_sync               81
+#define LINUX_SYS_fsync              82
+#define LINUX_SYS_fdatasync          83
 #define LINUX_SYS_utimensat          88
 #define LINUX_SYS_exit               93
 #define LINUX_SYS_exit_group         94
 #define LINUX_SYS_set_tid_address    96
 #define LINUX_SYS_rt_sigaction      134
 #define LINUX_SYS_rt_sigprocmask    135
+#define LINUX_SYS_umask             166
 #define LINUX_SYS_prctl             167
 #define LINUX_SYS_getpid            172
 #define LINUX_SYS_getppid           173
@@ -43,6 +50,7 @@
 #define LINUX_SYS_execve            221
 #define LINUX_SYS_mmap              222
 #define LINUX_SYS_wait4             260
+#define LINUX_SYS_renameat2         276
 
 #define LINUX_EPERM                   1
 #define LINUX_ENOENT                  2
@@ -78,6 +86,8 @@
 #define LINUX_ENAMETOOLONG           36
 #define LINUX_ENOSYS                 38
 #define LINUX_ENOTEMPTY              39
+#define LINUX_ELOOP                  40
+#define LINUX_EOPNOTSUPP             95
 
 #define LINUX_IOV_MAX               16
 
@@ -89,7 +99,10 @@ struct linux_iovec {
 #define LINUX_AT_FDCWD              -100
 #define LINUX_AT_SYMLINK_NOFOLLOW  0x100
 #define LINUX_AT_REMOVEDIR         0x200
+#define LINUX_AT_SYMLINK_FOLLOW    0x400
 #define LINUX_AT_EMPTY_PATH       0x1000
+
+#define LINUX_RENAME_NOREPLACE       0x1
 
 #define LINUX_O_ACCMODE          00000003
 #define LINUX_O_RDONLY          00000000
@@ -159,6 +172,10 @@ struct linux_iovec {
 #define LINUX_S_IFREG            0100000
 #define LINUX_S_IFDIR            0040000
 #define LINUX_S_IFCHR            0020000
+#define LINUX_S_IFBLK            0060000
+#define LINUX_S_IFIFO            0010000
+#define LINUX_S_IFLNK            0120000
+#define LINUX_S_IFSOCK           0140000
 
 #define LINUX_DT_UNKNOWN               0
 #define LINUX_DT_CHR                   2

@@ -176,6 +176,7 @@ static void free_core(page_t page, char* start, uint64 blocks)
                                 }
                         } 
                 } else {
+			pool.list = page->next;
                         pg = page;
                 }
                 
@@ -255,6 +256,20 @@ re:
         return p;
 }
 
+void* calloc(size_t count, size_t size)
+{
+	void *pointer;
+	uint64 total;
+
+	if (size && count > (uint64)-1 / size)
+		return 0;
+	total = count * size;
+	pointer = malloc(total);
+	if (pointer)
+		memset(pointer, 0, total);
+	return pointer;
+}
+
 /**
  * @description: Free memory. (The address of memory has to be alloced by malloc).
  * @param {void*} p: The address of pointer
@@ -265,7 +280,9 @@ void free(void* p)
         block_info_t info;
         page_t page;
 
-        info = (block_info_t)((uint64)p - (INFO_BLOCK * MIN_SIZE));
+	if (!p)
+		return;
+	info = (block_info_t)((uint64)p - (INFO_BLOCK * MIN_SIZE));
         page = info->parent;
 
         if((char*)p <= (char*)page ||

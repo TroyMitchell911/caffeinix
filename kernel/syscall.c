@@ -74,7 +74,10 @@ extern uint64 sys_linux_getpid(void);
 extern uint64 sys_linux_getppid(void);
 extern uint64 sys_linux_gettid(void);
 extern uint64 sys_linux_getuid(void);
+extern uint64 sys_linux_fdatasync(void);
+extern uint64 sys_linux_fsync(void);
 extern uint64 sys_linux_ioctl(void);
+extern uint64 sys_linux_linkat(void);
 extern uint64 sys_linux_lseek(void);
 extern uint64 sys_linux_mkdirat(void);
 extern uint64 sys_linux_mmap(void);
@@ -83,10 +86,15 @@ extern uint64 sys_linux_newfstatat(void);
 extern uint64 sys_linux_openat(void);
 extern uint64 sys_linux_prctl(void);
 extern uint64 sys_linux_read(void);
+extern uint64 sys_linux_readlinkat(void);
+extern uint64 sys_linux_renameat2(void);
 extern uint64 sys_linux_set_tid_address(void);
 extern uint64 sys_linux_clone(void);
 extern uint64 sys_linux_rt_sigaction(void);
 extern uint64 sys_linux_rt_sigprocmask(void);
+extern uint64 sys_linux_symlinkat(void);
+extern uint64 sys_linux_sync(void);
+extern uint64 sys_linux_umask(void);
 extern uint64 sys_linux_unlinkat(void);
 extern uint64 sys_linux_utimensat(void);
 extern uint64 sys_linux_write(void);
@@ -95,7 +103,7 @@ extern uint64 sys_linux_wait4(void);
 
 typedef uint64 (*syscall_t)(void);
 
-static syscall_t linux_syscalls[LINUX_SYS_wait4 + 1] = {
+static syscall_t linux_syscalls[LINUX_SYS_renameat2 + 1] = {
 	[LINUX_SYS_getcwd] = sys_linux_getcwd,
 	[LINUX_SYS_dup] = sys_linux_dup,
 	[LINUX_SYS_dup3] = sys_linux_dup3,
@@ -103,6 +111,8 @@ static syscall_t linux_syscalls[LINUX_SYS_wait4 + 1] = {
 	[LINUX_SYS_ioctl] = sys_linux_ioctl,
 	[LINUX_SYS_mkdirat] = sys_linux_mkdirat,
 	[LINUX_SYS_unlinkat] = sys_linux_unlinkat,
+	[LINUX_SYS_symlinkat] = sys_linux_symlinkat,
+	[LINUX_SYS_linkat] = sys_linux_linkat,
 	[LINUX_SYS_faccessat] = sys_linux_faccessat,
 	[LINUX_SYS_chdir] = sys_linux_chdir,
 	[LINUX_SYS_openat] = sys_linux_openat,
@@ -112,14 +122,19 @@ static syscall_t linux_syscalls[LINUX_SYS_wait4 + 1] = {
 	[LINUX_SYS_read] = sys_linux_read,
 	[LINUX_SYS_write] = sys_linux_write,
 	[LINUX_SYS_writev] = sys_linux_writev,
+	[LINUX_SYS_readlinkat] = sys_linux_readlinkat,
 	[LINUX_SYS_newfstatat] = sys_linux_newfstatat,
 	[LINUX_SYS_fstat] = sys_linux_fstat,
+	[LINUX_SYS_sync] = sys_linux_sync,
+	[LINUX_SYS_fsync] = sys_linux_fsync,
+	[LINUX_SYS_fdatasync] = sys_linux_fdatasync,
 	[LINUX_SYS_utimensat] = sys_linux_utimensat,
 	[LINUX_SYS_exit] = sys_linux_exit,
 	[LINUX_SYS_exit_group] = sys_linux_exit_group,
 	[LINUX_SYS_set_tid_address] = sys_linux_set_tid_address,
 	[LINUX_SYS_rt_sigaction] = sys_linux_rt_sigaction,
 	[LINUX_SYS_rt_sigprocmask] = sys_linux_rt_sigprocmask,
+	[LINUX_SYS_umask] = sys_linux_umask,
 	[LINUX_SYS_prctl] = sys_linux_prctl,
 	[LINUX_SYS_getpid] = sys_linux_getpid,
 	[LINUX_SYS_getppid] = sys_linux_getppid,
@@ -134,6 +149,7 @@ static syscall_t linux_syscalls[LINUX_SYS_wait4 + 1] = {
 	[LINUX_SYS_execve] = sys_linux_execve,
 	[LINUX_SYS_mmap] = sys_linux_mmap,
 	[LINUX_SYS_wait4] = sys_linux_wait4,
+	[LINUX_SYS_renameat2] = sys_linux_renameat2,
 };
 
 void syscall(void)

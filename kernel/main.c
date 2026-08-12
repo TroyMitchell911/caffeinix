@@ -19,11 +19,14 @@
 #include <plic.h>
 #include <process.h>
 #include <virtio_disk.h>
-#include <bio.h>
-#include <log.h>
-#include <inode.h>
+#include <block_device.h>
 #include <file.h>
 #include <mystring.h>
+#include <ext4fs.h>
+#include <fatfs.h>
+#include <devfs.h>
+#include <tmpfs.h>
+#include <vfs.h>
 
 volatile static uint8 start = 0;
 extern char end[];
@@ -43,9 +46,13 @@ void main(void)
                 trap_init_lock();
                 trap_init();
                 process_init();
-                binit();
-                iinit();
+                block_device_init();
                 file_init();
+		vfs_init();
+		ext4fs_init();
+		fatfs_init();
+		devfs_init();
+		tmpfs_init();
                 virtio_disk_init();
 		userinit();
 

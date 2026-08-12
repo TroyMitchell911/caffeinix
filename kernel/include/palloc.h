@@ -10,6 +10,7 @@ void pfree(void* p);
 void* palloc(void);
 
 void* malloc(uint64 size);
+void* calloc(size_t count, size_t size);
 void free(void* p);
 
 #endif

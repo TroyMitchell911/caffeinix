@@ -4,15 +4,14 @@
 #include <riscv.h>
 #include <typedefs.h>
 
-/* Block size */
-#define BSIZE                           1024
-
 #define VIRTIO_MMIO_MAGIC_VALUE		0x000 // 0x74726976
 #define VIRTIO_MMIO_VERSION		0x004 // version; should be 2
 #define VIRTIO_MMIO_DEVICE_ID		0x008 // device type; 1 is net, 2 is disk
 #define VIRTIO_MMIO_VENDOR_ID		0x00c // 0x554d4551
 #define VIRTIO_MMIO_DEVICE_FEATURES	0x010
+#define VIRTIO_MMIO_DEVICE_FEATURES_SEL	0x014
 #define VIRTIO_MMIO_DRIVER_FEATURES	0x020
+#define VIRTIO_MMIO_DRIVER_FEATURES_SEL	0x024
 #define VIRTIO_MMIO_QUEUE_SEL		0x030 // select queue, write-only
 #define VIRTIO_MMIO_QUEUE_NUM_MAX	0x034 // max size of current queue, read-only
 #define VIRTIO_MMIO_QUEUE_NUM		0x038 // size of current queue, write-only
@@ -27,6 +26,7 @@
 #define VIRTIO_MMIO_DRIVER_DESC_HIGH	0x094
 #define VIRTIO_MMIO_DEVICE_DESC_LOW	0x0a0 // physical address for used ring, write-only
 #define VIRTIO_MMIO_DEVICE_DESC_HIGH	0x0a4
+#define VIRTIO_MMIO_CONFIG		0x100
 
 /* status register bits, from qemu virtio_config.h */
 #define VIRTIO_CONFIG_S_ACKNOWLEDGE	1
@@ -37,6 +37,7 @@
 /* device feature bits */
 #define VIRTIO_BLK_F_RO              5	/* Disk is read-only */
 #define VIRTIO_BLK_F_SCSI            7	/* Supports scsi command passthru */
+#define VIRTIO_BLK_F_FLUSH           9	/* Supports explicit cache flush */
 #define VIRTIO_BLK_F_CONFIG_WCE     11	/* Writeback mode available in config */
 #define VIRTIO_BLK_F_MQ             12	/* support more than one vq */
 #define VIRTIO_F_ANY_LAYOUT         27
@@ -81,6 +82,7 @@ struct virtq_used {
 
 #define VIRTIO_BLK_T_IN  0 // read the disk
 #define VIRTIO_BLK_T_OUT 1 // write the disk
+#define VIRTIO_BLK_T_FLUSH 4
 
 // the format of the first descriptor in a disk request.
 // to be followed by two more descriptors containing
@@ -91,10 +93,7 @@ struct virtio_blk_req {
         uint64 sector;
 };
 
-struct bio;
-
-void virtio_disk_rw(struct bio *b, int write);
 void virtio_disk_init(void);
-void virtio_disk_intr(void);
+void virtio_disk_intr(int irq);
 
 #endif

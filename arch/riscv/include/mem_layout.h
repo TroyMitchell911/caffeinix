@@ -32,7 +32,10 @@
         map kernel stacks beneath the trampoline,
         each surrounded by invalid guard pages.
  */
-#define KSTACK(p) (TRAMPOLINE - ((p)+1)* 2*PGSIZE)
+#define KSTACK_PAGES 4
+#define KSTACK_SIZE (KSTACK_PAGES * PGSIZE)
+#define KSTACK(p) \
+	(TRAMPOLINE - ((p) + 1) * (KSTACK_PAGES + 1) * PGSIZE)
 
 /* qemu puts UART registers here in physical memory. */
 #define UART0 0x10000000L
@@ -41,6 +44,7 @@
 /* virtio mmio interface */
 #define VIRTIO0 0x10001000
 #define VIRTIO0_IRQ 1
+#define VIRTIO_MMIO_SLOTS 8
 
 /* core local interruptor (CLINT), which contains the timer. */
 #define CLINT 0x2000000L

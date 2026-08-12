@@ -12,13 +12,23 @@
 
 _Static_assert(LINUX_SYS_getcwd == __NR_getcwd, "getcwd number");
 _Static_assert(LINUX_SYS_openat == __NR_openat, "openat number");
+_Static_assert(LINUX_SYS_symlinkat == __NR_symlinkat,
+	       "symlinkat number");
+_Static_assert(LINUX_SYS_linkat == __NR_linkat, "linkat number");
 _Static_assert(LINUX_SYS_getdents64 == __NR_getdents64,
 	       "getdents64 number");
+_Static_assert(LINUX_SYS_readlinkat == __NR_readlinkat,
+	       "readlinkat number");
+_Static_assert(LINUX_SYS_sync == __NR_sync, "sync number");
+_Static_assert(LINUX_SYS_fsync == __NR_fsync, "fsync number");
+_Static_assert(LINUX_SYS_umask == __NR_umask, "umask number");
 _Static_assert(LINUX_SYS_rt_sigaction == __NR_rt_sigaction,
 	       "rt_sigaction number");
 _Static_assert(LINUX_SYS_clone == __NR_clone, "clone number");
 _Static_assert(LINUX_SYS_execve == __NR_execve, "execve number");
 _Static_assert(LINUX_SYS_wait4 == __NR_wait4, "wait4 number");
+_Static_assert(LINUX_SYS_renameat2 == __NR_renameat2,
+	       "renameat2 number");
 
 _Static_assert(sizeof(struct linux_stat) == sizeof(struct stat),
 	       "stat size");

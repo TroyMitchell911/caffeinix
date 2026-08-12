@@ -1,0 +1,10 @@
+Repository: https://github.com/gkostka/lwext4.git
+Commit: 58bcf89a121b72d4fb66334f1693d3b30e4cb9c5
+
+The source and public headers retain their upstream layout. Caffeinix build
+configuration and the VFS adapter live outside those directories. Necessary
+source-level deviations are documented in LOCAL_CHANGES.md.
+Imported text uses Unix line endings and has trailing whitespace removed.
+
+Most files are BSD-3-Clause.  ext4_extent.c and ext4_xattr.c are licensed
+under GPL-2.0-or-later; Caffeinix distributes the combined work under GPLv3.
