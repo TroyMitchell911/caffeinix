@@ -4,6 +4,7 @@
 
 #define SBI_EXT_BASE 0x10
 #define SBI_EXT_TIME 0x54494d45
+#define SBI_EXT_HSM 0x48534d
 
 #define SBI_BASE_GET_SPEC_VERSION 0
 #define SBI_BASE_GET_IMPL_ID 1
@@ -11,6 +12,8 @@
 #define SBI_BASE_PROBE_EXTENSION 3
 
 #define SBI_TIME_SET_TIMER 0
+#define SBI_HSM_HART_START 0
+#define SBI_HSM_HART_GET_STATUS 2
 
 #define SBI_SUCCESS 0
 
@@ -62,9 +65,16 @@ static uint64 sbi_base_value(uint64 function)
 	return result.value;
 }
 
-void sbi_init(void)
+static int sbi_extension_available(uint64 extension)
 {
 	struct sbi_return probe;
+
+	probe = sbi_base_call(SBI_BASE_PROBE_EXTENSION, extension);
+	return probe.error == SBI_SUCCESS && probe.value;
+}
+
+void sbi_init(int requested_cpus)
+{
 	uint64 major, minor;
 
 	sbi_spec_version = sbi_base_value(SBI_BASE_GET_SPEC_VERSION);
@@ -74,9 +84,10 @@ void sbi_init(void)
 		PANIC("SBI v0.2 or newer required");
 	sbi_impl_id = sbi_base_value(SBI_BASE_GET_IMPL_ID);
 	sbi_impl_version = sbi_base_value(SBI_BASE_GET_IMPL_VERSION);
-	probe = sbi_base_call(SBI_BASE_PROBE_EXTENSION, SBI_EXT_TIME);
-	if (probe.error != SBI_SUCCESS || !probe.value)
+	if (!sbi_extension_available(SBI_EXT_TIME))
 		PANIC("SBI TIME extension required");
+	if (requested_cpus > 1 && !sbi_extension_available(SBI_EXT_HSM))
+		PANIC("SBI HSM extension required");
 }
 
 void sbi_report(void)
@@ -94,5 +105,27 @@ int64 sbi_set_timer(uint64 deadline)
 
 	result = sbi_ecall(SBI_EXT_TIME, SBI_TIME_SET_TIMER, deadline,
 	                   0, 0, 0, 0, 0);
+	return result.error;
+}
+
+int64 sbi_hart_start(uint64 hart_id, uint64 start_address, uint64 opaque)
+{
+	struct sbi_return result;
+
+	result = sbi_ecall(SBI_EXT_HSM, SBI_HSM_HART_START, hart_id,
+	                   start_address, opaque, 0, 0, 0);
+	return result.error;
+}
+
+int64 sbi_hart_get_status(uint64 hart_id, uint64 *status)
+{
+	struct sbi_return result;
+
+	if (!status)
+		return -3;
+	result = sbi_ecall(SBI_EXT_HSM, SBI_HSM_HART_GET_STATUS, hart_id,
+	                   0, 0, 0, 0, 0);
+	if (!result.error)
+		*status = result.value;
 	return result.error;
 }

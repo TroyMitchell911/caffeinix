@@ -3,8 +3,14 @@
 
 #include <typedefs.h>
 
-void sbi_init(void);
+#define SBI_HSM_STATE_STARTED 0
+#define SBI_HSM_STATE_STOPPED 1
+
+void sbi_init(int requested_cpus);
 void sbi_report(void);
 int64 sbi_set_timer(uint64 deadline);
+int64 sbi_hart_start(uint64 hart_id, uint64 start_address,
+		     uint64 opaque);
+int64 sbi_hart_get_status(uint64 hart_id, uint64 *status);
 
 #endif

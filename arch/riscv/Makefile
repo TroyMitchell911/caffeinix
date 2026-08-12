@@ -3,4 +3,4 @@ EXTRA_LDFLAGS := -T ../../kernel/kernel.ld
 CFLAGS_file.o := 
 
 
-obj-y += vm.o kernel_vec.o trap.o sbi.o timer.o
+obj-y += vm.o kernel_vec.o trap.o cpu.o sbi.o timer.o

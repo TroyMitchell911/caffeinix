@@ -5,6 +5,7 @@
 
 void timer_init(void);
 void timer_init_hart(void);
+void timer_wait_for_interrupt(void);
 void timer_interrupt(void);
 uint64 timer_frequency(void);
 

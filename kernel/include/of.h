@@ -28,8 +28,13 @@ struct device_node *of_find_node_by_path(const char *path);
 struct device_node *of_stdout_node(void);
 const void *of_get_property(const struct device_node *node,
 			    const char *name, int *length);
+int of_property_count_u32(const struct device_node *node, const char *name);
 int of_property_read_u32(const struct device_node *node,
 			 const char *name, uint32 *value);
+int of_property_read_u32_index(const struct device_node *node,
+			       const char *name, int index, uint32 *value);
+uint32 of_node_phandle(const struct device_node *node);
+struct device_node *of_find_node_by_phandle(uint32 phandle);
 int of_device_is_available(const struct device_node *node);
 int of_device_is_compatible(const struct device_node *node,
 			    const char *compatible);
@@ -43,5 +48,7 @@ int of_memory_range_get(int index, struct of_memory_range *range);
 int of_reserved_memory_range_count(void);
 int of_reserved_memory_range_get(int index,
 				 struct of_memory_range *range);
+int of_cpu_count(void);
+int of_cpu_get(int index, struct device_node **node, uint64 *hart_id);
 
 #endif

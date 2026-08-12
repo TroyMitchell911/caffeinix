@@ -146,18 +146,56 @@ const void *of_get_property(const struct device_node *node,
 	return fdt_getprop(of_blob, node->offset, name, length);
 }
 
-int of_property_read_u32(const struct device_node *node,
-			 const char *name, uint32 *value)
+int of_property_count_u32(const struct device_node *node, const char *name)
 {
 	const fdt32_t *property;
 	int length;
 
-	if (!value)
+	property = of_get_property(node, name, &length);
+	if (!property || length < 0 || length % sizeof(*property))
+		return -1;
+	return length / sizeof(*property);
+}
+
+int of_property_read_u32_index(const struct device_node *node,
+			       const char *name, int index, uint32 *value)
+{
+	const fdt32_t *property;
+	int length;
+
+	if (index < 0 || !value)
 		return -1;
 	property = of_get_property(node, name, &length);
-	if (!property || length < sizeof(*property))
+	if (!property || length < (index + 1) * sizeof(*property))
 		return -1;
-	*value = fdt32_to_cpu(*property);
+	*value = fdt32_to_cpu(property[index]);
+	return 0;
+}
+
+int of_property_read_u32(const struct device_node *node,
+			 const char *name, uint32 *value)
+{
+	return of_property_read_u32_index(node, name, 0, value);
+}
+
+uint32 of_node_phandle(const struct device_node *node)
+{
+	return of_blob && node ? fdt_get_phandle(of_blob, node->offset) : 0;
+}
+
+struct device_node *of_find_node_by_phandle(uint32 phandle)
+{
+	int offset, i;
+
+	if (!of_blob || !phandle)
+		return 0;
+	offset = fdt_node_offset_by_phandle(of_blob, phandle);
+	if (offset < 0)
+		return 0;
+	for (i = 0; i < of_node_count; i++) {
+		if (of_nodes[i].offset == offset)
+			return &of_nodes[i];
+	}
 	return 0;
 }
 
@@ -402,6 +440,43 @@ int of_reserved_memory_range_get(int index, struct of_memory_range *range)
 		range->size = of_read_number(reg + address_cells, size_cells);
 		if (!range->size || range->start + range->size < range->start)
 			return -1;
+		return 0;
+	}
+	return -1;
+}
+
+int of_cpu_count(void)
+{
+	struct device_node *node = 0;
+	int count = 0;
+
+	while ((node = of_next_node(node))) {
+		if (of_device_is_available(node) && of_node_is_type(node, "cpu"))
+			count++;
+	}
+	return count;
+}
+
+int of_cpu_get(int index, struct device_node **cpu_node, uint64 *hart_id)
+{
+	struct device_node *node = 0;
+
+	if (index < 0 || !cpu_node || !hart_id)
+		return -1;
+	while ((node = of_next_node(node))) {
+		const fdt32_t *reg;
+		int address_cells, entries, size_cells;
+
+		if (!of_device_is_available(node) ||
+		    !of_node_is_type(node, "cpu"))
+			continue;
+		if (index--)
+			continue;
+		entries = of_reg_info(node, &reg, &address_cells, &size_cells);
+		if (entries != 1 || size_cells != 0)
+			return -1;
+		*cpu_node = node;
+		*hart_id = of_read_number(reg, address_cells);
 		return 0;
 	}
 	return -1;
