@@ -56,6 +56,8 @@ void thread_setup(void)
                 spinlock_init(&t->lock, "thread");
                 t->kstack = KSTACK((int)(t - thread));;
                 t->state = THREAD_UNUSED;
+                t->on_runqueue = 0;
+                list_init(&t->run_node);
                 strncpy(t->name, "thread", 7);
         }
 }
@@ -84,6 +86,8 @@ found:
 
         t->state = THREAD_ALLOCATED;
         t->sleep_chan = 0;
+        t->on_runqueue = 0;
+        list_init(&t->run_node);
 
         t->trapframe = (trapframe_t)palloc();
         if(!t->trapframe) {
@@ -118,6 +122,8 @@ void thread_free(thread_t t)
 
         p = t->home;
 
+        if(t->on_runqueue)
+                PANIC("thread_free runnable");
         if(p->tnums == 0)
                 PANIC("thread_free");
 
@@ -135,4 +141,5 @@ void thread_free(thread_t t)
         t->trapframe = 0;
         t->sleep_chan = 0;
         t->home = 0;
+        list_init(&t->run_node);
 }

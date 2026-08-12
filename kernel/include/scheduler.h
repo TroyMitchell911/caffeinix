@@ -22,9 +22,11 @@ uint8 cpuid(void);
 cpu_t cur_cpu(void);
 thread_t cur_thread(void);
 process_t cur_proc(void);
+void scheduler_init(void);
 void scheduler(void);
 void yield(void);
 void sched(void);
+void scheduler_make_runnable(thread_t thread);
 void scheduler_wake(thread_t thread);
 
 #endif

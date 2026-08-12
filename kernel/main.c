@@ -69,6 +69,7 @@ void main(void)
 			PANIC("map early console");
                 kvm_init();
                 thread_setup();
+                scheduler_init();
                 trap_init_lock();
                 trap_init();
 		timer_init_hart();

@@ -108,7 +108,8 @@ typedef struct thread {
 
         void *sleep_chan;
         process_t home;
-        struct list all_tag;
+        struct list run_node;
+        uint8 on_runqueue;
 }*thread_t;
 
 extern struct thread thread[NTHREAD];

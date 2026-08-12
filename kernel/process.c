@@ -198,7 +198,7 @@ void wakeup(void* chan)
                 spinlock_acquire(&t->lock);
                 if(t->sleep_chan == chan &&
                    t->state == THREAD_SLEEPING)
-                        t->state = THREAD_RUNNABLE;
+                        scheduler_make_runnable(t);
                 spinlock_release(&t->lock);
         }
 }
@@ -358,7 +358,7 @@ void userinit(void)
 	if (!p)
                 PANIC("userinit");
 	t = p->thread[0];
-	t->state = THREAD_RUNNABLE;
+	scheduler_make_runnable(t);
 	p->sz = 0;
 	p->brk = 0;
 	p->brk_start = 0;
@@ -452,7 +452,7 @@ int process_fork(uint64 child_stack)
         spinlock_release(&wait_lock);
 
         spinlock_acquire(&newt->lock);
-        newt->state = THREAD_RUNNABLE;
+        scheduler_make_runnable(newt);
         spinlock_release(&newt->lock);
 
         /* Return for parent process */
