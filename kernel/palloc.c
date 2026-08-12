@@ -12,6 +12,7 @@
 #include <mem_layout.h>
 #include <mystring.h>
 #include <of.h>
+#include <spinlock.h>
 
 #define MAGIC_NUMBER                            (0x20030528)
 #define MIN_SIZE                                (1)
@@ -52,6 +53,8 @@ typedef struct pool {
 
 static pmem_free_list_t head = 0;
 static struct pool pool;
+static struct spinlock page_lock;
+static struct spinlock heap_lock;
 
 #define PALLOC_MEMORY_RANGE_MAX 8
 #define PALLOC_RESERVED_RANGE_MAX 32
@@ -168,6 +171,8 @@ void palloc_init(void)
 	uint64 address;
 	int i, pages = 0;
 
+	spinlock_init(&page_lock, "physical pages");
+	spinlock_init(&heap_lock, "kernel heap");
 	palloc_discover_memory();
 	for (i = 0; i < memory_range_count; i++) {
 		for (address = memory_ranges[i].start;
@@ -193,6 +198,7 @@ void pfree(void* p)
         
         /* Clear the memory */
         memset(p, 1, PGSIZE);
+	spinlock_acquire(&page_lock);
 
         /* 
                 Convert the 'p' into 'list'Set the byte before <reg width> 
@@ -201,12 +207,15 @@ void pfree(void* p)
         pmem_node = (struct pmem_free_list*)p;
         pmem_node->next = head;
         head = pmem_node;
+	spinlock_release(&page_lock);
 }
 
 /* Alloc the physical memory */
 void* palloc(void)
 {
         char* p = 0;
+
+	spinlock_acquire(&page_lock);
         /* If the head is not NULL */
         if(head) {
                 p = (char*)head;
@@ -214,6 +223,7 @@ void* palloc(void)
         } else {
                 PANIC("palloc");
         }
+	spinlock_release(&page_lock);
         
         return p;
 }
@@ -341,6 +351,7 @@ void* malloc(uint64 size)
         if(size == 0)
                 return 0;
 
+	spinlock_acquire(&heap_lock);
         use_blocks = USE_BLOCK(size);
 
         page = pool.list;
@@ -352,8 +363,10 @@ re:
                 goto re;
         }
 
-        if(ret == -1)
+        if(ret == -1) {
+		spinlock_release(&heap_lock);
                 return 0;
+	}
                 
         
         /* Get the memory that the caller uses */
@@ -368,6 +381,7 @@ re:
         info->addr = p;
         info->parent = page;
 
+	spinlock_release(&heap_lock);
         return p;
 }
 
@@ -397,6 +411,7 @@ void free(void* p)
 
 	if (!p)
 		return;
+	spinlock_acquire(&heap_lock);
 	info = (block_info_t)((uint64)p - (INFO_BLOCK * MIN_SIZE));
         page = info->parent;
 
@@ -406,8 +421,10 @@ void free(void* p)
            info->magic != MAGIC_NUMBER) {
                 /* Illegal address */
                 printf("free: Illegal address\n");
+		spinlock_release(&heap_lock);
                 return;
         }
 
         free_core(page, (char*)info, INFO_BLOCK + info->used);
+	spinlock_release(&heap_lock);
 }
