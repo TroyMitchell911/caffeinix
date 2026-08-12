@@ -18,6 +18,7 @@
 #include <riscv.h>
 
 typedef struct process *process_t;
+struct wait_queue;
 
 typedef enum thread_state {
         THREAD_UNUSED,
@@ -110,6 +111,9 @@ typedef struct thread {
         process_t home;
         struct list run_node;
         uint8 on_runqueue;
+        struct wait_queue *waiting_on;
+        struct list wait_node;
+        uint8 on_waitqueue;
 }*thread_t;
 
 extern struct thread thread[NTHREAD];

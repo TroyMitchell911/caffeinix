@@ -58,6 +58,9 @@ void thread_setup(void)
                 t->state = THREAD_UNUSED;
                 t->on_runqueue = 0;
                 list_init(&t->run_node);
+                t->waiting_on = 0;
+                t->on_waitqueue = 0;
+                list_init(&t->wait_node);
                 strncpy(t->name, "thread", 7);
         }
 }
@@ -88,6 +91,9 @@ found:
         t->sleep_chan = 0;
         t->on_runqueue = 0;
         list_init(&t->run_node);
+        t->waiting_on = 0;
+        t->on_waitqueue = 0;
+        list_init(&t->wait_node);
 
         t->trapframe = (trapframe_t)palloc();
         if(!t->trapframe) {
@@ -124,6 +130,8 @@ void thread_free(thread_t t)
 
         if(t->on_runqueue)
                 PANIC("thread_free runnable");
+        if(t->on_waitqueue || t->waiting_on)
+                PANIC("thread_free waiting");
         if(p->tnums == 0)
                 PANIC("thread_free");
 
@@ -142,4 +150,5 @@ void thread_free(thread_t t)
         t->sleep_chan = 0;
         t->home = 0;
         list_init(&t->run_node);
+        list_init(&t->wait_node);
 }
