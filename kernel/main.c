@@ -27,8 +27,10 @@
 #include <devfs.h>
 #include <tmpfs.h>
 #include <vfs.h>
+#include <device_model.h>
 #include <boot.h>
 #include <of.h>
+#include <platform_device.h>
 
 volatile static uint8 start = 0;
 extern char end[];
@@ -52,6 +54,14 @@ void main(void)
                 trap_init_lock();
                 trap_init();
                 process_init();
+		driver_core_init();
+		if (driver_core_selftest())
+			PANIC("driver core selftest");
+		platform_bus_init();
+		if (platform_core_selftest() < 0)
+			PANIC("platform core selftest");
+		if (of_platform_populate() < 0)
+			PANIC("populate platform devices");
                 block_device_init();
                 file_init();
 		vfs_init();

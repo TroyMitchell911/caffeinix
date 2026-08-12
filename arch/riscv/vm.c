@@ -39,7 +39,7 @@ pte_t *PTE(pagedir_t pgdir, uint64 va, int flag)
                 pte = &pgdir[PTEX(i, va)];
                 /* If the page-table exists */
                 if((*pte) & PTE_V) {
-                        /* Store the physical address of page-table into pgdir */
+                        /* Store the page-table physical address into pgdir. */
                         pgdir = (pagedir_t)PTE2PA(*pte);
                 } else {
                         if(flag == 0 || (pgdir = (pte_t*)palloc()) == 0){
@@ -124,9 +124,11 @@ static pagedir_t kernel_pagedir_t_create(void)
         /* PLIC */
         vm_map(pgdir, PLIC, PLIC, 0x400000, PTE_R | PTE_W);
         /* Map the text */
-        vm_map(pgdir, KERNEL_BASE, KERNEL_BASE, (uint64)etext - KERNEL_BASE, PTE_R | PTE_X);
+        vm_map(pgdir, KERNEL_BASE, KERNEL_BASE,
+               (uint64)etext - KERNEL_BASE, PTE_R | PTE_X);
         /* Map the data and the rest of physical DRAM */
-        vm_map(pgdir, (uint64)etext, (uint64)etext, PHY_MEM_STOP - (uint64)etext, PTE_R | PTE_W);
+        vm_map(pgdir, (uint64)etext, (uint64)etext,
+               PHY_MEM_STOP - (uint64)etext, PTE_R | PTE_W);
 
         map_kernel_stack(pgdir);
         return pgdir;
@@ -160,7 +162,7 @@ void pagedir_free(pagedir_t pgdir)
                 } else if((pte & PTE_V)) {
                         /* 
                                 We can't accept a PTE has the flag 'V'.
-                                To ensure this, we should cancel V in the unmap function.
+                                Clear V in unmap before freeing a page table.
                         */
                         PANIC("pagedir_free");
                 }
@@ -253,7 +255,8 @@ uint64 vm_alloc(pagedir_t pgdir, uint64 oldsz, uint64 newsz, int eperm)
                         return 0;
                 }
                 memset(mem, 0, PGSIZE);
-                if(vm_map(pgdir, (uint64)addr, (uint64)mem, PGSIZE, PTE_R | PTE_U | eperm) != 0) {
+                if(vm_map(pgdir, (uint64)addr, (uint64)mem, PGSIZE,
+                          PTE_R | PTE_U | eperm) != 0) {
                         printf("???\n");
                         pfree(mem);
                         vm_dealloc(pgdir, addr, oldsz);
@@ -442,4 +445,23 @@ void kvm_init(void)
 
         /* Refresh the 'satp' register */
         sfence_vma(); 
+}
+
+int kvm_map_mmio(uint64 address, uint64 size)
+{
+	uint64 end, page;
+
+	if (!size || address >= MAXVA || size > MAXVA - address)
+		return -1;
+	page = PGROUNDDOWN(address);
+	end = PGROUNDUP(address + size);
+	for (; page < end; page += PGSIZE) {
+		if (vm_mapped(kernel_pgdir, page))
+			continue;
+		if (vm_map(kernel_pgdir, page, page, PGSIZE,
+		           PTE_R | PTE_W) < 0)
+			return -1;
+	}
+	sfence_vma();
+	return 0;
 }
