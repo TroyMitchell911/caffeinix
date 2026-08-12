@@ -32,9 +32,15 @@ static void tick_intr(void)
 static int dev_intr(uint64 scause)
 {
         int irq = 0;
-        /* This is a supervisor external interrupt via PLIC */
+
         if((scause & 0x8000000000000000L) &&
-           (scause & 0xff) == 9) {
+           (scause & 0xff) == 1) {
+                sip_clear_ssip();
+                return 3;
+        }
+        /* This is a supervisor external interrupt via PLIC */
+        else if((scause & 0x8000000000000000L) &&
+                (scause & 0xff) == 9) {
                 /* Get interrupt number from PLIC */
                 irq = plic_claim();
 		if (irq && irq_dispatch(irq) != IRQ_HANDLED)
@@ -173,5 +179,5 @@ void trap_init_lock(void)
 void trap_init(void)
 {
         stvec_w((uint64)kernel_vec);
-	sie_w(sie_r() | SIE_SEIE);
+	sie_w(sie_r() | SIE_SEIE | SIE_SSIE);
 }
