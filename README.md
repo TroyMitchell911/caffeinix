@@ -220,9 +220,10 @@ layer ownership rules and the Device Tree needed to add another serial port.
 make -C "$CAFFEINIX_DIR" qemu FS_IMG="$FS_IMG"
 ```
 
-QEMU's bundled OpenSBI starts Caffeinix in supervisor mode by default. Select
-the number of harts with `CPUS` and the guest RAM size with `MEMORY`; the kernel
-discovers both from the Device Tree and starts secondaries through SBI HSM:
+QEMU's bundled OpenSBI starts Caffeinix in supervisor mode with eight harts and
+256 MiB of RAM by default. Select other values with `CPUS` and `MEMORY`; the
+kernel discovers both from the Device Tree and starts secondaries through SBI
+HSM:
 
 ```bash
 make -C "$CAFFEINIX_DIR" qemu \

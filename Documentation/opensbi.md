@@ -92,7 +92,7 @@ SBI HSM contract described above.
 ## Validation
 
 `make check-opensbi` checks the ELF entry and disassembly and rejects direct
-CLINT or machine-mode operations. `make -C tests qemu` adds 1-, 2-, and
-4-hart boots at several RAM sizes, verifies every hart's timer and online
+CLINT or machine-mode operations. `make -C tests qemu` adds 1-, 2-, 4-, and
+8-hart boots at several RAM sizes, verifies every hart's timer and online
 transition, and runs the existing BusyBox, TTY, ext4, devfs, tmpfs, and FAT
 regression suite. CI runs the Linux UAPI layout check separately.

@@ -17,8 +17,8 @@ make -C tests qemu
 
 The QEMU test downloads checksum-pinned musl 1.2.6 and BusyBox 1.38.0 source
 archives, builds both outside the kernel, and creates temporary ext4 and FAT32
-images under `output/tests`. It boots with QEMU's bundled OpenSBI using one,
-two, and four harts and 64, 192, and 128 MiB of RAM. The four-hart run waits
+images under `output/tests`. It runs boot checks with one hart and 64 MiB, two
+harts and 192 MiB, and eight harts and 256 MiB. A four-hart, 128 MiB run waits
 for BusyBox ash, runs the full guest suite, syncs storage, and exits QEMU
 through its serial monitor.
 
