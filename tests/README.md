@@ -17,8 +17,15 @@ make -C tests qemu
 
 The QEMU test downloads checksum-pinned musl 1.2.6 and BusyBox 1.38.0 source
 archives, builds both outside the kernel, and creates temporary ext4 and FAT32
-images under `output/tests`. It then boots Caffeinix, waits for BusyBox ash,
-runs `fs_runtime`, syncs storage, and exits QEMU through its serial monitor.
+images under `output/tests`. It boots with QEMU's bundled OpenSBI using one,
+two, and four harts and 64, 192, and 128 MiB of RAM. The four-hart run waits
+for BusyBox ash, runs the full guest suite, syncs storage, and exits QEMU
+through its serial monitor.
+
+Each boot requires one SBI BASE report and exactly one online and timer marker
+per logical CPU. A static check rejects machine-mode CSR operations, direct
+CLINT access, `mret`, `-bios none`, and a kernel entry other than
+`0x80200000`.
 
 The guest selftest covers:
 
@@ -38,4 +45,14 @@ verifies that tmpfs data did not reach the ext4 image.
 
 Required host commands are `riscv64-linux-gnu-*`, `qemu-system-riscv64`,
 `curl`, `expect`, `mke2fs`, `e2fsck`, `debugfs`, `mkfs.fat`, and `mtools`.
-The GitHub Actions workflow installs these dependencies automatically.
+The firmware audit also requires `rg`. The GitHub Actions workflow installs
+these dependencies automatically.
+
+Run the same matrix against an externally built OpenSBI image with:
+
+```bash
+SBI_FIRMWARE=/absolute/path/to/fw_dynamic.bin make -C tests qemu
+```
+
+The test accepts the firmware as an input; it does not download or build
+OpenSBI.
