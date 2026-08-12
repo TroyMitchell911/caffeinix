@@ -9,6 +9,7 @@ topdir=$(CDPATH='' cd -- "$tests_dir/.." && pwd)
 test_output=${TEST_OUTPUT:-$topdir/output/tests}
 jobs=${JOBS:-$(nproc)}
 qemu=${QEMU:-qemu-system-riscv64}
+sbi_firmware=${SBI_FIRMWARE:-default}
 
 export LC_ALL=C.UTF-8
 
@@ -35,6 +36,7 @@ qemu_log=$test_output/qemu.log
 clean_log=$test_output/qemu.clean.log
 
 export QEMU=$qemu
+export SBI_FIRMWARE=$sbi_firmware
 export KERNEL=$topdir/output/kernel
 export ROOT_IMAGE=$root_image
 export FAT_IMAGE=$fat_image

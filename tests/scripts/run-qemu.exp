@@ -15,7 +15,7 @@ proc expect_prompt {} {
 	}
 }
 
-foreach variable {QEMU KERNEL ROOT_IMAGE FAT_IMAGE QEMU_LOG} {
+foreach variable {QEMU SBI_FIRMWARE KERNEL ROOT_IMAGE FAT_IMAGE QEMU_LOG} {
 	if {![info exists env($variable)] || $env($variable) eq ""} {
 		puts stderr "missing environment variable: $variable"
 		exit 1
@@ -31,7 +31,7 @@ log_file -noappend $env(QEMU_LOG)
 set command [list \
 	$env(QEMU) \
 	-machine virt \
-	-bios none \
+	-bios $env(SBI_FIRMWARE) \
 	-kernel $env(KERNEL) \
 	-m 128M \
 	-smp 1 \

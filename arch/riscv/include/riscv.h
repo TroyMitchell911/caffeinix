@@ -39,43 +39,6 @@
 typedef uint64 pte_t;
 typedef uint64 *pagedir_t;
 
-/* Read hart id */
-static inline uint64 mhartid_r(void)
-{
-        uint64 id;
-        asm volatile("csrr %0, mhartid" : "=r"(id) :);
-        return id;
-}
-/* machine-mode interrupt enable. */
-#define MSTATUS_MIE (1L << 3)     
-/* Previous mode of machine mode */
-#define MSTATUS_MPP_MASK        (3L << 11) 
-/* Machine mode */
-#define MSTATUS_MPP_M           (3L << 11)
-/* Supervisor mode */
-#define MSTATUS_MPP_S           (1L << 11)
-/* User mode */
-#define MSTATUS_MPP_U           (0L << 11)
-
-/* Write status */
-static inline void mstatus_w(uint64 s)
-{
-        asm volatile("csrw mstatus, %0" : : "r"(s));
-}
-
-/* Read status */
-static inline uint64 mstatus_r(void)
-{
-        uint64 s;
-        asm volatile("csrr %0, mstatus" : "=r"(s) :);
-        return s;
-}
-
-static inline void mepc_w(uint64 epc)
-{
-        asm volatile("csrw mepc, %0" : : "r"(epc));
-}
-
 static inline void satp_w(uint64 v)
 {
         asm volatile("csrw satp, %0" : : "r"(v));
@@ -88,29 +51,9 @@ static inline uint64 satp_r(void)
         return s;
 }
 
-static inline void pmpaddr0_w(uint64 v)
-{
-        asm volatile("csrw pmpaddr0, %0" : : "r"(v));
-}
-
-static inline void pmpcfg0_w(uint64 v)
-{
-        asm volatile("csrw pmpcfg0, %0" : : "r"(v));
-}
-
 static inline void sfence_vma(void)
 {
         asm volatile("sfence.vma zero, zero");
-}
-
-static inline void mtvec_w(uint64 v)
-{
-        asm volatile("csrw mtvec, %0" : : "r"(v));
-}
-
-static inline void mscratch_w(uint64 v)
-{
-        asm volatile("csrw mscratch, %0" : : "r"(v));
 }
 
 /* Supervisor Interrupt Enable */
@@ -176,18 +119,6 @@ static inline void sepc_w(uint64 v)
 }
 
 
-static inline void sip_w(uint64 v)
-{
-  asm volatile("csrw sip, %0" : : "r" (v));
-}
-
-static inline uint64 sip_r(void)
-{
-        uint64 r;
-        asm volatile("csrr %0, sip" : "=r"(r) :);
-        return r;
-}
-
 static inline void tp_w(uint64 v)
 {
         asm volatile("mv tp, %0" : : "r"(v));
@@ -216,35 +147,17 @@ static inline void intr_off(void)
         sstatus_w(sstatus_r() & ~SSTATUS_SIE);
 }
 
-/* Supervisor Interrupt Enable */
-#define MIE_MEIE (1L << 11) /* external */
-#define MIE_MTIE (1L << 7)  /* timer */
-#define MIE_MSIE (1L << 3)  /* software */
-static inline uint64 mie_r(void)
-{
-        uint64 r;
-        asm volatile("csrr %0, mie" : "=r"(r) :);
-        return r;
-}
-
-static inline void mie_w(uint64 v)
-{
-        asm volatile("csrw mie, %0" : : "r"(v));
-}
-
 static inline void stvec_w(uint64 v)
 {
         asm volatile("csrw stvec, %0" : : "r"(v));
 }
 
-static inline void medeleg_w(uint64 v)
+static inline uint64 time_r(void)
 {
-        asm volatile("csrw medeleg, %0" : : "r"(v));
-}
+	uint64 value;
 
-static inline void mideleg_w(uint64 v)
-{
-        asm volatile("csrw mideleg, %0" : : "r"(v));
+	asm volatile("rdtime %0" : "=r"(value));
+	return value;
 }
 
 #endif

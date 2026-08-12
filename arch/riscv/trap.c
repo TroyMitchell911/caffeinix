@@ -5,6 +5,7 @@
 #include <scheduler.h>
 #include <printf.h>
 #include <plic.h>
+#include <timer.h>
 
 extern void kernel_vec(void);
 extern char trampoline[], user_vec[], user_ret[];
@@ -43,13 +44,12 @@ static int dev_intr(uint64 scause)
                         plic_complete(irq);
                 }
                 return 1;
-        } else if(scause == 0x8000000000000001L) {
-                /* Software interrupt */
+        } else if(scause == 0x8000000000000005L) {
+                /* Supervisor timer interrupt delivered through SBI TIME. */
+		timer_interrupt();
                 if(cpuid() == 0) {
                         tick_intr();
-                } 
-                 /* Clear the interrupt flag */
-                sip_w(sip_r() &~ 2);
+		}
                 return 2;
         }   
         return 0;
@@ -172,4 +172,5 @@ void trap_init_lock(void)
 void trap_init(void)
 {
         stvec_w((uint64)kernel_vec);
+	sie_w(sie_r() | SIE_SEIE);
 }

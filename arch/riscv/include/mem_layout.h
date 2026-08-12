@@ -11,8 +11,8 @@
 #ifndef __CAFFEINIX_ARCH_RISCV_MEM_LAYOUT_H
 #define __CAFFEINIX_ARCH_RISCV_MEM_LAYOUT_H
 
-/* Only the address after 0x80000000L belongs DRAM */
-#define KERNEL_BASE     0x80000000L
+/* OpenSBI remains resident at the start of RAM on QEMU virt. */
+#define KERNEL_BASE     0x80200000L
 /* 
         map the trampoline page to the highest address,
         in both user and kernel space.
@@ -39,12 +39,6 @@
 #define VIRTIO0 0x10001000
 #define VIRTIO0_IRQ 1
 #define VIRTIO_MMIO_SLOTS 8
-
-/* core local interruptor (CLINT), which contains the timer. */
-#define CLINT 0x2000000L
-#define CLINT_MTIMECMP(hartid) (CLINT + 0x4000 + 8*(hartid))
-/* cycles since boot. */
-#define CLINT_MTIME (CLINT + 0xBFF8) 
 
 /* qemu puts platform-level interrupt controller (PLIC) here. */
 #define PLIC 0x0c000000L

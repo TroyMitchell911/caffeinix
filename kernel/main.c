@@ -37,6 +37,8 @@
 #include <ns16550.h>
 #include <tty.h>
 #include <uart.h>
+#include <sbi.h>
+#include <timer.h>
 
 volatile static uint8 start = 0;
 extern char end[];
@@ -49,6 +51,8 @@ void main(void)
 		console_early_init();
 		if (of_status < 0)
 			PANIC("invalid boot DTB");
+		sbi_init();
+		timer_init();
                 palloc_init();
 		irq_init();
 		plic_init();
@@ -56,6 +60,7 @@ void main(void)
 		char_device_init();
 		tty_init();
                 printf_init();
+		sbi_report();
                 // printf("%p\n", end);
                 kvm_create();
 		if (kvm_map_mmio(earlycon_address(), earlycon_size()) < 0)
@@ -64,6 +69,7 @@ void main(void)
                 thread_setup();
                 trap_init_lock();
                 trap_init();
+		timer_init_hart();
                 process_init();
 		driver_core_init();
 		if (driver_core_selftest())
