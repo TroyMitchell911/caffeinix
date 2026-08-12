@@ -96,6 +96,8 @@ int spinlock_trylock(spinlock_t lock)
 
 	if (!ret)
 		lock->cpu = cur_cpu();
+	else
+		exit_critical();
 
 	return ret;
 }
@@ -127,6 +129,5 @@ void spinlock_release(spinlock_t lock)
         __sync_lock_release(&lock->locked);
         exit_critical();
 }
-
 
 
