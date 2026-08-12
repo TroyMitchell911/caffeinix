@@ -4,9 +4,9 @@
 #include <mystring.h>
 #include <palloc.h>
 #include <irq.h>
-#include <process.h>
 #include <spinlock.h>
 #include <virtio_disk.h>
+#include <wait.h>
 
 #define NUM VIRTIO_DES_NUM
 #define VIRTIO_SECTOR_SIZE 512
@@ -17,6 +17,7 @@
 struct virtio_request {
 	volatile uint8 pending;
 	int result;
+	struct wait_queue completion;
 };
 
 struct virtio_disk {
@@ -37,6 +38,7 @@ struct virtio_disk {
 	} info[VIRTIO_DES_NUM];
 	struct virtio_blk_req requests[VIRTIO_DES_NUM];
 	struct spinlock lock;
+	struct wait_queue descriptor_wait;
 };
 
 static struct virtio_disk disks[VIRTIO_MMIO_SLOTS];
@@ -110,6 +112,7 @@ static int virtio_disk_init_one(struct virtio_disk *disk, int index)
 	    *R(disk, VIRTIO_MMIO_VENDOR_ID) != 0x554d4551)
 		return 0;
 	spinlock_init(&disk->lock, "virtio disk");
+	wait_queue_init(&disk->descriptor_wait, "virtio descriptors");
 
 	*R(disk, VIRTIO_MMIO_STATUS) = status;
 	status |= VIRTIO_CONFIG_S_ACKNOWLEDGE;
@@ -208,7 +211,6 @@ static void free_desc(struct virtio_disk *disk, int index)
 	disk->desc[index].flags = 0;
 	disk->desc[index].next = 0;
 	disk->free[index] = 1;
-	wakeup(&disk->free[0]);
 }
 
 static void free_chain(struct virtio_disk *disk, int index)
@@ -223,6 +225,7 @@ static void free_chain(struct virtio_disk *disk, int index)
 			break;
 		index = next;
 	}
+	wait_queue_wake_all(&disk->descriptor_wait);
 }
 
 static int alloc_descs(struct virtio_disk *disk, int *indices, int count)
@@ -250,9 +253,10 @@ static int virtio_submit(struct virtio_disk *disk, uint32 type,
 
 	request.pending = 1;
 	request.result = -1;
+	wait_queue_init(&request.completion, "virtio completion");
 	spinlock_acquire(&disk->lock);
 	while (alloc_descs(disk, indices, descriptor_count))
-		sleep(&disk->free[0], &disk->lock);
+		wait_queue_sleep(&disk->descriptor_wait, &disk->lock);
 
 	header = &disk->requests[indices[0]];
 	header->type = type;
@@ -288,7 +292,7 @@ static int virtio_submit(struct virtio_disk *disk, uint32 type,
 	*R(disk, VIRTIO_MMIO_QUEUE_NOTIFY) = 0;
 
 	while (request.pending)
-		sleep(&request, &disk->lock);
+		wait_queue_sleep(&request.completion, &disk->lock);
 	result = request.result;
 	disk->info[indices[0]].request = 0;
 	free_chain(disk, indices[0]);
@@ -321,7 +325,7 @@ void virtio_disk_intr(int irq)
 			PANIC("virtio disk completion");
 		request->result = disk->info[id].status ? -1 : 0;
 		request->pending = 0;
-		wakeup(request);
+		wait_queue_wake_one(&request->completion);
 		disk->used_idx++;
 	}
 	spinlock_release(&disk->lock);
