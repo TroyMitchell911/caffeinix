@@ -85,8 +85,9 @@ QEMU ?= qemu-system-riscv64
 SBI_FIRMWARE ?= default
 FS_IMG ?=
 FAT_IMG ?=
+MEMORY ?= 128M
 QEMUOPTS = -machine virt -bios $(SBI_FIRMWARE) -kernel $(TARGET)
-QEMUOPTS += -m 128M -smp $(CPUS) -nographic
+QEMUOPTS += -m $(MEMORY) -smp $(CPUS) -nographic
 QEMUOPTS += -global virtio-mmio.force-legacy=false
 QEMUOPTS += -drive file=$(FS_IMG),if=none,format=raw,id=x0
 QEMUOPTS += -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0

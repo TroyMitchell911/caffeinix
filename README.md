@@ -221,12 +221,13 @@ make -C "$CAFFEINIX_DIR" qemu FS_IMG="$FS_IMG"
 ```
 
 QEMU's bundled OpenSBI starts Caffeinix in supervisor mode by default. Select
-the number of harts with `CPUS`; the kernel enumerates their physical IDs from
-the Device Tree and starts secondaries through SBI HSM:
+the number of harts with `CPUS` and the guest RAM size with `MEMORY`; the kernel
+discovers both from the Device Tree and starts secondaries through SBI HSM:
 
 ```bash
 make -C "$CAFFEINIX_DIR" qemu \
   CPUS=4 \
+  MEMORY=192M \
   FS_IMG="$FS_IMG"
 ```
 
