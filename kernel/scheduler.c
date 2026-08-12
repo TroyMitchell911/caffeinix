@@ -1,4 +1,5 @@
 #include <scheduler.h>
+#include <mem_layout.h>
 #include <kernel_config.h>
 #include <riscv.h>
 #include <list.h>
@@ -128,7 +129,8 @@ void scheduler(void)
                                         p->cur_thread->state = ACTIVE;
                                         p->tinfo->addr = TRAPFRAME(t->id_p);
                                         cpu->proc = p;
-                                        switchto(&cpu->context, &p->cur_thread->context);
+                                        switchto(&cpu->context,
+                                                 &p->cur_thread->context);
                                         cpu->proc = 0;
                                 }
                                 spinlock_release(&p->lock);

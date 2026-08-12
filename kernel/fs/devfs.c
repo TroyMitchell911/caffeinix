@@ -1,29 +1,15 @@
+#include <char_device.h>
 #include <debug.h>
-#include <device.h>
 #include <devfs.h>
 #include <mystring.h>
 #include <riscv.h>
 #include <vfs.h>
 
-struct devfs_node {
-	const char *name;
-	uint64 number;
-	uint32 mode;
-	uint64 device;
-};
-
-static const struct devfs_node devfs_nodes[] = {
-	{ "console", 2, 0600, DEVICE_CONSOLE },
-	{ "tty", 3, 0666, DEVICE_TTY },
-	{ "null", 4, 0666, DEVICE_NULL },
-	{ "zero", 5, 0666, DEVICE_ZERO },
-};
-
 static const struct vfs_inode_operations devfs_inode_operations;
 static const struct vfs_file_operations devfs_directory_operations;
 
 static struct vfs_inode *devfs_wrap(struct vfs_super_block *superblock,
-				    const struct devfs_node *node)
+				    const struct char_device_node *node)
 {
 	struct vfs_inode *inode = vfs_inode_alloc(superblock);
 
@@ -37,12 +23,11 @@ static struct vfs_inode *devfs_wrap(struct vfs_super_block *superblock,
 		inode->nlink = 2;
 		inode->file_operations = &devfs_directory_operations;
 	} else {
-		inode->number = node->number;
+		inode->number = node->inode_number;
 		inode->type = VFS_INODE_CHAR_DEVICE;
 		inode->mode = node->mode;
 		inode->nlink = 1;
 		inode->device = node->device;
-		inode->private = (void *)node;
 		inode->file_operations = &vfs_device_operations;
 	}
 	return inode;
@@ -51,17 +36,16 @@ static struct vfs_inode *devfs_wrap(struct vfs_super_block *superblock,
 static int devfs_lookup(struct vfs_inode *directory, const char *name,
 			struct vfs_inode **result)
 {
-	uint32 i;
+	struct char_device_node node;
+	int status;
 
 	if (directory->number != 1)
 		return VFS_ERR_NOTDIR;
-	for (i = 0; i < sizeof(devfs_nodes) / sizeof(devfs_nodes[0]); i++) {
-		if (strcmp(name, devfs_nodes[i].name))
-			continue;
-		*result = devfs_wrap(directory->superblock, &devfs_nodes[i]);
-		return *result ? VFS_OK : VFS_ERR_NOMEM;
-	}
-	return VFS_ERR_NOENT;
+	status = char_device_node_find(name, &node);
+	if (status < 0)
+		return status;
+	*result = devfs_wrap(directory->superblock, &node);
+	return *result ? VFS_OK : VFS_ERR_NOMEM;
 }
 
 static int devfs_getattr(struct vfs_inode *inode, struct vfs_stat *stat)
@@ -76,10 +60,10 @@ static const struct vfs_inode_operations devfs_inode_operations = {
 
 static int devfs_readdir(struct vfs_file *file, struct vfs_dirent *result)
 {
-	const struct devfs_node *node;
+	struct char_device_node node;
 	uint64 position = file->position;
 
-	if (position >= sizeof(devfs_nodes) / sizeof(devfs_nodes[0]) + 2)
+	if (position >= char_device_node_count() + 2)
 		return 0;
 	if (position < 2) {
 		result->ino = 1;
@@ -87,10 +71,11 @@ static int devfs_readdir(struct vfs_file *file, struct vfs_dirent *result)
 		safe_strncpy(result->name, position ? ".." : ".",
 		             sizeof(result->name));
 	} else {
-		node = &devfs_nodes[position - 2];
-		result->ino = node->number;
+		if (char_device_node_get(position - 2, &node) < 0)
+			return 0;
+		result->ino = node.inode_number;
 		result->type = VFS_DT_CHAR;
-		safe_strncpy(result->name, node->name,
+		safe_strncpy(result->name, node.name,
 		             sizeof(result->name));
 	}
 	result->next_offset = ++file->position;

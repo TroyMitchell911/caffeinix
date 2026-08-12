@@ -4,6 +4,6 @@ CFLAGS_file.o :=
 
 
 obj-y += block_device.o virtio_disk.o file.o
-obj-y += vfs.o device.o devfs.o tmpfs.o
+obj-y += vfs.o char_device.o device.o devfs.o tmpfs.o
 obj-y += lwext4/
 obj-y += fatfs/

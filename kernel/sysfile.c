@@ -82,6 +82,12 @@ static uint64 linux_error(int result)
 		return -LINUX_EXDEV;
 	case VFS_ERR_MLINK:
 		return -LINUX_EMLINK;
+	case VFS_ERR_NOTTY:
+		return -LINUX_ENOTTY;
+	case VFS_ERR_NXIO:
+		return -LINUX_ENXIO;
+	case VFS_ERR_FAULT:
+		return -LINUX_EFAULT;
 	case VFS_ERR_IO:
 		return -LINUX_EIO;
 	default:
@@ -604,47 +610,15 @@ uint64 sys_linux_dup3(void)
 
 uint64 sys_linux_ioctl(void)
 {
-	struct linux_termios termios;
-	struct linux_winsize winsize;
-	process_t process = cur_proc();
 	uint64 address;
-	int fd, request, terminal;
+	int fd, request;
+	int64 result;
 
 	argint(0, &fd);
 	argint(1, &request);
 	argaddr(2, &address);
-	terminal = vfs_is_terminal(fd);
-	if (terminal < 0)
-		return linux_error(terminal);
-	if (!terminal)
-		return -LINUX_ENOTTY;
-	if (request == LINUX_TCGETS) {
-		memset(&termios, 0, sizeof(termios));
-		termios.iflag = LINUX_ICRNL;
-		termios.cflag = LINUX_B38400 | LINUX_CS8 |
-		                 LINUX_CREAD | LINUX_CLOCAL;
-		termios.lflag = LINUX_ICANON | LINUX_ECHO |
-		                 LINUX_ECHOE | LINUX_ECHOK;
-		termios.control[LINUX_VINTR] = 3;
-		termios.control[LINUX_VERASE] = 0x7f;
-		termios.control[LINUX_VEOF] = 4;
-		termios.control[LINUX_VMIN] = 1;
-		if (copyout(process->pagetable, address, (char *)&termios,
-		            sizeof(termios)) < 0)
-			return -LINUX_EFAULT;
-		return 0;
-	}
-	if (request == LINUX_TIOCGWINSZ) {
-		memset(&winsize, 0, sizeof(winsize));
-		winsize.rows = 24;
-		winsize.columns = 80;
-		if (copyout(process->pagetable, address, (char *)&winsize,
-		            sizeof(winsize)) < 0)
-			return -LINUX_EFAULT;
-		return 0;
-	}
-
-	return -LINUX_ENOTTY;
+	result = vfs_ioctl(fd, request, address);
+	return result < 0 ? linux_error(result) : result;
 }
 
 uint64 sys_linux_writev(void)

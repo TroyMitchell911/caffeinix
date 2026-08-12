@@ -40,6 +40,7 @@ export TOPDIR
 # Define the subdirectory to be searched for 
 # variable records (the subdirectory must contain a makefile)
 obj-y += arch/riscv/boot/
+obj-y += drivers/
 obj-y += kernel/fs/
 obj-y += kernel/
 obj-y += arch/riscv/
@@ -120,12 +121,15 @@ qemu-gdb: all .gdbinit check-fs-img
 	@echo "*** Now run 'gdb' in another window." 1>&2
 
 clean:
-	@rm -f $(shell find -name "*.o")
-	@rm -f $(shell find -name "*.asm")
-	@rm -f $(shell find -name "*.sym")
-	@rm -f $(shell find -name "*.d")
-	@rm -f output/*
-	@rm -rf .cache/*
+	@find arch drivers kernel -type f \( -name "*.o" -o \
+		-name "*.asm" -o \
+		-name "*.sym" -o -name "*.d" \) -delete
+	@find . -maxdepth 1 -type f \( -name "*.o" -o \
+		-name "*.asm" -o -name "*.sym" -o -name "*.d" \) -delete
+	@if [ -d output ]; then \
+		find output -maxdepth 1 -type f -delete; \
+	fi
+	@if [ -d .cache ]; then find .cache -mindepth 1 -delete; fi
 
 distclean: clean
 	@rm -f compile_commands.json

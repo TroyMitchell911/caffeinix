@@ -946,6 +946,15 @@ int vfs_write(int fd, uint64 address, int length)
 	return result > 0x7fffffff ? VFS_ERR_INVAL : result;
 }
 
+int64 vfs_ioctl(int fd, uint64 request, uint64 argument)
+{
+	file_t file;
+
+	if (fd_get(fd, &file) != VFS_OK)
+		return VFS_ERR_BADF;
+	return file_ioctl(file, request, argument);
+}
+
 int vfs_seek(int fd, int64 offset, int whence, uint64 *result)
 {
 	struct vfs_stat stat;
@@ -1363,16 +1372,6 @@ int vfs_get_file_flags(int fd, uint32 *flags)
 		return VFS_ERR_BADF;
 	*flags = file->flags;
 	return VFS_OK;
-}
-
-int vfs_is_terminal(int fd)
-{
-	file_t file;
-
-	if (fd_get(fd, &file) != VFS_OK)
-		return VFS_ERR_BADF;
-	return file->path.dentry->inode->type == VFS_INODE_CHAR_DEVICE &&
-	       vfs_device_is_terminal(file->path.dentry->inode->device);
 }
 
 void vfs_close_on_exec(void)

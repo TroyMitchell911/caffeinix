@@ -82,3 +82,10 @@ int64 file_write(file_t file, int user_source, uint64 source,
 	return file->operations->write(file, user_source, source, count,
 	                               position);
 }
+
+int64 file_ioctl(file_t file, uint64 request, uint64 argument)
+{
+	if (!file->operations || !file->operations->ioctl)
+		return VFS_ERR_NOTTY;
+	return file->operations->ioctl(file, request, argument);
+}

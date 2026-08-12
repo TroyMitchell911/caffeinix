@@ -45,6 +45,9 @@ enum vfs_result {
 	VFS_ERR_LOOP = -17,
 	VFS_ERR_XDEV = -18,
 	VFS_ERR_MLINK = -19,
+	VFS_ERR_NOTTY = -20,
+	VFS_ERR_NXIO = -21,
+	VFS_ERR_FAULT = -22,
 };
 
 #define VFS_RENAME_NOREPLACE (1U << 0)
@@ -128,6 +131,7 @@ struct vfs_file_operations {
 	int64 (*write)(struct vfs_file *file, int user_source, uint64 source,
 	               uint64 count, uint64 *position);
 	int (*readdir)(struct vfs_file *file, struct vfs_dirent *dirent);
+	int64 (*ioctl)(struct vfs_file *file, uint64 request, uint64 argument);
 	int (*fsync)(struct vfs_file *file);
 };
 
@@ -238,6 +242,7 @@ int vfs_dup(int oldfd, int minimum, uint8 flags, int *fd_out);
 int vfs_dup_to(int oldfd, int newfd, uint8 flags);
 int vfs_read(int fd, uint64 address, int length);
 int vfs_write(int fd, uint64 address, int length);
+int64 vfs_ioctl(int fd, uint64 request, uint64 argument);
 int vfs_seek(int fd, int64 offset, int whence, uint64 *result);
 int vfs_stat_fd(int fd, struct vfs_stat *stat);
 int vfs_stat_path(const char *path, int follow_symlink,
@@ -259,7 +264,6 @@ int vfs_access(const char *path);
 int vfs_get_fd_flags(int fd, uint8 *flags);
 int vfs_set_fd_flags(int fd, uint8 flags);
 int vfs_get_file_flags(int fd, uint32 *flags);
-int vfs_is_terminal(int fd);
 void vfs_close_on_exec(void);
 
 #endif

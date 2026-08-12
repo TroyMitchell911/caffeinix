@@ -10,6 +10,4 @@
 
 extern const struct vfs_file_operations vfs_device_operations;
 
-int vfs_device_is_terminal(uint64 device);
-
 #endif
