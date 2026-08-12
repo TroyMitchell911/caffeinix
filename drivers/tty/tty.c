@@ -331,6 +331,12 @@ int tty_unregister(struct tty *tty)
 
 	if (!tty || !tty->registered)
 		return VFS_ERR_NOENT;
+	spinlock_acquire(&tty->lock);
+	if (!wait_queue_empty(&tty->read_wait)) {
+		spinlock_release(&tty->lock);
+		return VFS_ERR_BUSY;
+	}
+	spinlock_release(&tty->lock);
 	status = char_device_node_unregister(tty->name);
 	if (status < 0)
 		return status;

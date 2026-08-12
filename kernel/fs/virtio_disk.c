@@ -296,6 +296,8 @@ static int virtio_submit(struct virtio_disk *disk, uint32 type,
 	result = request.result;
 	disk->info[indices[0]].request = 0;
 	free_chain(disk, indices[0]);
+	if (!wait_queue_empty(&request.completion))
+		PANIC("virtio completion waiters");
 	spinlock_release(&disk->lock);
 	return result;
 }

@@ -1,5 +1,6 @@
 #include <console.h>
 #include <char_device.h>
+#include <debug.h>
 #include <device_model.h>
 #include <irq.h>
 #include <mystring.h>
@@ -150,6 +151,10 @@ void uart_remove_one_port(struct uart_port *port)
 {
 	if (!port || !port->registered)
 		return;
+	spinlock_acquire(&port->lock);
+	if (!wait_queue_empty(&port->transmit_wait))
+		PANIC("remove UART with waiters");
+	spinlock_release(&port->lock);
 	console_unregister(&port->console);
 	port->operations->enable_rx_irq(port, 0);
 	port->operations->enable_tx_irq(port, 0);
