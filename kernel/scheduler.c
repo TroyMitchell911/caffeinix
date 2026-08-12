@@ -208,11 +208,3 @@ void yield(void)
         sched();
         spinlock_release(&current->lock);
 }
-
-void scheduler_wake(thread_t thread)
-{
-        spinlock_acquire(&thread->lock);
-        if(thread->state == THREAD_SLEEPING)
-                scheduler_make_runnable(thread);
-        spinlock_release(&thread->lock);
-}

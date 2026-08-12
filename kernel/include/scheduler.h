@@ -28,6 +28,5 @@ void scheduler(void);
 void yield(void);
 void sched(void);
 void scheduler_make_runnable(thread_t thread);
-void scheduler_wake(thread_t thread);
 
 #endif

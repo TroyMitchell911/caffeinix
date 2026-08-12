@@ -171,71 +171,6 @@ static int pid_alloc(void)
         spinlock_release(&pid_lock);
         return pid;
 }
-#ifndef PROCESS_NO_SCHED
-void sleep(void* chan, spinlock_t lk)
-{
-        thread_t t = cur_thread();
-
-        spinlock_acquire(&t->lock);
-        spinlock_release(lk);
-
-        t->sleep_chan = chan;
-        t->state = THREAD_SLEEPING;
-
-        sched();
-
-        t->sleep_chan = 0;
-
-        spinlock_release(&t->lock);
-        spinlock_acquire(lk);
-}
-
-void wakeup(void* chan)
-{
-        thread_t t;
-
-        for(t = &thread[0]; t <= &thread[NTHREAD - 1]; t++) {
-                spinlock_acquire(&t->lock);
-                if(t->sleep_chan == chan &&
-                   t->state == THREAD_SLEEPING)
-                        scheduler_make_runnable(t);
-                spinlock_release(&t->lock);
-        }
-}
-void sleep_(void* chan, spinlock_t lk)
-{
-        sleep(chan, lk);
-}
-void wakeup_(void* chan)
-{
-        wakeup(chan);
-}
-#else
-/* TODO */
-static volatile uint8 test_flag = 0;
-void sleep_(void* chan, spinlock_t lk)
-{
-        test_flag = 1;
-        spinlock_release(lk);
-        intr_on();
-        while(test_flag);
-        spinlock_acquire(lk);
-}
-
-void wakeup_(void* chan)
-{
-        test_flag = 0;
-}
-void sleep(void* chan, spinlock_t lk)
-{
- 
-}
-
-void wakeup(void* chan)
-{
-
-}
-#endif
 /* Alloc a process */
 static process_t process_alloc(void)
 {
@@ -328,7 +263,6 @@ static void process_free(process_t p)
         // p->sz = 0;
         // p->state = UNUSED;
         // p->parent = 0;
-        // p->sleep_chan = 0;
         // p->name[0] = 0;
 }
 
@@ -588,9 +522,8 @@ int kill(int pid)
                 if(p->pid == pid) {
                         p->killed = 1;
                         for(int i = 0; i < p->tnums; i++)
-                                if(p->thread[i] &&
-                                   !wait_queue_wake_thread(p->thread[i]))
-                                        scheduler_wake(p->thread[i]);
+                                if(p->thread[i])
+                                        wait_queue_wake_thread(p->thread[i]);
                         spinlock_release(&p->lock);
                         spinlock_release(&wait_lock);
                         return 0;

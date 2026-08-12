@@ -88,7 +88,6 @@ found:
         p->thread[t->id_p] = t;
 
         t->state = THREAD_ALLOCATED;
-        t->sleep_chan = 0;
         t->on_runqueue = 0;
         list_init(&t->run_node);
         t->waiting_on = 0;
@@ -115,7 +114,6 @@ r2:
         p->thread[t->id_p] = 0;
 r1:
         t->state = THREAD_UNUSED;
-        t->sleep_chan = 0;
         t->home = 0;
         spinlock_release(&t->lock);
         return 0;
@@ -147,7 +145,6 @@ void thread_free(thread_t t)
         if(t->trapframe)
                 pfree(t->trapframe);
         t->trapframe = 0;
-        t->sleep_chan = 0;
         t->home = 0;
         list_init(&t->run_node);
         list_init(&t->wait_node);

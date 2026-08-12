@@ -22,10 +22,6 @@ static void tick_intr(void)
         spinlock_acquire(&tick_lock);
 
         tick_count ++;
-        if(tick_count % 10 == 0) {
-                // printf("timer interrupt\n");
-        }
-        wakeup((void*)&tick_count);
         spinlock_release(&tick_lock);
 }
 

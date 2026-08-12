@@ -17,9 +17,6 @@
 #include <file.h>
 #include <wait.h>
 
-/* TODO:Delete this macro */
-// #define PROCESS_NO_SCHED                1
-
 typedef enum process_state{
         PROCESS_LIVE,
         PROCESS_ZOMBIE,
@@ -75,10 +72,6 @@ int process_fork(uint64 child_stack);
 int process_wait(int target, uint64 status_address, int nohang);
 
 int killed(process_t p);
-void sleep(void* chan, spinlock_t lk);
-void wakeup(void* chan);
-void sleep_(void* chan, spinlock_t lk);
-void wakeup_(void* chan);
 int either_copyout(int user_dst, uint64 dst, void* src, uint64 len);
 int either_copyin(void *dst, int user_src, uint64 src, uint64 len);
 /* User init for first process */
