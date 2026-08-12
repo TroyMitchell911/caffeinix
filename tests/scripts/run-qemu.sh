@@ -22,7 +22,7 @@ require_command()
 }
 
 for command in \
-	"$qemu" expect e2fsck debugfs fsck.fat mtype rg \
+	"$qemu" expect e2fsck debugfs fsck.fat mtype python3 rg \
 	"${CROSS_COMPILE:-riscv64-linux-gnu-}objdump" \
 	"${CROSS_COMPILE:-riscv64-linux-gnu-}readelf"; do
 	require_command "$command"
@@ -112,6 +112,11 @@ run_boot_smoke()
 		echo "OpenSBI BusyBox smoke marker is missing" >&2
 		exit 1
 	fi
+	if [ "$(awk '$0 == "SCHED_SMOKE_OK" { count++ }
+		END { print count + 0 }' "$clean")" -ne 1 ]; then
+		echo "scheduler smoke marker is missing" >&2
+		exit 1
+	fi
 	check_boot_log "$clean" "$cpus"
 }
 
@@ -128,6 +133,11 @@ check_boot_log "$clean_log" "$QEMU_CPUS"
 
 for marker in \
 	BUSYBOX_SHELL_OK \
+	SCHED_EXEC_OK \
+	SCHED_RUNQUEUE_OK \
+	SCHED_MIXED_OK \
+	SCHED_RUNTIME_OK \
+	SCHED_TTY_WAIT_OK \
 	TTY_METADATA_OK \
 	TTY_CANONICAL_OK \
 	TTY_RAW_OK \
@@ -165,7 +175,8 @@ if ! grep -Fq $'abc\b \bd' "$qemu_log"; then
 fi
 
 if grep -Eq \
-	'\[PANIC\]|Unhandled interrupt|FS_RUNTIME_FAIL=|TTY_RUNTIME_FAIL=' \
+	-e '\[PANIC\]|Unhandled interrupt' \
+	-e 'FS_RUNTIME_FAIL=|SCHED_RUNTIME_FAIL=|TTY_RUNTIME_FAIL=' \
 	"$clean_log"; then
 	echo "QEMU log contains a guest failure" >&2
 	exit 1
@@ -206,5 +217,12 @@ if [ "$fat_utf8" != utf8 ]; then
 	echo "FAT UTF-8 long-name value was not persisted" >&2
 	exit 1
 fi
+
+"$script_dir/benchmark-scheduler.py" \
+	--qemu "$qemu" \
+	--kernel "$KERNEL" \
+	--root-image "$root_image" \
+	--output "$test_output/scheduler-benchmark.json" \
+	--check
 
 echo QEMU_RUNTIME_OK

@@ -29,6 +29,12 @@ CLINT access, `mret`, `-bios none`, and a kernel entry other than
 
 The guest selftest covers:
 
+- repeated fork, exec, exit, and wait cycles;
+- FIFO scheduler progress with 24 runnable processes, timer preemption, and
+  more runnable work than CPUs;
+- concurrent CPU, allocator, ext4, VirtIO completion, sleeplock, and process
+  wait activity;
+- multiple TTY sleepers and repeated wake-all/requeue behavior;
 - devfs character devices and device numbers;
 - `/dev/ttyS0` metadata, `/dev/tty` error semantics, and terminal ioctls;
 - termios set/get state, canonical echo and erase, raw input, CR/NL handling,
@@ -44,9 +50,24 @@ checks FAT32 with `fsck.fat`, reads persistent values from both images, and
 verifies that tmpfs data did not reach the ext4 image.
 
 Required host commands are `riscv64-linux-gnu-*`, `qemu-system-riscv64`,
-`curl`, `expect`, `mke2fs`, `e2fsck`, `debugfs`, `mkfs.fat`, and `mtools`.
+`curl`, `expect`, `mke2fs`, `e2fsck`, `debugfs`, `mkfs.fat`, `mtools`, and
+`python3`.
 The firmware audit also requires `rg`. The GitHub Actions workflow installs
 these dependencies automatically.
+
+Measure one-CPU and eight-CPU command latency and verify that an idle
+eight-CPU guest consumes less than one host CPU with:
+
+```bash
+make -C tests scheduler-perf
+```
+
+This target builds a fresh test root image before measuring it. The
+benchmark reports 13-sample medians for a shell builtin, `pwd`, and
+`ls` on tmpfs, devfs, and ext4. Absolute command latency and the SMP ratio are
+reported rather than used as CI gates because shared-runner timing is noisy.
+Idle QEMU CPU usage is gated because the pre-fix scheduler consistently
+consumed one host CPU per guest CPU while doing no work.
 
 Run the same matrix against an externally built OpenSBI image with:
 

@@ -180,6 +180,12 @@ install -d \
 	"$tests_dir/tty_runtime.c" \
 	-o "$staging/bin/tty-runtime"
 
+"$musl_cc" \
+	-static -march=rv64gc -mabi=lp64d \
+	-O2 -Wall -Wextra -Werror \
+	"$tests_dir/scheduler_runtime.c" \
+	-o "$staging/bin/scheduler-runtime"
+
 if "${cross_compile}readelf" -l "$staging/bin/fs-runtime" |
 	grep -q INTERP; then
 	echo "guest selftest must be statically linked" >&2
@@ -189,6 +195,12 @@ fi
 if "${cross_compile}readelf" -l "$staging/bin/tty-runtime" |
 	grep -q INTERP; then
 	echo "TTY selftest must be statically linked" >&2
+	exit 1
+fi
+
+if "${cross_compile}readelf" -l "$staging/bin/scheduler-runtime" |
+	grep -q INTERP; then
+	echo "scheduler selftest must be statically linked" >&2
 	exit 1
 fi
 

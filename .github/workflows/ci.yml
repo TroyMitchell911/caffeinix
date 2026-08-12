@@ -74,4 +74,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: qemu-runtime-logs
-          path: output/tests/*.log
+          path: |
+            output/tests/*.log
+            output/tests/scheduler-benchmark.json

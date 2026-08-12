@@ -63,6 +63,47 @@ expect {
 }
 expect_prompt
 
+send -- "/bin/scheduler-runtime\r"
+expect {
+	-re {\r?\nSCHED_RUNTIME_OK} {}
+	-re {SCHED_RUNTIME_FAIL=[^\r\n]*} {
+		abort_test "scheduler runtime test reported failure"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in scheduler runtime test" }
+	timeout { abort_test "scheduler runtime test timeout" }
+	eof { abort_test "QEMU exited during scheduler runtime test" }
+}
+expect_prompt
+
+send -- "/bin/scheduler-runtime tty-wait\r"
+set ready_count 0
+while {$ready_count < 8} {
+	expect {
+		-re {\r?\nSCHED_TTY_READY} { incr ready_count }
+		-re {SCHED_RUNTIME_FAIL=[^\r\n]*} {
+			abort_test "scheduler TTY wait setup failed"
+		}
+		-re {\[PANIC\]} {
+			abort_test "kernel panic before scheduler TTY wait"
+		}
+		timeout { abort_test "scheduler TTY waiter ready timeout" }
+		eof { abort_test "QEMU exited before scheduler TTY wait" }
+	}
+}
+for {set index 0} {$index < 8} {incr index} {
+	send -- "scheduler-wakeup-$index\r"
+}
+expect {
+	-re {\r?\nSCHED_TTY_WAIT_OK} {}
+	-re {SCHED_RUNTIME_FAIL=[^\r\n]*} {
+		abort_test "scheduler TTY wait test reported failure"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in scheduler TTY wait" }
+	timeout { abort_test "scheduler TTY wait completion timeout" }
+	eof { abort_test "QEMU exited during scheduler TTY wait" }
+}
+expect_prompt
+
 send -- "/bin/tty-runtime metadata\r"
 expect {
 	-re {\r?\nTTY_METADATA_OK} {}
