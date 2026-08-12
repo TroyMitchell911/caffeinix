@@ -5,6 +5,7 @@
 #include <linux_uapi.h>
 #include <spinlock.h>
 #include <typedefs.h>
+#include <wait.h>
 
 #define TTY_MAX_DEVICES 8
 #define TTY_INPUT_SIZE 256
@@ -18,6 +19,7 @@ struct tty_operations {
 
 struct tty {
 	struct spinlock lock;
+	struct wait_queue read_wait;
 	int registered;
 	int line;
 	char name[CHAR_DEVICE_NAME_MAX + 1];

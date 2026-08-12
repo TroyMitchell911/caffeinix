@@ -3,7 +3,6 @@
 #include <device_model.h>
 #include <irq.h>
 #include <mystring.h>
-#include <process.h>
 #include <spinlock.h>
 #include <tty.h>
 #include <uart.h>
@@ -18,7 +17,7 @@ static void uart_start_transmit_locked(struct uart_port *port)
 
 		port->operations->put_char(port, character);
 		port->transmit_tail++;
-		wakeup_(&port->transmit_tail);
+		wait_queue_wake_all(&port->transmit_wait);
 	}
 	port->operations->enable_tx_irq(
 		port, port->transmit_tail != port->transmit_head);
@@ -36,7 +35,7 @@ static int64 uart_tty_write(struct tty *tty, const char *buffer,
 	while (written < count) {
 		while (port->transmit_head - port->transmit_tail ==
 		       UART_TX_BUFFER_SIZE)
-			sleep_(&port->transmit_tail, &port->lock);
+			wait_queue_sleep(&port->transmit_wait, &port->lock);
 		port->transmit[port->transmit_head % UART_TX_BUFFER_SIZE] =
 			buffer[written++];
 		port->transmit_head++;
@@ -109,6 +108,7 @@ int uart_add_one_port(struct uart_port *port)
 	    !port->operations->enable_tx_irq)
 		return DRIVER_ERR_INVAL;
 	spinlock_init(&port->lock, "UART port");
+	wait_queue_init(&port->transmit_wait, "UART transmit");
 	port->transmit_head = 0;
 	port->transmit_tail = 0;
 	status = port->operations->startup(port);

@@ -76,7 +76,7 @@ static int64 tty_read(struct tty *tty, int user_destination,
 				spinlock_release(&tty->lock);
 				return total;
 			}
-			sleep_(&tty->read_position, &tty->lock);
+			wait_queue_sleep(&tty->read_wait, &tty->lock);
 		}
 		if (tty->read_position == tty->commit_position &&
 		    tty->eof_pending) {
@@ -241,7 +241,7 @@ void tty_receive_char(struct tty *tty, int character)
 	if (canonical && character == tty->termios.control[LINUX_VEOF]) {
 		tty->commit_position = tty->edit_position;
 		tty->eof_pending = 1;
-		wakeup_(&tty->read_position);
+		wait_queue_wake_all(&tty->read_wait);
 		spinlock_release(&tty->lock);
 		return;
 	}
@@ -255,7 +255,7 @@ void tty_receive_char(struct tty *tty, int character)
 	if (!canonical || character == '\n' ||
 	    tty->edit_position - tty->read_position == TTY_INPUT_SIZE) {
 		tty->commit_position = tty->edit_position;
-		wakeup_(&tty->read_position);
+		wait_queue_wake_all(&tty->read_wait);
 	}
 	spinlock_release(&tty->lock);
 }
@@ -305,6 +305,7 @@ int tty_register(struct tty *tty, const char *prefix, int line,
 	tty->driver_data = driver_data;
 	tty_default_termios(tty);
 	spinlock_init(&tty->lock, tty->name);
+	wait_queue_init(&tty->read_wait, tty->name);
 	tty->registered = 1;
 	tty_core.devices[selected] = tty;
 	if (!tty_core.console)
