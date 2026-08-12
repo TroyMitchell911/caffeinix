@@ -35,6 +35,25 @@ static int of_cells(const struct device_node *node, const char *name,
 	return value <= 2 ? value : -1;
 }
 
+static int of_reg_info(const struct device_node *node, const fdt32_t **reg,
+		       int *address_cells, int *size_cells)
+{
+	int entry_cells, length;
+
+	if (!node || !node->parent || !reg || !address_cells || !size_cells)
+		return -1;
+	*address_cells = of_cells(node->parent, "#address-cells", 2);
+	*size_cells = of_cells(node->parent, "#size-cells", 1);
+	if (*address_cells < 1 || *address_cells > 2 ||
+	    *size_cells < 0 || *size_cells > 2)
+		return -1;
+	entry_cells = *address_cells + *size_cells;
+	*reg = of_get_property(node, "reg", &length);
+	if (!*reg || !entry_cells || length % (entry_cells * sizeof(**reg)))
+		return -1;
+	return length / (entry_cells * sizeof(**reg));
+}
+
 int of_init(const void *fdt)
 {
 	struct device_node *parents[OF_MAX_NODES];
@@ -188,20 +207,15 @@ int of_address_to_resource(const struct device_node *node, int index,
 			   struct resource *resource)
 {
 	const fdt32_t *reg;
-	int address_cells, entry_cells, length, size_cells;
+	uint64 length;
+	int address_cells, count, entry_cells, size_cells;
 
-	if (!node || !node->parent || !resource || index < 0)
+	if (!resource || index < 0)
 		return -1;
-	address_cells = of_cells(node->parent, "#address-cells", 2);
-	size_cells = of_cells(node->parent, "#size-cells", 1);
-	if (address_cells < 1 || address_cells > 2 ||
-	    size_cells < 0 || size_cells > 2)
+	count = of_reg_info(node, &reg, &address_cells, &size_cells);
+	if (count < 0 || index >= count)
 		return -1;
 	entry_cells = address_cells + size_cells;
-	reg = of_get_property(node, "reg", &length);
-	if (!reg || !entry_cells ||
-	    length < (index + 1) * entry_cells * sizeof(*reg))
-		return -1;
 	reg += index * entry_cells;
 	resource->name = node->name;
 	resource->start = of_read_number(reg, address_cells);
