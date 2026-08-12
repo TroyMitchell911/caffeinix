@@ -44,4 +44,7 @@ _Static_assert(sizeof(struct linux_termios) == sizeof(struct termios),
 _Static_assert(sizeof(struct linux_winsize) == sizeof(struct winsize),
 	       "winsize size");
 _Static_assert(LINUX_TCGETS == TCGETS, "TCGETS value");
+_Static_assert(LINUX_TCSETS == TCSETS, "TCSETS value");
+_Static_assert(LINUX_TCSETSW == TCSETSW, "TCSETSW value");
+_Static_assert(LINUX_TCSETSF == TCSETSF, "TCSETSF value");
 _Static_assert(LINUX_TIOCGWINSZ == TIOCGWINSZ, "TIOCGWINSZ value");

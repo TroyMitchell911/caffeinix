@@ -46,18 +46,45 @@ tr -d '\r' < "$qemu_log" > "$clean_log"
 
 for marker in \
 	BUSYBOX_SHELL_OK \
+	TTY_METADATA_OK \
+	TTY_CANONICAL_OK \
+	TTY_RAW_OK \
+	TTY_LONG_BEGIN \
+	TTY_LONG_END \
 	DEVFS_OK \
 	EXT4_OK \
 	TMPFS_OK \
 	FAT_OK \
 	FS_RUNTIME_OK; do
-	if ! grep -Fxq "$marker" "$clean_log"; then
-		echo "missing QEMU marker: $marker" >&2
+	marker_count=$(awk -v marker="$marker" \
+		'$0 == marker { count++ } END { print count + 0 }' \
+		"$clean_log")
+	if [ "$marker_count" -ne 1 ]; then
+		echo "unexpected QEMU marker count: $marker=$marker_count" >&2
 		exit 1
 	fi
 done
 
-if grep -Eq '\[PANIC\]|FS_RUNTIME_FAIL=' "$clean_log"; then
+if ! awk '
+	/^U+$/ {
+		lines++
+		if (length($0) != 1024)
+			bad = 1
+	}
+	END { exit lines != 1 || bad }
+' "$clean_log"; then
+	echo "long UART output was not one exact 1024-byte line" >&2
+	exit 1
+fi
+
+if ! grep -Fq $'abc\b \bd' "$qemu_log"; then
+	echo "canonical erase echo sequence is missing" >&2
+	exit 1
+fi
+
+if grep -Eq \
+	'\[PANIC\]|Unhandled interrupt|FS_RUNTIME_FAIL=|TTY_RUNTIME_FAIL=' \
+	"$clean_log"; then
 	echo "QEMU log contains a guest failure" >&2
 	exit 1
 fi

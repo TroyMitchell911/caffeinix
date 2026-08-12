@@ -23,6 +23,9 @@ runs `fs_runtime`, syncs storage, and exits QEMU through its serial monitor.
 The guest selftest covers:
 
 - devfs character devices and device numbers;
+- `/dev/ttyS0` metadata, `/dev/tty` error semantics, and terminal ioctls;
+- termios set/get state, canonical echo and erase, raw input, CR/NL handling,
+  blocking wakeups, and UART output larger than the transmit queue;
 - ext4 and tmpfs links, sparse files, rename, directory iteration, truncate,
   fsync, and open-unlink lifetime rules;
 - symlink metadata through `lstat`;

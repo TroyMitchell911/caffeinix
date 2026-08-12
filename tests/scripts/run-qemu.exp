@@ -6,6 +6,15 @@ proc abort_test {message} {
 	exit 1
 }
 
+proc expect_prompt {} {
+	expect {
+		-re {\[PANIC\]} { abort_test "kernel panic before shell prompt" }
+		-re {\r?\n# $} {}
+		timeout { abort_test "shell prompt timeout" }
+		eof { abort_test "QEMU exited before shell prompt" }
+	}
+}
+
 foreach variable {QEMU KERNEL ROOT_IMAGE FAT_IMAGE QEMU_LOG} {
 	if {![info exists env($variable)] || $env($variable) eq ""} {
 		puts stderr "missing environment variable: $variable"
@@ -44,16 +53,99 @@ expect {
 
 send -- "echo BUSYBOX_SHELL_OK\r"
 expect {
-	-re {\r?\nBUSYBOX_SHELL_OK\r?\n} {}
+	-re {\r?\nBUSYBOX_SHELL_OK} {}
 	-re {\[PANIC\]} { abort_test "kernel panic in BusyBox shell" }
 	timeout { abort_test "BusyBox shell command timeout" }
 	eof { abort_test "QEMU exited in BusyBox shell" }
 }
-expect -re {\r?\n# $}
+expect_prompt
+
+send -- "/bin/tty-runtime metadata\r"
+expect {
+	-re {\r?\nTTY_METADATA_OK} {}
+	-re {TTY_RUNTIME_FAIL=[^\r\n]*} {
+		abort_test "TTY metadata test reported failure"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in TTY metadata test" }
+	timeout { abort_test "TTY metadata test timeout" }
+	eof { abort_test "QEMU exited during TTY metadata test" }
+}
+expect_prompt
+
+send -- "/bin/tty-runtime canonical\r"
+expect {
+	-re {\r?\nTTY_CANONICAL_READY} {}
+	-re {TTY_RUNTIME_FAIL=[^\r\n]*} {
+		abort_test "canonical TTY setup failed"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in canonical TTY test" }
+	timeout { abort_test "canonical TTY ready timeout" }
+	eof { abort_test "QEMU exited during canonical TTY test" }
+}
+after 250
+send -- "abc\177d\r"
+expect {
+	-re {TTY_CANONICAL_OK} {}
+	-re {TTY_RUNTIME_FAIL=[^\r\n]*} {
+		abort_test "canonical TTY validation failed"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic after canonical input" }
+	timeout { abort_test "canonical TTY completion timeout" }
+	eof { abort_test "QEMU exited after canonical input" }
+}
+expect_prompt
+
+send -- "/bin/tty-runtime raw\r"
+expect {
+	-re {\r?\nTTY_RAW_READY} {}
+	-re {TTY_RUNTIME_FAIL=[^\r\n]*} {
+		abort_test "raw TTY setup failed"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in raw TTY test" }
+	timeout { abort_test "raw TTY ready timeout" }
+	eof { abort_test "QEMU exited during raw TTY test" }
+}
+after 250
+send -- "R\rX!"
+expect {
+	-re {TTY_RAW_OK} {}
+	-re {TTY_RUNTIME_FAIL=[^\r\n]*} {
+		abort_test "raw TTY validation failed"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic during raw input" }
+	timeout { abort_test "raw TTY completion timeout" }
+	eof { abort_test "QEMU exited during raw input" }
+}
+expect_prompt
+
+send -- "/bin/tty-runtime long-output\r"
+expect {
+	-re {\r?\nTTY_LONG_BEGIN} {}
+	-re {TTY_RUNTIME_FAIL=[^\r\n]*} {
+		abort_test "long UART setup failed"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic before long UART output" }
+	timeout { abort_test "long UART output start timeout" }
+	eof { abort_test "QEMU exited before long UART output" }
+}
+expect {
+	-re {([U]+)[\r\n]+TTY_LONG_END} {
+		if {[string length $expect_out(1,string)] != 1024} {
+			abort_test "long UART output length mismatch"
+		}
+	}
+	-re {TTY_RUNTIME_FAIL=[^\r\n]*} {
+		abort_test "long UART write failed"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in long UART output" }
+	timeout { abort_test "long UART output timeout" }
+	eof { abort_test "QEMU exited during long UART output" }
+}
+expect_prompt
 
 send -- "/bin/fs-runtime\r"
 expect {
-	-re {\r?\nFS_RUNTIME_OK\r?\n} {}
+	-re {\r?\nFS_RUNTIME_OK} {}
 	-re {FS_RUNTIME_FAIL=[^\r\n]*} {
 		abort_test "guest runtime test reported failure"
 	}
@@ -61,7 +153,7 @@ expect {
 	timeout { abort_test "guest selftest timeout" }
 	eof { abort_test "QEMU exited during guest selftest" }
 }
-expect -re {\r?\n# $}
+expect_prompt
 
 send -- "sync\r"
 expect {
