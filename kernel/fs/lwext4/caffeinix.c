@@ -190,7 +190,7 @@ static int ext4fs_block_close(struct ext4_blockdev *blockdev)
 
 static void ext4fs_lock_mount(void)
 {
-	thread_t current = cur_proc()->cur_thread;
+	thread_t current = cur_thread();
 
 	if (ext4fs_lock_owner == current) {
 		ext4fs_lock_depth++;
@@ -203,7 +203,7 @@ static void ext4fs_lock_mount(void)
 
 static void ext4fs_unlock_mount(void)
 {
-	if (ext4fs_lock_owner != cur_proc()->cur_thread ||
+	if (ext4fs_lock_owner != cur_thread() ||
 	    !ext4fs_lock_depth)
 		PANIC("ext4 lock owner");
 	if (--ext4fs_lock_depth)

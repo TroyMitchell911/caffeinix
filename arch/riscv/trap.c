@@ -74,7 +74,8 @@ void kernel_trap(void)
                 PANIC("kerneltrap");
         }
 
-        if(which_dev == 2 && cur_proc() != 0 && cur_proc()->state == RUNNING)
+        if(which_dev == 2 && cur_thread() &&
+           cur_thread()->state == THREAD_RUNNING)
                 yield();
 
         sepc_w(sepc);
@@ -94,21 +95,21 @@ void user_trap_entry(void)
 
         stvec_w((uint64)kernel_vec);
 
-        p->cur_thread->trapframe->epc = sepc_r();
+        cur_thread()->trapframe->epc = sepc_r();
 
         if(cause == 8) {
                 if(killed(p))
                         exit(-1);
 
                 /* System call */
-                p->cur_thread->trapframe->epc += 4;
+                cur_thread()->trapframe->epc += 4;
                 intr_on();
                 syscall();
         } else {
                 if((which_dev = dev_intr(cause)) == 0) {
                         printf("scause %p\n", cause);
                         printf("sepc=%p stval=%p\n",
-                               p->cur_thread->trapframe->epc, stval_r());
+                               cur_thread()->trapframe->epc, stval_r());
                         PANIC("user_trap_entry");
                 }
         }
@@ -137,11 +138,11 @@ void user_trap_ret(void)
         trampoline_uservec = TRAMPOLINE + (user_vec - trampoline);
         stvec_w(trampoline_uservec);
 
-        p->cur_thread->trapframe->kernel_satp = satp_r();
-	p->cur_thread->trapframe->kernel_sp =
-		p->cur_thread->kstack + KSTACK_SIZE;
-        p->cur_thread->trapframe->kernel_hartid = tp_r();
-        p->cur_thread->trapframe->kernel_trap = (uint64)user_trap_entry;
+        cur_thread()->trapframe->kernel_satp = satp_r();
+	cur_thread()->trapframe->kernel_sp =
+		cur_thread()->kstack + KSTACK_SIZE;
+        cur_thread()->trapframe->kernel_hartid = tp_r();
+        cur_thread()->trapframe->kernel_trap = (uint64)user_trap_entry;
 
         sstatus = sstatus_r();
         /* Set the interrupt is from user mode */
@@ -153,7 +154,7 @@ void user_trap_ret(void)
         sstatus_w(sstatus);
 
         /* Write the epc. It will be set to 0 if the process is first started */
-        sepc_w(p->cur_thread->trapframe->epc);
+        sepc_w(cur_thread()->trapframe->epc);
 
         satp = MAKE_SATP(p->pagetable);
 

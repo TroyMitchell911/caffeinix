@@ -16,8 +16,6 @@
 #include <vm.h>
 #include <process.h>
 
-struct list all_thread;
-
 struct thread thread[NTHREAD];
 
 static int next_tid = 1;
@@ -57,7 +55,7 @@ void thread_setup(void)
         for(t = thread; t <= &thread[NTHREAD - 1]; t++) {
                 spinlock_init(&t->lock, "thread");
                 t->kstack = KSTACK((int)(t - thread));;
-                t->state = NUSED;
+                t->state = THREAD_UNUSED;
                 strncpy(t->name, "thread", 7);
         }
 }
@@ -71,7 +69,7 @@ thread_t thread_alloc(process_t p)
 		if (ret)
 			continue;
 
-                if(t->state == NUSED) {
+                if(t->state == THREAD_UNUSED) {
                         t->home = p;
                         goto found;
                 }
@@ -84,7 +82,8 @@ found:
         t->id_p = p->tnums ++;
         p->thread[t->id_p] = t;
 
-        t->state = NREADY;
+        t->state = THREAD_ALLOCATED;
+        t->sleep_chan = 0;
 
         t->trapframe = (trapframe_t)palloc();
         if(!t->trapframe) {
@@ -103,7 +102,11 @@ found:
         return t;
 r2:
         p->tnums --;
+        p->thread[t->id_p] = 0;
 r1:
+        t->state = THREAD_UNUSED;
+        t->sleep_chan = 0;
+        t->home = 0;
         spinlock_release(&t->lock);
         return 0;
 }
@@ -126,8 +129,10 @@ void thread_free(thread_t t)
         }
         p->tnums --;
 
-        t->state = NUSED;
+        t->state = THREAD_UNUSED;
         if(t->trapframe)
                 pfree(t->trapframe);
         t->trapframe = 0;
+        t->sleep_chan = 0;
+        t->home = 0;
 }

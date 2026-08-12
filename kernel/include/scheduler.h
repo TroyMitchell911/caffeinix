@@ -8,8 +8,7 @@ struct device_node;
 
 typedef struct cpu {
         struct context context;
-        // thread_t thread;
-        process_t proc;
+        thread_t current;
         /* Nesting Depth */
         uint8 lock_nest_depth;
         /* Is the interrupt enabled before locking */
@@ -21,10 +20,11 @@ typedef struct cpu {
 
 uint8 cpuid(void);
 cpu_t cur_cpu(void);
-// thread_t cur_thread();
-process_t cur_proc();
+thread_t cur_thread(void);
+process_t cur_proc(void);
 void scheduler(void);
 void yield(void);
 void sched(void);
+void scheduler_wake(thread_t thread);
 
 #endif

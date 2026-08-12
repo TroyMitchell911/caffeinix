@@ -8,8 +8,7 @@
 
 static uint64 argraw(int n)
 {
-	process_t p = cur_proc();
-	uint64 *args = &p->cur_thread->trapframe->a0;
+	uint64 *args = &cur_thread()->trapframe->a0;
 
 	if (n >= 0 && n <= 5)
 		return args[n];
@@ -156,14 +155,15 @@ void syscall(void)
 {
 	uint64 nr;
 	process_t p = cur_proc();
+	thread_t current = cur_thread();
 
-	nr = p->cur_thread->trapframe->a7;
+	nr = current->trapframe->a7;
 	if (nr < NELEM(linux_syscalls) && linux_syscalls[nr]) {
-		p->cur_thread->trapframe->a0 = linux_syscalls[nr]();
+		current->trapframe->a0 = linux_syscalls[nr]();
 		return;
 	}
 
 	printf("Unsupported Linux syscall %d from pid %d (%s)\n",
 	       nr, p->pid, p->name);
-	p->cur_thread->trapframe->a0 = -LINUX_ENOSYS;
+	current->trapframe->a0 = -LINUX_ENOSYS;
 }

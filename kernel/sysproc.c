@@ -29,7 +29,7 @@ uint64 sys_linux_set_tid_address(void)
 
 	argaddr(0, &address);
 	p->clear_child_tid = address;
-	return p->cur_thread->tid;
+	return cur_thread()->tid;
 }
 
 uint64 sys_linux_brk(void)
@@ -172,7 +172,7 @@ uint64 sys_linux_getegid(void)
 
 uint64 sys_linux_gettid(void)
 {
-	return cur_proc()->cur_thread->tid;
+	return cur_thread()->tid;
 }
 
 uint64 sys_linux_umask(void)

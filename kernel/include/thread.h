@@ -20,12 +20,12 @@
 typedef struct process *process_t;
 
 typedef enum thread_state {
-        NUSED,
-        NREADY,
-        READY,
-        RESETING,
-        ACTIVE,
-        DIED,
+        THREAD_UNUSED,
+        THREAD_ALLOCATED,
+        THREAD_RUNNABLE,
+        THREAD_RUNNING,
+        THREAD_SLEEPING,
+        THREAD_EXITED,
 }thread_state_t;
 
 typedef struct context {

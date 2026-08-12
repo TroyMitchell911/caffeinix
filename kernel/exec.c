@@ -201,13 +201,13 @@ int exec_linux(char *path, char **argv, char **envp)
 	p->brk = sz;
 	p->brk_start = sz;
 	p->mmap_top = USER_MMAP_TOP;
-	p->cur_thread->trapframe->a0 = argc;
-	p->cur_thread->trapframe->a1 = sp + sizeof(uint64);
-	p->cur_thread->trapframe->sp = sp;
-	p->cur_thread->trapframe->epc = elf.entry;
-	memset(p->cur_thread->trapframe->f, 0,
-	       sizeof(p->cur_thread->trapframe->f));
-	p->cur_thread->trapframe->fcsr = 0;
+	cur_thread()->trapframe->a0 = argc;
+	cur_thread()->trapframe->a1 = sp + sizeof(uint64);
+	cur_thread()->trapframe->sp = sp;
+	cur_thread()->trapframe->epc = elf.entry;
+	memset(cur_thread()->trapframe->f, 0,
+	       sizeof(cur_thread()->trapframe->f));
+	cur_thread()->trapframe->fcsr = 0;
 
 	for (name = path_p = path; *path_p; path_p++) {
 		if (*path_p == '/')

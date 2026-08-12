@@ -20,12 +20,8 @@
 // #define PROCESS_NO_SCHED                1
 
 typedef enum process_state{
-        UNUSED,
-        ALLOCED,
-        RUNNABLE,
-        RUNNING,
-        SLEEPING,
-        ZOMBIE,
+        PROCESS_LIVE,
+        PROCESS_ZOMBIE,
 }process_state_t;
 
 typedef struct trapframe_info {
@@ -56,8 +52,6 @@ typedef struct process{
 	uint32 umask;
         file_t ofile[NOFILE];
 	uint8 fd_flags[NOFILE];
-        void *sleep_chan;
-
         int exit_state;
         int killed;
 	uint64 clear_child_tid;
@@ -67,7 +61,6 @@ typedef struct process{
         trapframe_info_t tinfo;
         int tnums;
         thread_t thread[PROC_MAXTHREAD];
-        thread_t cur_thread;
         
         struct list all_tag;
 }*process_t;

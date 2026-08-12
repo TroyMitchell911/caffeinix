@@ -73,6 +73,10 @@ pagedir_t process_pagedir(process_t p)
 {
         int ret;
         pagedir_t pgdir;
+        thread_t thread = p->thread[0];
+
+        if(!thread)
+                return 0;
         /* Malloc memory for page-talble */
         pgdir = pagedir_alloc();
 	if (!pgdir)
@@ -91,7 +95,8 @@ pagedir_t process_pagedir(process_t p)
 		pagedir_free(pgdir);
 		return 0;
 	}
-        ret = vm_map(pgdir, TRAPFRAME(0), (uint64)p->cur_thread->trapframe, PGSIZE, PTE_W | PTE_R);
+        ret = vm_map(pgdir, TRAPFRAME(0), (uint64)thread->trapframe,
+                     PGSIZE, PTE_W | PTE_R);
 	if(ret){
                 /* We don't need free the address that PTE points because it is a code seg */
 		vm_unmap(pgdir, TRAMPOLINE, 1, 0);
@@ -133,8 +138,7 @@ static void proc_first_start(void)
 	process_t process = cur_proc();
 
         /* The function scheduler will acquire the lock */
-        spinlock_release(&cur_proc()->lock);
-        spinlock_release(&cur_proc()->cur_thread->lock);
+        spinlock_release(&cur_thread()->lock);
 	if (!fs_started) {
 		fs_started = 1;
 		if (vfs_mount_root(ROOT_FILESYSTEM, block_device_get(1), 0) < 0)
@@ -170,48 +174,32 @@ static int pid_alloc(void)
 #ifndef PROCESS_NO_SCHED
 void sleep(void* chan, spinlock_t lk)
 {
-        process_t p = cur_proc();
-        thread_t t = p->cur_thread;
+        thread_t t = cur_thread();
 
-        spinlock_acquire(&p->lock);
         spinlock_acquire(&t->lock);
         spinlock_release(lk);
 
         t->sleep_chan = chan;
-        p->state = RUNNABLE;
-        t->state = RESETING;
+        t->state = THREAD_SLEEPING;
 
         sched();
 
         t->sleep_chan = 0;
 
-        spinlock_release(&p->lock);
         spinlock_release(&t->lock);
         spinlock_acquire(lk);
 }
 
 void wakeup(void* chan)
 {
-        process_t p;
         thread_t t;
-        int i;
-        list_t l;
 
-        for(l = proc.next; l != &proc; l = l->next) {
-                p = list_entry(l, struct process, all_tag);
-                if(!p)
-                        continue;
-                if(p != cur_proc()) {
-                        spinlock_acquire(&p->lock);
-                        if(p->tnums != 0) {
-                                for(i = 0; i < p->tnums; i++) {
-                                        t = p->thread[i];
-                                        if(t->sleep_chan == chan && t->state == RESETING)
-                                                t->state = READY;
-                                }
-                        }
-                        spinlock_release(&p->lock);
-                }
+        for(t = &thread[0]; t <= &thread[NTHREAD - 1]; t++) {
+                spinlock_acquire(&t->lock);
+                if(t->sleep_chan == chan &&
+                   t->state == THREAD_SLEEPING)
+                        t->state = THREAD_RUNNABLE;
+                spinlock_release(&t->lock);
         }
 }
 void sleep_(void* chan, spinlock_t lk)
@@ -260,6 +248,7 @@ static process_t process_alloc(void)
                 return 0;
 	memset(p, 0, sizeof(*p));
 	p->umask = 0022;
+	p->state = PROCESS_LIVE;
         
         spinlock_init(&p->lock, "process");
         spinlock_acquire(&p->lock);
@@ -281,8 +270,6 @@ static process_t process_alloc(void)
 
         p->tinfo->nums = 1;
 
-        p->cur_thread = t;
-
         /* Alloc memory for page-table */
         p->pagetable = process_pagedir(p);
         if(!p->pagetable) {
@@ -296,11 +283,12 @@ static process_t process_alloc(void)
         t->context.ra = (uint64)(proc_first_start);
 
         list_init(&p->all_tag);
+        spinlock_acquire(&wait_lock);
         list_insert_after(&proc, &p->all_tag);
+        spinlock_release(&wait_lock);
 
         return p;
 r2:
-	p->cur_thread = 0;
 	pfree(p->tinfo);
 r1:
 	thread_free(t);
@@ -313,20 +301,25 @@ r0:
 
 static void process_free(process_t p)
 {
+        thread_t thread;
         int i;
 
+        spinlock_acquire(&p->lock);
         if(p->pagetable) {
                 process_freepagedir(p->pagetable, p->sz);
         }
         for(i = 0; i < PROC_MAXTHREAD; i++) {
-                if(p->thread[i] != 0) {
-                        thread_free(p->thread[i]);
-                        p->thread[i] = 0;
-                }
+                thread = p->thread[i];
+                if(!thread)
+                        continue;
+                spinlock_acquire(&thread->lock);
+                thread_free(thread);
+                spinlock_release(&thread->lock);
         }
 	if (p->tinfo)
 		pfree(p->tinfo);
         list_remove(&p->all_tag);
+        spinlock_release(&p->lock);
         free(p);
         // p->pid = 0;
         // p->sz = 0;
@@ -361,20 +354,17 @@ void userinit(void)
         thread_t t;
 
         /* Alloc a process */
-        p = process_alloc();
+	p = process_alloc();
 	if (!p)
                 PANIC("userinit");
-	t = p->cur_thread;
-	t->state = READY;
+	t = p->thread[0];
+	t->state = THREAD_RUNNABLE;
 	p->sz = 0;
 	p->brk = 0;
 	p->brk_start = 0;
 	p->mmap_top = USER_MMAP_TOP;
 
 	safe_strncpy(p->name, "kernel-init", MAXNAME);
-        /* Allow schedule */
-        p->state = RUNNABLE;
-
         first = p;
 
         /* The lock will be held in process_alloc */
@@ -417,13 +407,15 @@ int process_fork(uint64 child_stack)
 	if(!newp)
 		return -1;
 
-        oldt = oldp->cur_thread;
-        newt = newp->cur_thread;
+        oldt = cur_thread();
+        newt = newp->thread[0];
 
 	if(vm_copy(oldp->pagetable, newp->pagetable) != 0) {
 		spinlock_release(&newt->lock);
 		spinlock_release(&newp->lock);
+		spinlock_acquire(&wait_lock);
 		process_free(newp);
+		spinlock_release(&wait_lock);
 		return -1;
 	}
 
@@ -453,18 +445,15 @@ int process_fork(uint64 child_stack)
 	        sizeof(newp->signal_actions));
 
         spinlock_release(&newp->lock);
-        spinlock_release(&newp->cur_thread->lock);
+        spinlock_release(&newt->lock);
 
         spinlock_acquire(&wait_lock);
         newp->parent = oldp;
         spinlock_release(&wait_lock);
 
-        spinlock_acquire(&newp->lock);
-        newp->state = RUNNABLE;
-        spinlock_acquire(&newp->cur_thread->lock);
-        newp->cur_thread->state = READY;
-        spinlock_release(&newp->cur_thread->lock);
-        spinlock_release(&newp->lock);
+        spinlock_acquire(&newt->lock);
+        newt->state = THREAD_RUNNABLE;
+        spinlock_release(&newt->lock);
 
         /* Return for parent process */
         return pid;
@@ -473,10 +462,12 @@ int process_fork(uint64 child_stack)
 void exit(int cause)
 {
         process_t p;
+        thread_t current;
         file_t f;
         int fd, i;
 
         p = cur_proc();
+        current = cur_thread();
 
         for(fd = 0; fd < NOFILE; fd++) {
                 if((f = p->ofile[fd]) != 0) {
@@ -492,19 +483,20 @@ void exit(int cause)
 
         reparent(p);
 
+        spinlock_acquire(&p->lock);
+        p->exit_state = cause;
+        p->state = PROCESS_ZOMBIE;
+        spinlock_release(&p->lock);
+
         wakeup(p->parent);
 
-        spinlock_acquire(&p->lock);
-        spinlock_acquire(&p->cur_thread->lock);
-
-        p->exit_state = cause;
-        p->state = ZOMBIE;
-        p->cur_thread->state = DIED;
+        spinlock_acquire(&current->lock);
+        current->state = THREAD_EXITED;
         
         for(i = 0; i < p->tnums; i++) {
-                if(p->thread[i] && p->thread[i] != p->cur_thread) {
+                if(p->thread[i] && p->thread[i] != current) {
                         spinlock_acquire(&p->thread[i]->lock);
-                        p->thread[i]->state = DIED;
+                        p->thread[i]->state = THREAD_EXITED;
                         spinlock_release(&p->thread[i]->lock);
                 }
         }
@@ -535,7 +527,7 @@ int process_wait(int target, uint64 status_address, int nohang)
 			   (target == -1 || target == pp->pid)) {
                                 spinlock_acquire(&pp->lock);
                                 kids = 1;
-                                if(pp->state == ZOMBIE) {
+				if(pp->state == PROCESS_ZOMBIE) {
                                         pid = pp->pid;
 
 					exit_status =
@@ -590,8 +582,9 @@ int kill(int pid)
                 spinlock_acquire(&p->lock);
                 if(p->pid == pid) {
                         p->killed = 1;
-                        if(p->state == SLEEPING)
-                                p->state = RUNNABLE;
+                        for(int i = 0; i < p->tnums; i++)
+                                if(p->thread[i])
+                                        scheduler_wake(p->thread[i]);
                         spinlock_release(&p->lock);
                         return 0;
                 }
