@@ -58,6 +58,11 @@ check-uapi:
 	$(CC) -std=gnu17 -fsyntax-only -I arch/riscv/include \
 		-I kernel/include tests/linux_uapi.c
 
+.PHONY: check-opensbi
+check-opensbi: all
+	CROSS_COMPILE="$(CROSS_COMPILE)" \
+		tests/scripts/check-opensbi.sh
+
 .PHONY: start_recursive_build
 start_recursive_build:
 	$(MAKE) -C ./ -f $(TOPDIR)/Makefile.build

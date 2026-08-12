@@ -28,13 +28,17 @@ jobs:
             build-essential \
             gcc-riscv64-linux-gnu \
             binutils-riscv64-linux-gnu \
-            libc6-dev-riscv64-cross
+            libc6-dev-riscv64-cross \
+            ripgrep
 
       - name: Build kernel
         run: make -j"$(nproc)"
 
       - name: Check Linux UAPI layouts
         run: make -C tests uapi
+
+      - name: Check OpenSBI boundary
+        run: make -C tests opensbi
 
   qemu-runtime:
     name: QEMU runtime
@@ -57,6 +61,7 @@ jobs:
             gcc-riscv64-linux-gnu \
             binutils-riscv64-linux-gnu \
             qemu-system-misc \
+            ripgrep \
             e2fsprogs \
             dosfstools \
             mtools

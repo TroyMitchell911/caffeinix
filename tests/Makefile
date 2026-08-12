@@ -8,6 +8,10 @@ JOBS ?= $(shell nproc)
 uapi:
 	$(MAKE) -C $(TOPDIR) check-uapi
 
+.PHONY: opensbi
+opensbi:
+	$(MAKE) -C $(TOPDIR) check-opensbi
+
 .PHONY: qemu
 qemu:
 	TEST_OUTPUT="$(TEST_OUTPUT)" JOBS="$(JOBS)" \

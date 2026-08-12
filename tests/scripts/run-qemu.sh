@@ -21,7 +21,10 @@ require_command()
 	fi
 }
 
-for command in "$qemu" expect e2fsck debugfs fsck.fat mtype; do
+for command in \
+	"$qemu" expect e2fsck debugfs fsck.fat mtype rg \
+	"${CROSS_COMPILE:-riscv64-linux-gnu-}objdump" \
+	"${CROSS_COMPILE:-riscv64-linux-gnu-}readelf"; do
 	require_command "$command"
 done
 
@@ -43,8 +46,84 @@ export FAT_IMAGE=$fat_image
 export QEMU_LOG=$qemu_log
 export QEMU_TIMEOUT=${QEMU_TIMEOUT:-60}
 
+make -C "$topdir" check-opensbi
+
+check_boot_log()
+{
+	local clean=$1
+	local cpus=$2
+	local logical
+	local marker_count
+
+	marker_count=$(awk \
+		'$0 ~ /^SBI: spec=[0-9]+\.[0-9]+ implementation=1 / {
+			count++
+		} END { print count + 0 }' "$clean")
+	if [ "$marker_count" -ne 1 ]; then
+		echo "missing or duplicate OpenSBI BASE report" >&2
+		exit 1
+	fi
+	for logical in $(seq 0 $((cpus - 1))); do
+		marker_count=$(awk -v logical="$logical" \
+			'$0 ~ "^CPU: logical=" logical " hart=.* online$" {
+				count++
+			} END { print count + 0 }' "$clean")
+		if [ "$marker_count" -ne 1 ]; then
+			echo "unexpected CPU online count: $logical=$marker_count" >&2
+			exit 1
+		fi
+		marker_count=$(awk -v logical="$logical" \
+			'$0 == "CPU: logical=" logical " timer active" {
+				count++
+			} END { print count + 0 }' "$clean")
+		if [ "$marker_count" -ne 1 ]; then
+			echo "unexpected CPU timer count: $logical=$marker_count" >&2
+			exit 1
+		fi
+	done
+	if [ "$(awk '/^CPU: logical=.* hart=.* online$/ {
+			print $3
+		}' "$clean" | sort -u | wc -l)" -ne "$cpus" ]; then
+		echo "physical hart IDs are not unique" >&2
+		exit 1
+	fi
+	if grep -Eqi \
+		'\[PANIC\]|illegal instruction|Unhandled interrupt|timeout' \
+		"$clean"; then
+		echo "OpenSBI boot log contains a kernel failure" >&2
+		exit 1
+	fi
+}
+
+run_boot_smoke()
+{
+	local cpus=$1
+	local memory=$2
+	local log=$test_output/qemu-smp${cpus}-${memory}.log
+	local clean=$test_output/qemu-smp${cpus}-${memory}.clean.log
+
+	export QEMU_CPUS=$cpus
+	export QEMU_MEMORY=$memory
+	export QEMU_LOG=$log
+	expect "$script_dir/run-boot.exp"
+	tr -d '\r' < "$log" > "$clean"
+	if [ "$(awk '$0 == "OPENSBI_BOOT_OK" { count++ }
+		END { print count + 0 }' "$clean")" -ne 1 ]; then
+		echo "OpenSBI BusyBox smoke marker is missing" >&2
+		exit 1
+	fi
+	check_boot_log "$clean" "$cpus"
+}
+
+run_boot_smoke 1 64M
+run_boot_smoke 2 192M
+
+export QEMU_CPUS=4
+export QEMU_MEMORY=128M
+export QEMU_LOG=$qemu_log
 expect "$script_dir/run-qemu.exp"
 tr -d '\r' < "$qemu_log" > "$clean_log"
+check_boot_log "$clean_log" "$QEMU_CPUS"
 
 for marker in \
 	BUSYBOX_SHELL_OK \
