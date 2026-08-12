@@ -58,6 +58,11 @@ check-uapi:
 	$(CC) -std=gnu17 -fsyntax-only -I arch/riscv/include \
 		-I kernel/include tests/linux_uapi.c
 
+.PHONY: check-opensbi
+check-opensbi: all
+	CROSS_COMPILE="$(CROSS_COMPILE)" \
+		tests/scripts/check-opensbi.sh
+
 .PHONY: start_recursive_build
 start_recursive_build:
 	$(MAKE) -C ./ -f $(TOPDIR)/Makefile.build
@@ -77,10 +82,12 @@ $(TARGET) : built-in.o
 		sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $(TARGET).sym
 
 QEMU ?= qemu-system-riscv64
+SBI_FIRMWARE ?= default
 FS_IMG ?=
 FAT_IMG ?=
-QEMUOPTS = -machine virt -bios none -kernel $(TARGET)
-QEMUOPTS += -m 128M -smp $(CPUS) -nographic
+MEMORY ?= 256M
+QEMUOPTS = -machine virt -bios $(SBI_FIRMWARE) -kernel $(TARGET)
+QEMUOPTS += -m $(MEMORY) -smp $(CPUS) -nographic
 QEMUOPTS += -global virtio-mmio.force-legacy=false
 QEMUOPTS += -drive file=$(FS_IMG),if=none,format=raw,id=x0
 QEMUOPTS += -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
@@ -89,7 +96,7 @@ QEMUOPTS += -drive file=$(FAT_IMG),if=none,format=raw,id=x1
 QEMUOPTS += -device virtio-blk-device,drive=x1,bus=virtio-mmio-bus.1
 endif
 ifndef CPUS
-CPUS := 1
+CPUS := 8
 endif
 # try to generate a unique GDB port
 GDBPORT = $(shell expr `id -u` % 5000 + 25000)

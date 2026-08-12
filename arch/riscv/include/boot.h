@@ -4,5 +4,6 @@
 #include <typedefs.h>
 
 extern uint64 boot_dtb_address;
+extern uint64 boot_hart_id;
 
 #endif

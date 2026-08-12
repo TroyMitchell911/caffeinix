@@ -37,6 +37,9 @@
 #include <ns16550.h>
 #include <tty.h>
 #include <uart.h>
+#include <sbi.h>
+#include <timer.h>
+#include <cpu.h>
 
 volatile static uint8 start = 0;
 extern char end[];
@@ -49,6 +52,9 @@ void main(void)
 		console_early_init();
 		if (of_status < 0)
 			PANIC("invalid boot DTB");
+		cpu_topology_init(boot_hart_id);
+		sbi_init(cpu_count());
+		timer_init();
                 palloc_init();
 		irq_init();
 		plic_init();
@@ -56,6 +62,7 @@ void main(void)
 		char_device_init();
 		tty_init();
                 printf_init();
+		sbi_report();
                 // printf("%p\n", end);
                 kvm_create();
 		if (kvm_map_mmio(earlycon_address(), earlycon_size()) < 0)
@@ -64,6 +71,7 @@ void main(void)
                 thread_setup();
                 trap_init_lock();
                 trap_init();
+		timer_init_hart();
                 process_init();
 		driver_core_init();
 		if (driver_core_selftest())
@@ -89,7 +97,10 @@ void main(void)
 
                 printf("Hello! Caffeinix\n");
                 // thread_test();
-                
+		timer_wait_for_interrupt();
+		cpu_mark_online();
+		cpu_start_secondary_harts();
+
                 __sync_synchronize();
                 start = 1;
                 
@@ -100,9 +111,13 @@ void main(void)
                 kvm_init();
                 plic_init_hart();
                 trap_init();
+		timer_init_hart();
+		timer_wait_for_interrupt();
+		cpu_mark_online();
         }
 
-        printf("hardid %d started\n", cpuid());
+	if (cpuid() == 0)
+		cpu_wait_for_secondary_harts();
         scheduler();
 
         while(1);

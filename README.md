@@ -12,7 +12,8 @@ and can mount a second FAT16 or FAT32 disk at `/mnt/fat`.
 
 - Architecture: RISC-V 64-bit little-endian
 - ISA and ABI: RV64GC with LP64D
-- Machine: QEMU `virt`, one hart tested
+- Machine: QEMU `virt`, one, two, and four harts tested
+- Firmware: OpenSBI with SBI v0.2 or newer, TIME, and HSM for SMP
 - Userspace: static non-PIE musl ELF executables
 - Root filesystem: ext4 with 1 KiB filesystem blocks
 - Optional data filesystem: FAT16 or FAT32
@@ -31,7 +32,7 @@ sudo apt update
 sudo apt install \
   build-essential git curl \
   gcc-riscv64-linux-gnu binutils-riscv64-linux-gnu \
-  qemu-system-misc e2fsprogs
+  qemu-system-misc e2fsprogs ripgrep
 ```
 
 On Arch:
@@ -39,7 +40,7 @@ On Arch:
 ```bash
 sudo pacman -S --needed \
   base-devel git curl riscv64-linux-gnu-gcc \
-  qemu-system-riscv e2fsprogs
+  qemu-system-riscv e2fsprogs ripgrep
 ```
 
 Install `gdb-multiarch` on Ubuntu or `riscv64-elf-gdb` on Arch only when
@@ -57,6 +58,7 @@ export CAFFEINIX_DIR=/absolute/path/to/caffeinix
 
 make -C "$CAFFEINIX_DIR" -j"$(nproc)"
 make -C "$CAFFEINIX_DIR" check-uapi
+make -C "$CAFFEINIX_DIR" check-opensbi
 ```
 
 This produces `output/kernel`. The kernel build needs neither musl nor
@@ -218,6 +220,37 @@ layer ownership rules and the Device Tree needed to add another serial port.
 make -C "$CAFFEINIX_DIR" qemu FS_IMG="$FS_IMG"
 ```
 
+QEMU's bundled OpenSBI starts Caffeinix in supervisor mode with eight harts and
+256 MiB of RAM by default. Select other values with `CPUS` and `MEMORY`; the
+kernel discovers both from the Device Tree and starts secondaries through SBI
+HSM:
+
+```bash
+make -C "$CAFFEINIX_DIR" qemu \
+  CPUS=4 \
+  MEMORY=192M \
+  FS_IMG="$FS_IMG"
+```
+
+OpenSBI remains external to the kernel build. To test a specific release,
+build it in a separate directory and pass its dynamic firmware image:
+
+```bash
+export OPENSBI_DIR=/absolute/path/to/opensbi
+
+make -C "$OPENSBI_DIR" -j"$(nproc)" \
+  CROSS_COMPILE=riscv64-linux-gnu- \
+  PLATFORM=generic
+
+make -C "$CAFFEINIX_DIR" qemu \
+  SBI_FIRMWARE="$OPENSBI_DIR/build/platform/generic/firmware/fw_dynamic.bin" \
+  FS_IMG="$FS_IMG"
+```
+
+The kernel Makefile never downloads or builds OpenSBI. See
+[`Documentation/opensbi.md`](Documentation/opensbi.md) for the boot register,
+memory, SBI extension, and multi-hart contracts.
+
 At the shell prompt, try:
 
 ```sh
@@ -298,7 +331,8 @@ the kernel. No separate rootfs repository or private compiler is required.
 - FAT support excludes exFAT and returns `EBUSY` when unlinking an open file.
 - Docker is not supported; it also needs namespaces, cgroups, mounts,
   networking, `/proc`, and a much wider syscall surface.
-- Real boards still need platform boot, interrupt, timer, and device drivers.
+- Real boards still need a loader for the kernel and DTB plus compatible
+  interrupt-controller, console, and storage drivers.
 
 ## Contributing
 

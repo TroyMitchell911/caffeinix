@@ -11,6 +11,7 @@
 #include <palloc.h>
 #include <mem_layout.h>
 #include <mystring.h>
+#include <of.h>
 
 #define MAGIC_NUMBER                            (0x20030528)
 #define MIN_SIZE                                (1)
@@ -52,21 +53,133 @@ typedef struct pool {
 static pmem_free_list_t head = 0;
 static struct pool pool;
 
+#define PALLOC_MEMORY_RANGE_MAX 8
+#define PALLOC_RESERVED_RANGE_MAX 32
+
+struct palloc_range {
+	uint64 start;
+	uint64 end;
+};
+
+static struct palloc_range memory_ranges[PALLOC_MEMORY_RANGE_MAX];
+static struct palloc_range reserved_ranges[PALLOC_RESERVED_RANGE_MAX];
+static int memory_range_count;
+static int reserved_range_count;
+static uint64 heap_start;
+
 /* Defination is in kernel.ld */
 extern char end[];
+
+static int palloc_range_contains(const struct palloc_range *range,
+				 uint64 start, uint64 finish)
+{
+	return start >= range->start && finish <= range->end;
+}
+
+static int palloc_range_overlaps(const struct palloc_range *range,
+				 uint64 start, uint64 finish)
+{
+	return start < range->end && finish > range->start;
+}
+
+int palloc_page_usable(uint64 address)
+{
+	int i;
+
+	if (address % PGSIZE || address < heap_start ||
+	    address + PGSIZE < address)
+		return 0;
+	for (i = 0; i < memory_range_count; i++) {
+		if (palloc_range_contains(&memory_ranges[i], address,
+		                          address + PGSIZE))
+			break;
+	}
+	if (i == memory_range_count)
+		return 0;
+	for (i = 0; i < reserved_range_count; i++) {
+		if (palloc_range_overlaps(&reserved_ranges[i], address,
+		                          address + PGSIZE))
+			return 0;
+	}
+	return 1;
+}
+
+int palloc_memory_range_count(void)
+{
+	return memory_range_count;
+}
+
+int palloc_memory_range_get(int index, uint64 *start, uint64 *finish)
+{
+	if (index < 0 || index >= memory_range_count || !start || !finish)
+		return -1;
+	*start = memory_ranges[index].start;
+	*finish = memory_ranges[index].end;
+	return 0;
+}
+
+uint64 palloc_heap_start(void)
+{
+	return heap_start;
+}
+
+static void palloc_discover_memory(void)
+{
+	struct of_memory_range range;
+	uint64 kernel_start = KERNEL_BASE;
+	uint64 kernel_end = PGROUNDUP((uint64)end);
+	int count, i, kernel_range = 0;
+
+	count = of_memory_range_count();
+	if (count <= 0 || count > PALLOC_MEMORY_RANGE_MAX)
+		PANIC("unsupported memory layout");
+	for (i = 0; i < count; i++) {
+		if (of_memory_range_get(i, &range) < 0)
+			PANIC("invalid memory range");
+		memory_ranges[i].start = PGROUNDUP(range.start);
+		memory_ranges[i].end = PGROUNDDOWN(range.start + range.size);
+		if (memory_ranges[i].start >= memory_ranges[i].end)
+			PANIC("empty memory range");
+		if (palloc_range_contains(&memory_ranges[i], kernel_start,
+		                          kernel_end))
+			kernel_range++;
+	}
+	memory_range_count = count;
+	if (kernel_range != 1)
+		PANIC("kernel outside memory");
+
+	count = of_reserved_memory_range_count();
+	if (count < 0 || count > PALLOC_RESERVED_RANGE_MAX)
+		PANIC("unsupported reserved memory");
+	for (i = 0; i < count; i++) {
+		if (of_reserved_memory_range_get(i, &range) < 0 ||
+		    range.start + range.size < range.start)
+			PANIC("invalid reserved memory");
+		reserved_ranges[i].start = PGROUNDDOWN(range.start);
+		reserved_ranges[i].end = PGROUNDUP(range.start + range.size);
+	}
+	reserved_range_count = count;
+	heap_start = kernel_end;
+}
 
 /* Init the physical memory */
 void palloc_init(void)
 {
-        /* Aligned upward at 4096 bytes */
-        char* heap_start = (char*)PGROUNDUP((uint64)end);\
-        char* p;
+	uint64 address;
+	int i, pages = 0;
 
-        /* Traverse free memory */
-        for(p = heap_start; p <= (char*)(PHY_MEM_STOP - PGSIZE); p += PGSIZE) {
-                pfree(p);
-        }
-
+	palloc_discover_memory();
+	for (i = 0; i < memory_range_count; i++) {
+		for (address = memory_ranges[i].start;
+		     address < memory_ranges[i].end; address += PGSIZE) {
+			if (!palloc_page_usable(address))
+				continue;
+			pfree((void *)address);
+			pages++;
+		}
+	}
+	if (!pages)
+		PANIC("no usable memory");
 }
 
 /* Free the physical memory */
@@ -74,8 +187,8 @@ void pfree(void* p)
 {
         struct pmem_free_list *pmem_node;
 
-        /* Check the legality of the address of 'p' */
-        if(((uint64)p % PGSIZE != 0) || ((char*)p < end) || ((uint64)p > (PHY_MEM_STOP - PGSIZE)))
+	/* Check the legality of the address of 'p'. */
+	if (!palloc_page_usable((uint64)p))
                 PANIC("pfree");
         
         /* Clear the memory */

@@ -1,0 +1,63 @@
+#!/usr/bin/expect -f
+
+proc abort_test {message} {
+	puts stderr "OpenSBI boot test failed: $message"
+	catch {close}
+	exit 1
+}
+
+foreach variable {
+	QEMU SBI_FIRMWARE KERNEL ROOT_IMAGE QEMU_LOG QEMU_CPUS QEMU_MEMORY
+} {
+	if {![info exists env($variable)] || $env($variable) eq ""} {
+		puts stderr "missing environment variable: $variable"
+		exit 1
+	}
+}
+
+set timeout 60
+if {[info exists env(QEMU_TIMEOUT)] && $env(QEMU_TIMEOUT) ne ""} {
+	set timeout $env(QEMU_TIMEOUT)
+}
+
+log_file -noappend $env(QEMU_LOG)
+set command [list \
+	$env(QEMU) \
+	-machine virt \
+	-bios $env(SBI_FIRMWARE) \
+	-kernel $env(KERNEL) \
+	-m $env(QEMU_MEMORY) \
+	-smp $env(QEMU_CPUS) \
+	-nographic \
+	-snapshot \
+	-global virtio-mmio.force-legacy=false \
+	-drive file=$env(ROOT_IMAGE),if=none,format=raw,id=x0 \
+	-device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0]
+
+spawn -noecho {*}$command
+expect {
+	-re {\[PANIC\]} { abort_test "kernel panic before shell startup" }
+	-re {\r?\n# $} {}
+	timeout { abort_test "shell prompt timeout" }
+	eof { abort_test "QEMU exited before shell startup" }
+}
+
+send -- "echo OPENSBI_BOOT_OK\r"
+expect {
+	-re {\r?\nOPENSBI_BOOT_OK} {}
+	-re {\[PANIC\]} { abort_test "kernel panic in BusyBox shell" }
+	timeout { abort_test "BusyBox command timeout" }
+	eof { abort_test "QEMU exited in BusyBox shell" }
+}
+expect {
+	-re {\r?\n# $} {}
+	-re {\[PANIC\]} { abort_test "kernel panic after BusyBox command" }
+	timeout { abort_test "shell prompt timeout" }
+	eof { abort_test "QEMU exited before final shell prompt" }
+}
+
+send -- "\001x"
+expect {
+	eof {}
+	timeout { abort_test "QEMU exit timeout" }
+}

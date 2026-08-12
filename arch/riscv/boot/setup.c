@@ -8,56 +8,40 @@
  * Words are cheap so I do.
  * Copyright (c) 2024 by TroyMitchell, All Rights Reserved. 
  */
-#include <kernel_config.h>
 #include <riscv.h>
 #include <boot.h>
+#include <cpu.h>
+#include <kernel_config.h>
 
 extern void main(void);
-extern void timer_init(uint8 hartid);
 
-/* Create a stack that the CPUS go into c environment */
-__attribute__ ((aligned (16))) int8 stack_for_c[4096 * NCPU];
+/* OpenSBI starts only the boot hart before SBI HSM is used. */
+__attribute__((aligned(16))) int8 boot_stack[4096];
+__attribute__((aligned(16))) int8 secondary_stacks[4096 * NCPU];
 uint64 boot_dtb_address;
+uint64 boot_hart_id;
 
-void setup(uint64 qemu_hartid, uint64 dtb_address)
+void setup(uint64 hart_id, uint64 dtb_address)
 {
-        int hartid;
+	/* The standard next-stage contract enters with paging disabled. */
+	satp_w(0);
+	sfence_vma();
+	boot_hart_id = hart_id;
+	boot_dtb_address = dtb_address;
+	/* Caffeinix uses tp as a dense logical CPU ID. */
+	tp_w(0);
+	main();
+	for (;;)
+		;
+}
 
-	(void)qemu_hartid;
-
-        /* Read value of status into variable 'status' */
-        uint64 status = mstatus_r();
-        /* Clear the flag of previous mode */
-        status &= ~MSTATUS_MPP_MASK;
-        /* Set the flag of previous mode to 'Supervisor mode' */
-        status |= MSTATUS_MPP_S;
-        mstatus_w(status);
-
-        /* Write return address */
-        mepc_w((uint64)main);
-
-        /* Dsiable page-table function */
-        satp_w(0);
-
-        /* Delegate all interrupts and exceptions to supervisor mode. */
-        medeleg_w(0xffff);
-        mideleg_w(0xffff);
-        /* Enable interrupt */
-        sie_w(sie_r() | SIE_SEIE | SIE_SSIE | SIE_STIE);
-        
-        /* Allow 'Supervisor mode' to access all 128M of memory */
-        pmpaddr0_w(0x3fffffffffffffull);
-        pmpcfg0_w(0xf);
-
-        /* Initialize the timer corresponding to each hart */
-        hartid = mhartid_r();
-	if (hartid == 0)
-		boot_dtb_address = dtb_address;
-        /* Write hartid into the register 'tp' */
-        tp_w(hartid);
-
-        timer_init(hartid);
-
-        /* Enter 'Supervisor mode' and 'main'  */
-        asm volatile("mret");
+void secondary_setup(uint64 hart_id, uint64 logical_id)
+{
+	satp_w(0);
+	sfence_vma();
+	tp_w(logical_id);
+	cpu_secondary_validate(hart_id, logical_id);
+	main();
+	for (;;)
+		;
 }

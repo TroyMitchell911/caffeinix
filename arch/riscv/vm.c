@@ -109,6 +109,9 @@ int vm_map(pagedir_t pgdir, uint64 va, uint64 pa, uint64 size, int perm)
 
 static pagedir_t kernel_pagedir_t_create(void)
 {
+	uint64 address, finish, start;
+	int i;
+
         /* Alloc the physical memory for page-table */
         pagedir_t pgdir = (pagedir_t)palloc();
         
@@ -124,9 +127,21 @@ static pagedir_t kernel_pagedir_t_create(void)
         /* Map the text */
         vm_map(pgdir, KERNEL_BASE, KERNEL_BASE,
                (uint64)etext - KERNEL_BASE, PTE_R | PTE_X);
-        /* Map the data and the rest of physical DRAM */
+        /* Map the kernel data and static allocations. */
         vm_map(pgdir, (uint64)etext, (uint64)etext,
-               PHY_MEM_STOP - (uint64)etext, PTE_R | PTE_W);
+	       palloc_heap_start() - (uint64)etext,
+	       PTE_R | PTE_W);
+	/* Map only allocator-owned RAM, leaving reservations inaccessible. */
+	for (i = 0; i < palloc_memory_range_count(); i++) {
+		if (palloc_memory_range_get(i, &start, &finish) < 0)
+			PANIC("memory range");
+		for (address = start; address < finish; address += PGSIZE) {
+			if (!palloc_page_usable(address))
+				continue;
+			vm_map(pgdir, address, address, PGSIZE,
+			       PTE_R | PTE_W);
+		}
+	}
 
         map_kernel_stack(pgdir);
         return pgdir;
