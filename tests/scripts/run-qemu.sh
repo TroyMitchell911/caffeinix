@@ -41,7 +41,7 @@ export FAT_IMAGE=$fat_image
 export QEMU_LOG=$qemu_log
 export QEMU_TIMEOUT=${QEMU_TIMEOUT:-60}
 
-"$script_dir/run-qemu.exp"
+expect "$script_dir/run-qemu.exp"
 tr -d '\r' < "$qemu_log" > "$clean_log"
 
 for marker in \
