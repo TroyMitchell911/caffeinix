@@ -27,6 +27,8 @@
 #include <devfs.h>
 #include <tmpfs.h>
 #include <vfs.h>
+#include <boot.h>
+#include <of.h>
 
 volatile static uint8 start = 0;
 extern char end[];
@@ -34,8 +36,12 @@ extern char end[];
 void main(void)
 {
         if(cpuid() == 0) {
+		int of_status = of_init((void *)boot_dtb_address);
+
                 palloc_init();
                 console_init();
+		if (of_status < 0)
+			PANIC("invalid boot DTB");
                 printf_init();
                 plic_init();
                 plic_init_hart();

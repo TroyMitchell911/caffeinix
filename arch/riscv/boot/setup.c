@@ -10,16 +10,20 @@
  */
 #include <kernel_config.h>
 #include <riscv.h>
+#include <boot.h>
 
 extern void main(void);
 extern void timer_init(uint8 hartid);
 
 /* Create a stack that the CPUS go into c environment */
 __attribute__ ((aligned (16))) int8 stack_for_c[4096 * NCPU];
+uint64 boot_dtb_address;
 
-void setup(void)
+void setup(uint64 qemu_hartid, uint64 dtb_address)
 {
         int hartid;
+
+	(void)qemu_hartid;
 
         /* Read value of status into variable 'status' */
         uint64 status = mstatus_r();
@@ -47,6 +51,8 @@ void setup(void)
 
         /* Initialize the timer corresponding to each hart */
         hartid = mhartid_r();
+	if (hartid == 0)
+		boot_dtb_address = dtb_address;
         /* Write hartid into the register 'tp' */
         tp_w(hartid);
 

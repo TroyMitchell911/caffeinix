@@ -1,0 +1,18 @@
+Source: https://git.kernel.org/pub/scm/utils/dtc/dtc.git
+Mirror: https://github.com/dgibson/dtc.git
+Tag: v1.7.2
+Commit: 2d10aa2afe35527728db30b35ec491ecb6959e5c
+Path: libfdt/
+License: GPL-2.0-or-later OR BSD-2-Clause
+
+Imported files:
+
+- fdt.c
+- fdt_ro.c
+- fdt_check.c
+- fdt.h
+- libfdt.h
+- libfdt_internal.h
+- libfdt_env.h
+
+The local libfdt_env.h uses Caffeinix freestanding types and string helpers.

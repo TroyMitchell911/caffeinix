@@ -92,6 +92,18 @@ void* memcpy(void* dst, const void* src, size_t n)
         return memmove(dst, src, n);
 }
 
+void* memchr(const void *buffer, int character, size_t n)
+{
+	const uint8 *bytes = buffer;
+
+	while (n--) {
+		if (*bytes == (uint8)character)
+			return (void *)bytes;
+		bytes++;
+	}
+	return 0;
+}
+
 int memcmp(const void *left, const void *right, size_t n)
 {
 	const uint8 *p = left;
@@ -152,6 +164,15 @@ char* strrchr(const char *p, int c)
         for(; p > p_start && *p != c; p--);
 
 	return p == p_start && *p != c ? 0 : (char*)p;
+}
+
+size_t strnlen(const char *s, size_t max)
+{
+	size_t length = 0;
+
+	while (length < max && s[length])
+		length++;
+	return length;
 }
 
 static void byte_swap(uint8 *left, uint8 *right, size_t size)
