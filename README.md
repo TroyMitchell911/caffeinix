@@ -16,6 +16,7 @@ and can mount a second FAT16 or FAT32 disk at `/mnt/fat`.
 - Userspace: static non-PIE musl ELF executables
 - Root filesystem: ext4 with 1 KiB filesystem blocks
 - Optional data filesystem: FAT16 or FAT32
+- Serial console: DT-discovered NS16550A at `/dev/ttyS0` (device 4:64)
 - UAPI reference: Linux 6.10 RISC-V headers
 
 ## Prerequisites
@@ -200,6 +201,17 @@ make -C "$CAFFEINIX_DIR/tests" qemu
 This is the entry point used by continuous integration. See
 [`tests/README.md`](tests/README.md) for its dependencies and coverage.
 
+## Platform and serial drivers
+
+The QEMU UART is discovered from the boot Device Tree and bound through the
+platform bus. The NS16550 hardware driver feeds reusable UART and TTY cores;
+devfs creates `/dev/ttyS0` from the live character-device registry.
+`/dev/console` forwards to the serial console selected by
+`/chosen/stdout-path`.
+
+See [`Documentation/driver-model.md`](Documentation/driver-model.md) for the
+layer ownership rules and the Device Tree needed to add another serial port.
+
 ## Run
 
 ```bash
@@ -266,7 +278,8 @@ removable and cross-platform data.
 ## Filesystem support
 
 - ext4: default read-write root with journaling and recovery
-- devfs: `/dev/console`, `/dev/tty`, `/dev/null`, and `/dev/zero`
+- devfs: `/dev/console`, `/dev/ttyS0`, `/dev/tty`, `/dev/null`, and
+  `/dev/zero`
 - tmpfs: volatile read-write `/tmp` with files, directories, links, sparse
   pages, rename, truncate, and unlink-open-file behavior
 - FAT16/32: optional persistent data filesystem with long UTF-8 names;
