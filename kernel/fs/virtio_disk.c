@@ -3,6 +3,7 @@
 #include <mem_layout.h>
 #include <mystring.h>
 #include <palloc.h>
+#include <irq.h>
 #include <process.h>
 #include <spinlock.h>
 #include <virtio_disk.h>
@@ -42,6 +43,13 @@ static struct virtio_disk disks[VIRTIO_MMIO_SLOTS];
 
 static int virtio_submit(struct virtio_disk *disk, uint32 type,
 			 uint64 sector, void *buffer, uint32 length);
+
+static int virtio_irq_handler(uint32 irq, void *data)
+{
+	(void)data;
+	virtio_disk_intr(irq);
+	return IRQ_HANDLED;
+}
 
 static int virtio_read(struct block_device *device, uint64 sector,
 		       void *buffer, uint32 count)
@@ -162,6 +170,9 @@ static int virtio_disk_init_one(struct virtio_disk *disk, int index)
 	disk->present = 1;
 	if (block_device_register(&disk->device))
 		PANIC("virtio disk registration");
+	if (request_irq(disk->irq, virtio_irq_handler, disk,
+	                disk->name) < 0)
+		PANIC("request virtio IRQ");
 	return 1;
 }
 

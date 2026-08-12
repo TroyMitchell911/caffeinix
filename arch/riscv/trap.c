@@ -1,12 +1,10 @@
 #include <trap.h>
 #include <spinlock.h>
-#include <uart.h>
 #include <debug.h>
+#include <irq.h>
 #include <scheduler.h>
 #include <printf.h>
 #include <plic.h>
-#include <virtio_disk.h>
-#include <debug.h>
 
 extern void kernel_vec(void);
 extern char trampoline[], user_vec[], user_ret[];
@@ -38,18 +36,8 @@ static int dev_intr(uint64 scause)
            (scause & 0xff) == 9) {
                 /* Get interrupt number from PLIC */
                 irq = plic_claim();
-                if(irq == UART0_IRQ) {
-                        uart_intr();
-		} else if (irq >= VIRTIO0_IRQ &&
-		           irq < VIRTIO0_IRQ + VIRTIO_MMIO_SLOTS) {
-			virtio_disk_intr(irq);
-                /* 
-                 * irq 0 is reserved to mean “no interrupt”.
-                 * see here: https://five-embeddev.com/riscv-priv-isa-manual/Priv-v1.12/plic.html#interrupt-identifiers-ids
-                 */
-                } else if(irq != 0){
-                        printf("Unexpected interrupt irq=%d\n", irq);
-                }
+		if (irq && irq_dispatch(irq) != IRQ_HANDLED)
+			printf("Unhandled interrupt irq=%d\n", irq);
                 if(irq) {
                         /* Clear the interrupt flag */
                         plic_complete(irq);
@@ -119,7 +107,8 @@ void user_trap_entry(void)
         } else {
                 if((which_dev = dev_intr(cause)) == 0) {
                         printf("scause %p\n", cause);
-                        printf("sepc=%p stval=%p\n", p->cur_thread->trapframe->epc, stval_r());
+                        printf("sepc=%p stval=%p\n",
+                               p->cur_thread->trapframe->epc, stval_r());
                         PANIC("user_trap_entry");
                 }
         }

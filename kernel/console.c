@@ -1,140 +1,98 @@
-/*
- * @Author: TroyMitchell
- * @Date: 2024-04-26
- * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-23
- * @FilePath: /caffeinix/kernel/console.c
- * @Description: 
- * Words are cheap so I do.
- * Copyright (c) 2024 by TroyMitchell, All Rights Reserved. 
- */
-#include "process.h"
 #include <console.h>
+#include <device_model.h>
+#include <earlycon.h>
+#include <of.h>
 #include <spinlock.h>
-#include <driver.h>
-#include <process.h>
-#include <mystring.h>
+#include <tty.h>
+
+#define CONSOLE_MAX 8
 
 static struct {
-        struct spinlock lock;
-  
-        #define INPUT_BUF_SIZE 128
-        char buf[INPUT_BUF_SIZE];
-        /* read index */
-        uint32 r;  
-        /* write index */
-        uint32 w;  
-        /* edit index */
-        uint32 e;  
-}console;
+	struct spinlock lock;
+	struct console *devices[CONSOLE_MAX];
+	struct console *active;
+} console_core;
 
-#define BACKSPACE       0x100
-#define C(x)            ((x)-'@')  // Control-x
-
-int read_size = 0;
-
-static void console_intr(int c)
+void console_early_init(void)
 {
-        spinlock_acquire(&console.lock);
-
-        switch(c) {
-                case '\x7f':
-                        if(console.e != console.w) {
-                                console.e --;
-                                console_putc(BACKSPACE);
-                        }
-                        break;
-                default:
-                        if(c != 0 && console.e - console.r < INPUT_BUF_SIZE) {
-                                c = (c == '\r') ? '\n' : c;
-                                /* Echo */
-                                console_putc(c);
-                                console.buf[console.e++ % INPUT_BUF_SIZE] = c;
-                                /* We can wakeup the blocked process by read if the user input '\n' */
-                                if(c == '\n' || console.e - console.r == INPUT_BUF_SIZE || console.e - console.r == read_size) {
-                                        console.w = console.e;
-                                        wakeup_(&console.r);
-                                }
-                        }
-                        break;
-        }
-
-        spinlock_release(&console.lock);
+	spinlock_init(&console_core.lock, "console core");
+	earlycon_init();
 }
 
-void console_putc(int c)
+static int console_is_stdout(struct console *console)
 {
-        if(c == BACKSPACE) {
-                /* Clear the character */
-                uart_putc_sync('\b');
-                uart_putc_sync(' ');
-                uart_putc_sync('\b');
-        } else {
-                uart_putc_sync(c);
-        }
+	struct device_node *stdout_node = of_stdout_node();
+
+	return stdout_node && console->of_node == stdout_node;
 }
 
-int console_read(uint64 dst, int n)
+int console_register(struct console *console)
 {
-        char c;
-        int ret, target;
+	int free_slot = -1;
+	int index;
 
-        target = n;
-
-        read_size = n;
-
-        spinlock_acquire(&console.lock);
-
-        while(n > 0) {
-                /* Wait until the interrupt handler put some data into console */
-                while(console.r == console.w) {
-                        /* TODO: If this process is killed */
-                        sleep_(&console.r, &console.lock);
-                }
-
-                c = console.buf[console.r++ % INPUT_BUF_SIZE];
-
-                /* TODO: other character */
-
-                ret = either_copyout(1, dst, &c, 1);
-                if(ret != 0) {
-                        break;
-                }
-
-                n --;
-                dst ++;
-
-                if(c == '\n') {
-                        break;
-                }
-        }
-
-        spinlock_release(&console.lock);
-
-        return target - n;
+	if (!console || !console->name || !console->operations ||
+	    !console->operations->put_char || !console->tty)
+		return DRIVER_ERR_INVAL;
+	spinlock_acquire(&console_core.lock);
+	if (console->registered) {
+		spinlock_release(&console_core.lock);
+		return DRIVER_ERR_EXIST;
+	}
+	for (index = 0; index < CONSOLE_MAX; index++) {
+		if (!console_core.devices[index] && free_slot < 0)
+			free_slot = index;
+		if (console_core.devices[index] == console) {
+			spinlock_release(&console_core.lock);
+			return DRIVER_ERR_EXIST;
+		}
+	}
+	if (free_slot < 0) {
+		spinlock_release(&console_core.lock);
+		return DRIVER_ERR_BUSY;
+	}
+	console_core.devices[free_slot] = console;
+	console->registered = 1;
+	if (!console_core.active || console_is_stdout(console))
+		console_core.active = console;
+	console = console_core.active;
+	spinlock_release(&console_core.lock);
+	tty_set_console(console->tty);
+	return DRIVER_OK;
 }
 
-int console_write(uint64 src, int n)
+void console_unregister(struct console *console)
 {
-        int i, ret;
-        char c;
-        for(i = 0; i < n; i++) {
-                ret = either_copyin(&c, 1, src + i, 1);
-                if(ret != 0) {
-                        break;
-                }
-                uart_putc(c);
-        }
-        return i;
+	struct console *replacement = 0;
+	int index;
+
+	if (!console)
+		return;
+	spinlock_acquire(&console_core.lock);
+	for (index = 0; index < CONSOLE_MAX; index++) {
+		if (console_core.devices[index] == console)
+			console_core.devices[index] = 0;
+		if (!replacement && console_core.devices[index])
+			replacement = console_core.devices[index];
+		if (console_core.devices[index] &&
+		    console_is_stdout(console_core.devices[index]))
+			replacement = console_core.devices[index];
+	}
+	if (console_core.active == console)
+		console_core.active = replacement;
+	console->registered = 0;
+	replacement = console_core.active;
+	spinlock_release(&console_core.lock);
+	if (replacement)
+		tty_set_console(replacement->tty);
 }
 
-void console_init(void)
+void console_putc(int character)
 {
-        spinlock_init(&console.lock, "console");
-        uart_init();
-        uart_register_rx_callback(console_intr);
+	struct console *console = console_core.active;
 
-        /* Set the operating function */
-        dev[CONSOLE].write = console_write;
-        dev[CONSOLE].read = console_read;
+	if (console && console->registered)
+		console->operations->put_char(console, character);
+	else
+		earlycon_putc(character);
 }

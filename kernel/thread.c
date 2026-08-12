@@ -9,9 +9,9 @@
  * Copyright (c) 2024 by TroyMitchell, All Rights Reserved. 
  */
 #include <thread.h>
+#include <mem_layout.h>
 #include <palloc.h>
 #include <mystring.h>
-#include <uart.h>
 #include <printf.h>
 #include <vm.h>
 #include <process.h>

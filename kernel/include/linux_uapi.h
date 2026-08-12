@@ -138,6 +138,9 @@ struct linux_iovec {
 #define LINUX_PR_GET_NAME             16
 
 #define LINUX_TCGETS              0x5401
+#define LINUX_TCSETS              0x5402
+#define LINUX_TCSETSW             0x5403
+#define LINUX_TCSETSF             0x5404
 #define LINUX_TIOCGWINSZ          0x5413
 
 #define LINUX_ICRNL                0x100

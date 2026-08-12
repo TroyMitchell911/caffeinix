@@ -31,6 +31,12 @@
 #include <boot.h>
 #include <of.h>
 #include <platform_device.h>
+#include <irq.h>
+#include <char_device.h>
+#include <earlycon.h>
+#include <ns16550.h>
+#include <tty.h>
+#include <uart.h>
 
 volatile static uint8 start = 0;
 extern char end[];
@@ -40,15 +46,20 @@ void main(void)
         if(cpuid() == 0) {
 		int of_status = of_init((void *)boot_dtb_address);
 
-                palloc_init();
-                console_init();
+		console_early_init();
 		if (of_status < 0)
 			PANIC("invalid boot DTB");
+                palloc_init();
+		irq_init();
+		plic_init();
+		plic_init_hart();
+		char_device_init();
+		tty_init();
                 printf_init();
-                plic_init();
-                plic_init_hart();
                 // printf("%p\n", end);
                 kvm_create();
+		if (kvm_map_mmio(earlycon_address(), earlycon_size()) < 0)
+			PANIC("map early console");
                 kvm_init();
                 thread_setup();
                 trap_init_lock();
@@ -62,6 +73,10 @@ void main(void)
 			PANIC("platform core selftest");
 		if (of_platform_populate() < 0)
 			PANIC("populate platform devices");
+		if (ns16550_init() < 0)
+			PANIC("register NS16550 driver");
+		if (uart_core_selftest() < 0)
+			PANIC("UART core selftest");
                 block_device_init();
                 file_init();
 		vfs_init();

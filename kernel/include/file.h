@@ -18,5 +18,6 @@ int64 file_read(file_t file, int user_destination, uint64 destination,
 		uint64 count, uint64 *position);
 int64 file_write(file_t file, int user_source, uint64 source,
 		 uint64 count, uint64 *position);
+int64 file_ioctl(file_t file, uint64 request, uint64 argument);
 
 #endif
