@@ -227,7 +227,7 @@ void* palloc(void)
 static uint64 malloc_core(page_t page, uint64 blocks)
 {
         int i, j, mask;
-        uint64 count = 0, start;
+        uint64 count = 0, start = 0, k;
 
         if(!page)
                 return -1;
@@ -236,12 +236,14 @@ static uint64 malloc_core(page_t page, uint64 blocks)
                 mask = 0x80;
                 for(j = 0; j < 8; j++) {
                         if((page->bitmap[i] & mask) == 0) {
-                                page->bitmap[i] |= mask;
                                 if(count == 0) {
                                         start = i * 8 + j;
                                 }
                                 count++;
                                 if(count == blocks) {
+                                        for(k = start; k < start + blocks; k++) {
+                                                page->bitmap[k / 8] |= (0x80 >> (k % 8));
+                                        }
                                         page->used += blocks;
                                         // printf("malloc_core: %d->%d\n", start, start + blocks);
                                         return start + PAGE_BLOCK;
