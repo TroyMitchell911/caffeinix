@@ -2,14 +2,17 @@
 #define __CAFFEINIX_KERNEL_SLEEP_LOCK_H
 
 #include <spinlock.h>
+#include <wait.h>
+
+struct thread;
 
 typedef struct sleeplock{
         uint8 locked;
         struct spinlock lk;
+        struct wait_queue waiters;
 
         const char* name;
-        /* Point a process that held this lock */
-        void* p;
+        struct thread *owner;
 }*sleeplock_t;
 
 void sleeplock_init(sleeplock_t lk, const char* name);
