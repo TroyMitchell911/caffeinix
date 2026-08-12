@@ -17,6 +17,7 @@ typedef struct cpu {
 	struct device_node *of_node;
 	volatile uint8 online;
 	uint8 idle;
+	uint8 need_resched;
 }*cpu_t;
 
 uint8 cpuid(void);
@@ -28,5 +29,7 @@ void scheduler(void);
 void yield(void);
 void sched(void);
 void scheduler_make_runnable(thread_t thread);
+void scheduler_request_resched(void);
+int scheduler_should_resched(void);
 
 #endif

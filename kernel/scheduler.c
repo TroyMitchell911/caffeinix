@@ -160,6 +160,7 @@ void scheduler(void)
                 t->state = THREAD_RUNNING;
                 t->home->tinfo->addr = TRAPFRAME(t->id_p);
                 cpu->current = t;
+		cpu->need_resched = 0;
                 switchto(&cpu->context, &t->context);
                 cpu->current = 0;
                 spinlock_release(&t->lock);
@@ -207,4 +208,22 @@ void yield(void)
         scheduler_enqueue(current, 0);
         sched();
         spinlock_release(&current->lock);
+}
+void scheduler_request_resched(void)
+{
+	cpu_t cpu = cur_cpu();
+
+	if (cpu->current)
+		cpu->need_resched = 1;
+}
+
+int scheduler_should_resched(void)
+{
+        cpu_t cpu = cur_cpu();
+
+        if(!cpu->need_resched || !cpu->current ||
+           cpu->current->state != THREAD_RUNNING)
+                return 0;
+        cpu->need_resched = 0;
+        return 1;
 }

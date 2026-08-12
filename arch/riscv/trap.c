@@ -76,8 +76,10 @@ void kernel_trap(void)
                 PANIC("kerneltrap");
         }
 
-        if(which_dev == 2 && cur_thread() &&
-           cur_thread()->state == THREAD_RUNNING)
+	if(which_dev == 2 || which_dev == 3)
+                scheduler_request_resched();
+
+        if(scheduler_should_resched())
                 yield();
 
         sepc_w(sepc);
@@ -119,7 +121,10 @@ void user_trap_entry(void)
         if(killed(p))
                 exit(-1);
 
-        if(which_dev == 2)
+	if(which_dev == 2 || which_dev == 3)
+                scheduler_request_resched();
+
+        if(scheduler_should_resched())
                 yield();
 
         user_trap_ret();
