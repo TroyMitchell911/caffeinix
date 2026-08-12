@@ -54,6 +54,17 @@ static int of_reg_info(const struct device_node *node, const fdt32_t **reg,
 	return length / (entry_cells * sizeof(**reg));
 }
 
+static int of_node_is_type(const struct device_node *node, const char *type)
+{
+	const char *property;
+	int length, type_length;
+
+	property = of_get_property(node, "device_type", &length);
+	type_length = strlen(type);
+	return property && length == type_length + 1 &&
+	       !memcmp(property, type, length);
+}
+
 int of_init(const void *fdt)
 {
 	struct device_node *parents[OF_MAX_NODES];
@@ -261,6 +272,137 @@ int of_alias_get_id(const struct device_node *node, const char *stem)
 		alias = fdt_get_alias(of_blob, name);
 		if (alias && !strcmp(alias, path))
 			return id;
+	}
+	return -1;
+}
+
+int of_memory_range_count(void)
+{
+	struct device_node *node = 0;
+	int count = 0;
+
+	while ((node = of_next_node(node))) {
+		const fdt32_t *reg;
+		int address_cells, entries, size_cells;
+
+		if (!of_device_is_available(node) ||
+		    !of_node_is_type(node, "memory"))
+			continue;
+		entries = of_reg_info(node, &reg, &address_cells, &size_cells);
+		if (entries < 0)
+			return -1;
+		count += entries;
+	}
+	return count;
+}
+
+int of_memory_range_get(int index, struct of_memory_range *range)
+{
+	struct device_node *node = 0;
+
+	if (index < 0 || !range)
+		return -1;
+	while ((node = of_next_node(node))) {
+		const fdt32_t *reg;
+		int address_cells, entries, entry_cells, size_cells;
+
+		if (!of_device_is_available(node) ||
+		    !of_node_is_type(node, "memory"))
+			continue;
+		entries = of_reg_info(node, &reg, &address_cells, &size_cells);
+		if (entries < 0)
+			return -1;
+		if (index >= entries) {
+			index -= entries;
+			continue;
+		}
+		entry_cells = address_cells + size_cells;
+		reg += index * entry_cells;
+		range->start = of_read_number(reg, address_cells);
+		range->size = of_read_number(reg + address_cells, size_cells);
+		if (!range->size || range->start + range->size < range->start)
+			return -1;
+		return 0;
+	}
+	return -1;
+}
+
+static int of_reserved_tree_range_count(void)
+{
+	struct device_node *node = 0;
+	struct device_node *reserved;
+	int count = 0;
+
+	reserved = of_find_node_by_path("/reserved-memory");
+	if (!reserved)
+		return 0;
+	while ((node = of_next_node(node))) {
+		const fdt32_t *reg;
+		int address_cells, entries, size_cells;
+
+		if (node->parent != reserved || !of_device_is_available(node))
+			continue;
+		entries = of_reg_info(node, &reg, &address_cells, &size_cells);
+		if (entries < 0)
+			return -1;
+		count += entries;
+	}
+	return count;
+}
+
+int of_reserved_memory_range_count(void)
+{
+	int count, tree_count;
+
+	if (!of_blob)
+		return -1;
+	count = fdt_num_mem_rsv(of_blob);
+	if (count < 0)
+		return count;
+	tree_count = of_reserved_tree_range_count();
+	if (tree_count < 0)
+		return tree_count;
+	return count + tree_count;
+}
+
+int of_reserved_memory_range_get(int index, struct of_memory_range *range)
+{
+	struct device_node *node = 0;
+	struct device_node *reserved;
+	int map_count;
+
+	if (!of_blob || index < 0 || !range)
+		return -1;
+	map_count = fdt_num_mem_rsv(of_blob);
+	if (map_count < 0)
+		return map_count;
+	if (index < map_count)
+		return fdt_get_mem_rsv(of_blob, index, &range->start,
+		                       &range->size);
+	index -= map_count;
+	reserved = of_find_node_by_path("/reserved-memory");
+	if (!reserved)
+		return -1;
+	while ((node = of_next_node(node))) {
+		const fdt32_t *reg;
+		int address_cells, entries, entry_cells, size_cells;
+
+		if (node->parent != reserved || !of_device_is_available(node))
+			continue;
+		entries = of_reg_info(node, &reg, &address_cells, &size_cells);
+		if (entries < 0)
+			return -1;
+		if (index >= entries) {
+			index -= entries;
+			continue;
+		}
+		entry_cells = address_cells + size_cells;
+		reg += index * entry_cells;
+		range->start = of_read_number(reg, address_cells);
+		range->size = of_read_number(reg + address_cells, size_cells);
+		if (!range->size || range->start + range->size < range->start)
+			return -1;
+		return 0;
 	}
 	return -1;
 }

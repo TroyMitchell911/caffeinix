@@ -6,6 +6,11 @@
 #define OF_MAX_NODES 64
 #define OF_PATH_MAX 128
 
+struct of_memory_range {
+	uint64 start;
+	uint64 size;
+};
+
 struct resource;
 
 struct device_node {
@@ -33,5 +38,10 @@ int of_address_to_resource(const struct device_node *node, int index,
 int of_irq_get(const struct device_node *node, int index);
 int of_alias_get_id(const struct device_node *node, const char *stem);
 int of_node_path(const struct device_node *node, char *path, uint32 size);
+int of_memory_range_count(void);
+int of_memory_range_get(int index, struct of_memory_range *range);
+int of_reserved_memory_range_count(void);
+int of_reserved_memory_range_get(int index,
+				 struct of_memory_range *range);
 
 #endif
