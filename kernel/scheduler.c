@@ -169,8 +169,8 @@ void sched(void)
         before_lock = cpu->before_lock;
         /* Change the context to  kernel scheduler */
         switchto(&p->cur_thread->context, &cpu->context);
-        /* Restore the value of lock */
-        cpu->before_lock = before_lock;
+	/* A resumed thread may have migrated to another CPU. */
+	cur_cpu()->before_lock = before_lock;
 }
 
 void yield(void)
