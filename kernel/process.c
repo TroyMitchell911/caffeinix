@@ -61,7 +61,7 @@ static void reparent(process_t p)
                         if(pp->parent == p) {
                                 pp->parent = first;
                                 spinlock_release(&pp->lock);
-                                wakeup(pp->parent);
+                                wait_queue_wake_all(&first->child_wait);
                                 continue;
                         }  
                         spinlock_release(&pp->lock);
@@ -249,6 +249,7 @@ static process_t process_alloc(void)
 	memset(p, 0, sizeof(*p));
 	p->umask = 0022;
 	p->state = PROCESS_LIVE;
+        wait_queue_init(&p->child_wait, "child wait");
         
         spinlock_init(&p->lock, "process");
         spinlock_acquire(&p->lock);
@@ -305,6 +306,8 @@ static void process_free(process_t p)
         int i;
 
         spinlock_acquire(&p->lock);
+        if(!wait_queue_empty(&p->child_wait))
+                PANIC("free process with child waiter");
         if(p->pagetable) {
                 process_freepagedir(p->pagetable, p->sz);
         }
@@ -488,7 +491,8 @@ void exit(int cause)
         p->state = PROCESS_ZOMBIE;
         spinlock_release(&p->lock);
 
-        wakeup(p->parent);
+        if(p->parent)
+                wait_queue_wake_all(&p->parent->child_wait);
 
         spinlock_acquire(&current->lock);
         current->state = THREAD_EXITED;
@@ -560,7 +564,7 @@ int process_wait(int target, uint64 status_address, int nohang)
 			return 0;
 		}
 
-                sleep(p, &wait_lock);
+                wait_queue_sleep(&p->child_wait, &wait_lock);
         }
 }
 
@@ -584,7 +588,8 @@ int kill(int pid)
                 if(p->pid == pid) {
                         p->killed = 1;
                         for(int i = 0; i < p->tnums; i++)
-                                if(p->thread[i])
+                                if(p->thread[i] &&
+                                   !wait_queue_wake_thread(p->thread[i]))
                                         scheduler_wake(p->thread[i]);
                         spinlock_release(&p->lock);
                         spinlock_release(&wait_lock);

@@ -15,6 +15,7 @@
 #include <spinlock.h>
 #include <riscv.h>
 #include <file.h>
+#include <wait.h>
 
 /* TODO:Delete this macro */
 // #define PROCESS_NO_SCHED                1
@@ -58,6 +59,7 @@ typedef struct process{
 	uint64 signal_mask;
 	struct process_signal_action signal_actions[64];
         struct process *parent;
+        struct wait_queue child_wait;
         trapframe_info_t tinfo;
         int tnums;
         thread_t thread[PROC_MAXTHREAD];
