@@ -13,16 +13,14 @@ static struct {
 }pf;
 
 /* Print a integer */
-static void print_int(int number, uint8 base, uint8 sign)
+static void print_int(uint32 number, uint8 base, uint8 sign)
 {
         char buf[16];
-        int i;
+        int i, negative;
         uint32 num;
-        /* If the flag 'sign' == 1 and the number is negative */
-        if(sign && (sign = number < 0))
-                num = -number;
-        else
-                num = number;
+
+        negative = sign && (int32)number < 0;
+        num = negative ? -number : number;
 
         i = 0;
         /* Get each digit into the buffer 'buf' */
@@ -30,7 +28,7 @@ static void print_int(int number, uint8 base, uint8 sign)
                 buf[i++] = digits[num % base];
         } while((num /= base) != 0);
         /* We should add a negative symbol at the end if the sign == 1 */
-        if(sign)
+        if(negative)
                 buf[i++] = '-';
         /* Inverted output */
         while(--i >= 0)
@@ -77,7 +75,7 @@ void printf(char* fmt, ...)
                                 break;
                         /* Hex */
                         case 'x':
-                                print_int(va_arg(ap, int), 16, 1);
+                                print_int(va_arg(ap, uint32), 16, 0);
                                 break;
                         /* Pointer */
                         case 'p':
