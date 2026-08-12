@@ -575,6 +575,7 @@ int kill(int pid)
         process_t p;
         list_t l;
 
+        spinlock_acquire(&wait_lock);
         for(l = proc.next; l != &proc; l = l->next) {
                 p = list_entry(l, struct process, all_tag);
                 if(!p)
@@ -586,10 +587,12 @@ int kill(int pid)
                                 if(p->thread[i])
                                         scheduler_wake(p->thread[i]);
                         spinlock_release(&p->lock);
+                        spinlock_release(&wait_lock);
                         return 0;
                 }
                 spinlock_release(&p->lock);
         }
+        spinlock_release(&wait_lock);
         return -1;
 }
 
