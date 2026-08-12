@@ -1,0 +1,78 @@
+#!/usr/bin/expect -f
+
+proc abort_test {message} {
+	puts stderr "QEMU selftest failed: $message"
+	catch {close}
+	exit 1
+}
+
+foreach variable {QEMU KERNEL ROOT_IMAGE FAT_IMAGE QEMU_LOG} {
+	if {![info exists env($variable)] || $env($variable) eq ""} {
+		puts stderr "missing environment variable: $variable"
+		exit 1
+	}
+}
+
+set timeout 60
+if {[info exists env(QEMU_TIMEOUT)] && $env(QEMU_TIMEOUT) ne ""} {
+	set timeout $env(QEMU_TIMEOUT)
+}
+
+log_file -noappend $env(QEMU_LOG)
+set command [list \
+	$env(QEMU) \
+	-machine virt \
+	-bios none \
+	-kernel $env(KERNEL) \
+	-m 128M \
+	-smp 1 \
+	-nographic \
+	-global virtio-mmio.force-legacy=false \
+	-drive file=$env(ROOT_IMAGE),if=none,format=raw,id=x0 \
+	-device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0 \
+	-drive file=$env(FAT_IMAGE),if=none,format=raw,id=x1 \
+	-device virtio-blk-device,drive=x1,bus=virtio-mmio-bus.1]
+
+spawn -noecho {*}$command
+
+expect {
+	-re {\[PANIC\]} { abort_test "kernel panic before shell startup" }
+	-re {\r?\n# $} {}
+	timeout { abort_test "shell prompt timeout" }
+	eof { abort_test "QEMU exited before shell startup" }
+}
+
+send -- "echo BUSYBOX_SHELL_OK\r"
+expect {
+	-re {\r?\nBUSYBOX_SHELL_OK\r?\n} {}
+	-re {\[PANIC\]} { abort_test "kernel panic in BusyBox shell" }
+	timeout { abort_test "BusyBox shell command timeout" }
+	eof { abort_test "QEMU exited in BusyBox shell" }
+}
+expect -re {\r?\n# $}
+
+send -- "/bin/fs-runtime\r"
+expect {
+	-re {\r?\nFS_RUNTIME_OK\r?\n} {}
+	-re {FS_RUNTIME_FAIL=[^\r\n]*} {
+		abort_test "guest runtime test reported failure"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in guest selftest" }
+	timeout { abort_test "guest selftest timeout" }
+	eof { abort_test "QEMU exited during guest selftest" }
+}
+expect -re {\r?\n# $}
+
+send -- "sync\r"
+expect {
+	-re {\[PANIC\]} { abort_test "kernel panic during sync" }
+	-re {\r?\n# $} {}
+	timeout { abort_test "sync timeout" }
+	eof { abort_test "QEMU exited during sync" }
+}
+
+send -- "\001x"
+expect {
+	eof {}
+	timeout { abort_test "QEMU exit timeout" }
+}

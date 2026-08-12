@@ -1,0 +1,72 @@
+---
+name: Caffeinix CI
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Kernel build
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install RISC-V GNU tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential \
+            gcc-riscv64-linux-gnu \
+            binutils-riscv64-linux-gnu \
+            libc6-dev-riscv64-cross
+
+      - name: Build kernel
+        run: make -j"$(nproc)"
+
+      - name: Check Linux UAPI layouts
+        run: make -C tests uapi
+
+  qemu-runtime:
+    name: QEMU runtime
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install runtime test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential \
+            bzip2 \
+            curl \
+            expect \
+            gcc-riscv64-linux-gnu \
+            binutils-riscv64-linux-gnu \
+            qemu-system-misc \
+            e2fsprogs \
+            dosfstools \
+            mtools
+
+      - name: Run Caffeinix selftests
+        run: make -C tests qemu
+
+      - name: Upload QEMU logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qemu-runtime-logs
+          path: output/tests/*.log
