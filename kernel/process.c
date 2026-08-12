@@ -399,12 +399,10 @@ int process_fork(uint64 child_stack)
 void exit(int cause)
 {
         process_t p;
-        thread_t current;
         file_t f;
-        int fd, i;
+        int fd;
 
         p = cur_proc();
-        current = cur_thread();
 
         for(fd = 0; fd < NOFILE; fd++) {
                 if((f = p->ofile[fd]) != 0) {
@@ -421,6 +419,8 @@ void exit(int cause)
         reparent(p);
 
         spinlock_acquire(&p->lock);
+	if (p->tnums != 1)
+		PANIC("multithreaded exit unsupported");
         p->exit_state = cause;
         p->state = PROCESS_ZOMBIE;
         spinlock_release(&p->lock);
@@ -428,21 +428,8 @@ void exit(int cause)
         if(p->parent)
                 wait_queue_wake_all(&p->parent->child_wait);
 
-        spinlock_acquire(&current->lock);
-        current->state = THREAD_EXITED;
-        
-        for(i = 0; i < p->tnums; i++) {
-                if(p->thread[i] && p->thread[i] != current) {
-                        spinlock_acquire(&p->thread[i]->lock);
-                        p->thread[i]->state = THREAD_EXITED;
-                        spinlock_release(&p->thread[i]->lock);
-                }
-        }
-
         spinlock_release(&wait_lock);
-
-        sched();
-        PANIC("exit");
+	scheduler_exit();
 }
 
 int process_wait(int target, uint64 status_address, int nohang)

@@ -209,6 +209,18 @@ void yield(void)
         sched();
         spinlock_release(&current->lock);
 }
+void scheduler_exit(void)
+{
+	thread_t current = cur_thread();
+
+	spinlock_acquire(&current->lock);
+	if (current->state != THREAD_RUNNING)
+		PANIC("exit non-running thread");
+	current->state = THREAD_EXITED;
+	sched();
+	PANIC("scheduled exited thread");
+}
+
 void scheduler_request_resched(void)
 {
 	cpu_t cpu = cur_cpu();
