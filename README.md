@@ -190,6 +190,16 @@ it with the same musl wrapper before running `mke2fs`:
 Run `/bin/fs-runtime` after boot. It checks ext4, devfs, and tmpfs, and also
 checks FAT semantics when `FAT_IMG` is present.
 
+The same test can build its own external userspace and run non-interactively
+under QEMU:
+
+```bash
+make -C "$CAFFEINIX_DIR/tests" qemu
+```
+
+This is the entry point used by continuous integration. See
+[`tests/README.md`](tests/README.md) for its dependencies and coverage.
+
 ## Run
 
 ```bash

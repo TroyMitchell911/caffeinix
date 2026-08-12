@@ -21,6 +21,11 @@ static int fail(int code)
 	return code;
 }
 
+static void pass(const char *name)
+{
+	write(1, name, strlen(name));
+}
+
 static int make_file(const char *path, const char *data)
 {
 	int fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0644);
@@ -159,7 +164,7 @@ static int test_tree(const char *directory)
 	return 0;
 }
 
-static int test_fat(void)
+static int test_fat(int *mounted)
 {
 	static const char *long_name =
 		"/mnt/fat/runtime/long-咖啡-file-name.txt";
@@ -167,10 +172,12 @@ static int test_fat(void)
 	struct stat mount_stat, root_stat;
 	int fd;
 
+	*mounted = 0;
 	if (stat("/", &root_stat) || stat("/mnt/fat", &mount_stat))
 		return 220;
 	if (root_stat.st_dev == mount_stat.st_dev)
 		return 0;
+	*mounted = 1;
 	if (mkdir("/mnt/fat/runtime", 0755))
 		return 221;
 	if (make_file("/mnt/fat/runtime/source", "fat-data"))
@@ -216,18 +223,23 @@ static int test_fat(void)
 int main(void)
 {
 	int result = test_devices();
+	int fat_mounted;
 
 	if (result)
 		return fail(result);
+	pass("DEVFS_OK\n");
 	result = test_tree("/ext-runtime");
 	if (result)
 		return fail(result);
+	pass("EXT4_OK\n");
 	result = test_tree("/tmp/tmp-runtime");
 	if (result)
 		return fail(result + 100);
-	result = test_fat();
+	pass("TMPFS_OK\n");
+	result = test_fat(&fat_mounted);
 	if (result)
 		return fail(result);
+	pass(fat_mounted ? "FAT_OK\n" : "FAT_SKIP\n");
 	write(1, "FS_RUNTIME_OK\n", 14);
 	return 0;
 }
