@@ -4,6 +4,8 @@
 #include <riscv.h>
 #include <list.h>
 #include <debug.h>
+#include <cpu.h>
+#include <sbi.h>
 
 extern void switchto(context_t c, context_t p);
 struct cpu cpus[NCPU];
@@ -50,9 +52,29 @@ void scheduler_init(void)
         runqueue.count = 0;
 }
 
-/* The caller must hold thread->lock. */
-void scheduler_make_runnable(thread_t thread)
+static int scheduler_claim_idle_cpu(void)
 {
+        cpu_t current = cur_cpu();
+        int logical;
+
+        if(current->idle) {
+                current->idle = 0;
+                return -1;
+        }
+        for(logical = 0; logical < cpu_count(); logical++) {
+                if(&cpus[logical] == current ||
+                   !cpus[logical].online || !cpus[logical].idle)
+                        continue;
+                cpus[logical].idle = 0;
+                return logical;
+        }
+        return -1;
+}
+
+static void scheduler_enqueue(thread_t thread, int wake_idle)
+{
+        int target = -1;
+
         if(!spinlock_holding(&thread->lock))
                 PANIC("runnable lock");
 
@@ -66,15 +88,29 @@ void scheduler_make_runnable(thread_t thread)
         list_insert_before(&runqueue.runnable, &thread->run_node);
         thread->on_runqueue = 1;
         runqueue.count++;
+        if(wake_idle)
+                target = scheduler_claim_idle_cpu();
         spinlock_release(&runqueue.lock);
+
+        if(target >= 0 && sbi_send_ipi(cpu_hart_id(target)))
+                PANIC("SBI send IPI failed");
 }
 
-static thread_t scheduler_dequeue(void)
+/* The caller must hold thread->lock. */
+void scheduler_make_runnable(thread_t thread)
+{
+        scheduler_enqueue(thread, 1);
+}
+
+static thread_t scheduler_next(cpu_t cpu)
 {
         thread_t thread = 0;
         list_t node;
 
+        if(intr_status())
+                PANIC("scheduler interrupts enabled");
         spinlock_acquire(&runqueue.lock);
+        cpu->idle = 0;
         if(runqueue.count) {
                 node = runqueue.runnable.next;
                 if(node == &runqueue.runnable)
@@ -87,6 +123,8 @@ static thread_t scheduler_dequeue(void)
                 runqueue.count--;
         } else if(runqueue.runnable.next != &runqueue.runnable) {
                 PANIC("runqueue count");
+        } else {
+                cpu->idle = 1;
         }
         spinlock_release(&runqueue.lock);
         return thread;
@@ -98,14 +136,22 @@ void scheduler(void)
         thread_t t;
 
         cpu->current = 0;
+        cpu->idle = 0;
 
         for(;;) {
-                /* Open interrupt to avoid dead lock */
-                intr_on();
-
-                t = scheduler_dequeue();
-                if(!t)
+                /*
+                 * Keep global interrupts disabled through WFI. An IPI that
+                 * arrives after the empty check then remains pending and
+                 * makes WFI return instead of being consumed too early.
+                 */
+                intr_off();
+                t = scheduler_next(cpu);
+                if(!t) {
+                        wait_for_interrupt();
+                        intr_on();
                         continue;
+                }
+                intr_on();
 
                 spinlock_acquire(&t->lock);
                 if(t->state != THREAD_RUNNABLE || t->on_runqueue ||
@@ -158,7 +204,7 @@ void yield(void)
         thread_t current = cur_thread();
 
         spinlock_acquire(&current->lock);
-        scheduler_make_runnable(current);
+        scheduler_enqueue(current, 0);
         sched();
         spinlock_release(&current->lock);
 }

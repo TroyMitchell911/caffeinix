@@ -16,6 +16,7 @@ typedef struct cpu {
 	uint64 hart_id;
 	struct device_node *of_node;
 	volatile uint8 online;
+	uint8 idle;
 }*cpu_t;
 
 uint8 cpuid(void);

@@ -166,6 +166,11 @@ static inline uint64 time_r(void)
 	return value;
 }
 
+static inline void wait_for_interrupt(void)
+{
+	asm volatile("wfi" : : : "memory");
+}
+
 #endif
 
 #endif
