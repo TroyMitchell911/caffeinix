@@ -1,8 +1,8 @@
 # VirtIO and DMA contracts
 
-The generic VirtIO code separates device drivers from their transport.  The
+The generic VirtIO code is shared by the block and network drivers.  The
 transport owns registers, interrupts, queue construction, and notification;
-the block driver owns requests and their completion lifetime.
+the device driver owns requests and their completion lifetime.
 
 ## Device and driver lifetime
 
@@ -55,8 +55,33 @@ to the free list.  Sixteen-bit shadow indices intentionally wrap.  A device
 cannot report more unconsumed used elements than the queue size.
 
 The IRQ handler acknowledges MMIO interrupt status before invoking bounded
-queue callbacks.  The block callback completes already-submitted requests
-and does not allocate objects, copy userspace data, or sleep.
+queue callbacks.  The block callback completes already-submitted requests;
+the network callback schedules its budgeted worker.  Neither callback may
+allocate protocol objects, copy userspace data, or sleep.
+
+The network core marks an interface down before draining active
+`start_xmit()` calls.  The driver's stop callback therefore cannot overlap a
+new or already admitted transmission.  A stopped receive path may recycle
+device buffers, but it must not deliver their packets to the network core.
+State notifications run after the lifecycle transition is committed, so a
+notification may open or close its device.  Recursive state changes are
+queued until the current callback returns.  Unregistration is synchronous
+before driver storage can be released.  It returns an error when called by a
+receive, state, or `start_xmit()` callback; such a callback must defer
+unregistration until it returns to its caller.
+
+Carrier changes reported by the system workqueue are delivered from separate
+core-owned work, so callbacks do not return through work embedded in driver
+storage.  Device lookups acquire a lifecycle reference; callers must use
+`net_device_put()` when finished, and unregistration waits for those
+references before removing the device from the registry.
+
+Receive callbacks are serialized, including same-thread loopback reentry.
+Recursive packets remain queued until the current callback returns, so
+callback unregistration can drain every invocation except its current caller
+without allowing an outer recursive invocation to retain stale state.  Each
+queued packet pins its device until delivery or disposal, preventing removal
+from reclaiming driver storage while receive work still refers to it.
 
 ## Block driver
 
@@ -74,6 +99,7 @@ disks therefore cannot redirect storage.
 ## Supported VirtIO subset
 
 The implementation requires modern VirtIO MMIO version 2 and split rings.
-It supports block ID 2.  Packed rings, indirect descriptors, event index,
-network devices, shared interrupts, reset recovery, hot removal, and legacy
-MMIO are deferred.  `virtio-blk` negotiates optional flush.
+It supports block ID 2 and network ID 1.  Packed rings, indirect descriptors,
+event index, shared interrupts, reset recovery, hot removal, and legacy MMIO
+are deferred.  `virtio-net` negotiates only MAC and link-status features;
+`virtio-blk` negotiates optional flush.
