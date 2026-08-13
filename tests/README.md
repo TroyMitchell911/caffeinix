@@ -9,13 +9,15 @@ Run the Linux RISC-V UAPI compile-time checks with:
 make -C tests uapi
 ```
 
-Run the host VirtIO split-ring test with:
+Run the host red-black-tree and VirtIO split-ring tests with:
 
 ```bash
-make -C tests virtqueue
+make -C tests rbtree virtqueue
 ```
 
-It covers scatter/gather chains, descriptor exhaustion, completion
+The tree test performs 20,000 deterministic randomized insert and erase
+operations while checking ordering and red-black invariants. The virtqueue
+test covers scatter/gather chains, descriptor exhaustion, completion
 lengths, notification, and 16-bit ring wraparound.
 
 Run the complete QEMU test with:

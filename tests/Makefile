@@ -22,8 +22,18 @@ virtqueue:
 		-o $(TEST_OUTPUT)/virtqueue
 	$(TEST_OUTPUT)/virtqueue
 
+.PHONY: rbtree
+rbtree:
+	mkdir -p $(TEST_OUTPUT)
+	$(CC) -std=gnu17 -Wall -Wextra -Werror -fno-builtin \
+		-I $(TOPDIR)/kernel/include \
+		-I $(TOPDIR)/arch/riscv/include \
+		$(CURDIR)/rbtree.c $(TOPDIR)/kernel/rbtree.c \
+		-o $(TEST_OUTPUT)/rbtree
+	$(TEST_OUTPUT)/rbtree
+
 .PHONY: qemu
-qemu: virtqueue
+qemu: rbtree virtqueue
 	TEST_OUTPUT="$(TEST_OUTPUT)" JOBS="$(JOBS)" \
 		$(CURDIR)/scripts/run-qemu.sh
 
