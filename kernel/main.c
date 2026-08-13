@@ -100,6 +100,8 @@ void main(void)
 			PANIC("register loopback device");
 		if (virtio_blk_init() < 0)
 			PANIC("register virtio-blk driver");
+		if (virtio_net_init() < 0)
+			PANIC("register virtio-net driver");
 		if (virtio_mmio_init() < 0)
 			PANIC("register virtio-mmio driver");
                 file_init();
