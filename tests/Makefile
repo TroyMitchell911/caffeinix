@@ -12,8 +12,18 @@ uapi:
 opensbi:
 	$(MAKE) -C $(TOPDIR) check-opensbi
 
+.PHONY: virtqueue
+virtqueue:
+	mkdir -p $(TEST_OUTPUT)
+	$(CC) -std=gnu17 -Wall -Wextra -Werror -fno-builtin \
+		-I $(TOPDIR)/kernel/include \
+		-I $(TOPDIR)/arch/riscv/include \
+		$(CURDIR)/virtqueue.c $(TOPDIR)/drivers/virtio/ring.c \
+		-o $(TEST_OUTPUT)/virtqueue
+	$(TEST_OUTPUT)/virtqueue
+
 .PHONY: qemu
-qemu:
+qemu: virtqueue
 	TEST_OUTPUT="$(TEST_OUTPUT)" JOBS="$(JOBS)" \
 		$(CURDIR)/scripts/run-qemu.sh
 
