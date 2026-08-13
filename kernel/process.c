@@ -373,6 +373,7 @@ int process_fork(uint64 child_stack)
 
         oldt = cur_thread();
         newt = newp->thread[0];
+	scheduler_inherit(newt, oldt);
 
 	if(vm_copy(oldp->pagetable, newp->pagetable) != 0) {
 		spinlock_release(&newt->lock);

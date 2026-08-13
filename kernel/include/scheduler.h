@@ -9,6 +9,8 @@ struct device_node;
 typedef struct cpu {
         struct context context;
         thread_t current;
+	/* Picked from the runqueue but not running yet. */
+	thread_t selected;
         /* Nesting Depth */
         uint8 lock_nest_depth;
         /* Is the interrupt enabled before locking */
@@ -17,7 +19,7 @@ typedef struct cpu {
 	struct device_node *of_node;
 	volatile uint8 online;
 	uint8 idle;
-	uint8 need_resched;
+	volatile uint8 need_resched;
 }*cpu_t;
 
 uint8 cpuid(void);
@@ -30,9 +32,13 @@ void yield(void);
 void sched(void);
 void scheduler_exit(void);
 void scheduler_exit_locked(void);
-void scheduler_block_current(void);
 void scheduler_make_runnable(thread_t thread);
+void scheduler_block_current(void);
+void scheduler_inherit(thread_t child, thread_t parent);
+int scheduler_set_nice(thread_t thread, int nice);
+int scheduler_get_nice(thread_t thread);
 void scheduler_request_resched(void);
+void scheduler_tick(void);
 int scheduler_should_resched(void);
 
 #endif

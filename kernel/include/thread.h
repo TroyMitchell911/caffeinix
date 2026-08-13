@@ -13,6 +13,7 @@
 
 #include <typedefs.h>
 #include <list.h>
+#include <rbtree.h>
 #include <spinlock.h>
 #include <kernel_config.h>
 #include <riscv.h>
@@ -95,6 +96,18 @@ typedef struct trapframe {
 	/* 544 */ uint64 fcsr;
 }*trapframe_t;
 
+struct sched_entity {
+	struct rb_node run_node;
+	uint64 vruntime;
+	uint64 exec_start;
+	uint64 sum_exec_runtime;
+	uint64 slice_ns;
+	uint32 weight;
+	int8 nice;
+	uint8 initialized;
+	uint8 on_runqueue;
+};
+
 typedef struct thread {
         char name[MAXNAME];
         struct spinlock lock;
@@ -113,8 +126,7 @@ typedef struct thread {
 	void *kernel_argument;
 	uint8 kernel_thread;
 	int lwip_errno;
-        struct list run_node;
-        uint8 on_runqueue;
+	struct sched_entity sched;
         struct wait_queue *waiting_on;
         struct list wait_node;
         uint8 on_waitqueue;

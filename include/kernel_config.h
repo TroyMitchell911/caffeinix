@@ -20,7 +20,7 @@
 #define MAXNAME                         16
 
 /* For ms */
-#define TICK_INTERVAL                   100
+#define TICK_INTERVAL                   1
 
 #define WORKQUEUE_NAME                  "kworker"
 

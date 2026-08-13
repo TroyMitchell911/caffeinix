@@ -22,6 +22,19 @@ struct thread thread[NTHREAD];
 static int next_tid = 1;
 static struct spinlock tid_lock;
 
+static void thread_sched_init(thread_t thread)
+{
+	rb_node_init(&thread->sched.run_node);
+	thread->sched.vruntime = 0;
+	thread->sched.exec_start = 0;
+	thread->sched.sum_exec_runtime = 0;
+	thread->sched.slice_ns = 0;
+	thread->sched.weight = 1024;
+	thread->sched.nice = 0;
+	thread->sched.initialized = 0;
+	thread->sched.on_runqueue = 0;
+}
+
 static void kernel_thread_entry(void)
 {
 	thread_t current = cur_thread();
@@ -69,8 +82,7 @@ void thread_setup(void)
                 spinlock_init(&t->lock, "thread");
                 t->kstack = KSTACK((int)(t - thread));;
                 t->state = THREAD_UNUSED;
-                t->on_runqueue = 0;
-                list_init(&t->run_node);
+		thread_sched_init(t);
                 t->waiting_on = 0;
                 t->on_waitqueue = 0;
                 list_init(&t->wait_node);
@@ -104,8 +116,7 @@ found:
 
         t->state = THREAD_ALLOCATED;
 	t->lwip_errno = 0;
-        t->on_runqueue = 0;
-        list_init(&t->run_node);
+	thread_sched_init(t);
         t->waiting_on = 0;
         t->on_waitqueue = 0;
         list_init(&t->wait_node);
@@ -166,8 +177,7 @@ found:
 	t->kernel_argument = argument;
 	t->kernel_thread = 1;
 	t->lwip_errno = 0;
-	t->on_runqueue = 0;
-	list_init(&t->run_node);
+	thread_sched_init(t);
 	t->waiting_on = 0;
 	t->on_waitqueue = 0;
 	list_init(&t->wait_node);
@@ -185,7 +195,7 @@ found:
 void kernel_thread_reap(thread_t t)
 {
 	if (!t || !spinlock_holding(&t->lock) || !t->kernel_thread ||
-	    t->state != THREAD_EXITED || t->on_runqueue ||
+	    t->state != THREAD_EXITED || t->sched.on_runqueue ||
 	    t->on_waitqueue || t->on_timeout_queue)
 		PANIC("reap kernel thread");
 	t->state = THREAD_UNUSED;
@@ -194,7 +204,7 @@ void kernel_thread_reap(thread_t t)
 	t->kernel_function = 0;
 	t->kernel_argument = 0;
 	t->lwip_errno = 0;
-	list_init(&t->run_node);
+	thread_sched_init(t);
 	list_init(&t->wait_node);
 	list_init(&t->timeout_node);
 	safe_strncpy(t->name, "thread", sizeof(t->name));
@@ -207,7 +217,7 @@ void thread_free(thread_t t)
 
         p = t->home;
 
-        if(t->on_runqueue)
+	if (t->sched.on_runqueue)
                 PANIC("thread_free runnable");
         if(t->on_waitqueue || t->waiting_on)
                 PANIC("thread_free waiting");
@@ -227,7 +237,7 @@ void thread_free(thread_t t)
                 pfree(t->trapframe);
         t->trapframe = 0;
         t->home = 0;
-        list_init(&t->run_node);
+	thread_sched_init(t);
         list_init(&t->wait_node);
 	list_init(&t->timeout_node);
 }
