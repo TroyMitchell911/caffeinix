@@ -155,14 +155,17 @@ void scheduler(void)
 
                 spinlock_acquire(&t->lock);
                 if(t->state != THREAD_RUNNABLE || t->on_runqueue ||
-                   !t->home)
+		   (!t->home && !t->kernel_thread))
                         PANIC("invalid scheduled thread");
                 t->state = THREAD_RUNNING;
-                t->home->tinfo->addr = TRAPFRAME(t->id_p);
+		if (t->home)
+			t->home->tinfo->addr = TRAPFRAME(t->id_p);
                 cpu->current = t;
 		cpu->need_resched = 0;
                 switchto(&cpu->context, &t->context);
                 cpu->current = 0;
+		if (t->state == THREAD_EXITED && t->kernel_thread)
+			kernel_thread_reap(t);
                 spinlock_release(&t->lock);
         } 
 }
@@ -229,6 +232,16 @@ void scheduler_exit(void)
 		PANIC("exit without thread");
 	spinlock_acquire(&current->lock);
 	scheduler_exit_locked();
+}
+
+void scheduler_block_current(void)
+{
+	thread_t current = cur_thread();
+
+	if (!current || !spinlock_holding(&current->lock) ||
+	    current->state != THREAD_RUNNING)
+		PANIC("block non-running thread");
+	current->state = THREAD_SLEEPING;
 }
 
 void scheduler_request_resched(void)

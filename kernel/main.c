@@ -40,6 +40,7 @@
 #include <sbi.h>
 #include <timer.h>
 #include <cpu.h>
+#include <wait.h>
 
 volatile static uint8 start = 0;
 extern char end[];
@@ -70,6 +71,7 @@ void main(void)
                 kvm_init();
                 thread_setup();
                 scheduler_init();
+		wait_queue_timeout_init();
                 trap_init_lock();
                 trap_init();
 		timer_init_hart();

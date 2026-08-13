@@ -15,11 +15,24 @@
 #include <printf.h>
 #include <vm.h>
 #include <process.h>
+#include <scheduler.h>
 
 struct thread thread[NTHREAD];
 
 static int next_tid = 1;
 static struct spinlock tid_lock;
+
+static void kernel_thread_entry(void)
+{
+	thread_t current = cur_thread();
+	thread_func_t function = current->kernel_function;
+	void *argument = current->kernel_argument;
+
+	spinlock_release(&current->lock);
+	intr_on();
+	function(argument);
+	scheduler_exit();
+}
 
 static int tid_alloc(void)
 {
@@ -61,6 +74,8 @@ void thread_setup(void)
                 t->waiting_on = 0;
                 t->on_waitqueue = 0;
                 list_init(&t->wait_node);
+		t->on_timeout_queue = 0;
+		list_init(&t->timeout_node);
                 strncpy(t->name, "thread", 7);
         }
 }
@@ -93,6 +108,11 @@ found:
         t->waiting_on = 0;
         t->on_waitqueue = 0;
         list_init(&t->wait_node);
+	t->on_timeout_queue = 0;
+	list_init(&t->timeout_node);
+	t->kernel_function = 0;
+	t->kernel_argument = 0;
+	t->kernel_thread = 0;
 
         t->trapframe = (trapframe_t)palloc();
         if(!t->trapframe) {
@@ -117,6 +137,64 @@ r1:
         t->home = 0;
         spinlock_release(&t->lock);
         return 0;
+}
+
+thread_t kernel_thread_create(const char *name, thread_func_t function,
+			      void *argument)
+{
+	thread_t t;
+
+	if (!name || !function)
+		return 0;
+	for (t = thread; t <= &thread[NTHREAD - 1]; t++) {
+		if (spinlock_trylock(&t->lock))
+			continue;
+		if (t->state == THREAD_UNUSED)
+			goto found;
+		spinlock_release(&t->lock);
+	}
+	return 0;
+
+found:
+	t->state = THREAD_ALLOCATED;
+	t->tid = tid_alloc();
+	t->id_p = -1;
+	t->home = 0;
+	t->trapframe = 0;
+	t->kernel_function = function;
+	t->kernel_argument = argument;
+	t->kernel_thread = 1;
+	t->on_runqueue = 0;
+	list_init(&t->run_node);
+	t->waiting_on = 0;
+	t->on_waitqueue = 0;
+	list_init(&t->wait_node);
+	t->on_timeout_queue = 0;
+	list_init(&t->timeout_node);
+	memset(&t->context, 0, sizeof(t->context));
+	t->context.ra = (uint64)kernel_thread_entry;
+	t->context.sp = t->kstack + KSTACK_SIZE;
+	safe_strncpy(t->name, name, sizeof(t->name));
+	scheduler_make_runnable(t);
+	spinlock_release(&t->lock);
+	return t;
+}
+
+void kernel_thread_reap(thread_t t)
+{
+	if (!t || !spinlock_holding(&t->lock) || !t->kernel_thread ||
+	    t->state != THREAD_EXITED || t->on_runqueue ||
+	    t->on_waitqueue || t->on_timeout_queue)
+		PANIC("reap kernel thread");
+	t->state = THREAD_UNUSED;
+	t->tid = 0;
+	t->kernel_thread = 0;
+	t->kernel_function = 0;
+	t->kernel_argument = 0;
+	list_init(&t->run_node);
+	list_init(&t->wait_node);
+	list_init(&t->timeout_node);
+	safe_strncpy(t->name, "thread", sizeof(t->name));
 }
 
 void thread_free(thread_t t)
@@ -148,4 +226,5 @@ void thread_free(thread_t t)
         t->home = 0;
         list_init(&t->run_node);
         list_init(&t->wait_node);
+	list_init(&t->timeout_node);
 }

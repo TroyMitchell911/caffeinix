@@ -19,6 +19,7 @@
 
 typedef struct process *process_t;
 struct wait_queue;
+typedef void (*thread_func_t)(void *);
 
 typedef enum thread_state {
         THREAD_UNUSED,
@@ -108,21 +109,29 @@ typedef struct thread {
         struct context context;
 
         process_t home;
+	thread_func_t kernel_function;
+	void *kernel_argument;
+	uint8 kernel_thread;
         struct list run_node;
         uint8 on_runqueue;
         struct wait_queue *waiting_on;
         struct list wait_node;
         uint8 on_waitqueue;
+	struct list timeout_node;
+	uint64 wait_deadline;
+	int wait_result;
+	uint8 on_timeout_queue;
 }*thread_t;
 
 extern struct thread thread[NTHREAD];
-
-typedef void (*thread_func_t)(void*);
 
 void map_kernel_stack(pagedir_t pgdir);
 
 void thread_setup(void);
 thread_t thread_alloc(process_t p);
 void thread_free(thread_t t);
+thread_t kernel_thread_create(const char *name, thread_func_t function,
+			      void *argument);
+void kernel_thread_reap(thread_t thread);
 
 #endif

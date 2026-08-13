@@ -6,6 +6,7 @@
 #include <printf.h>
 #include <plic.h>
 #include <timer.h>
+#include <wait.h>
 
 extern void kernel_vec(void);
 extern char trampoline[], user_vec[], user_ret[];
@@ -47,8 +48,9 @@ static int dev_intr(uint64 scause)
                 }
                 return 1;
         } else if(scause == 0x8000000000000005L) {
-                /* Supervisor timer interrupt delivered through SBI TIME. */
+		/* Supervisor timer interrupt delivered through SBI TIME. */
 		timer_interrupt();
+		wait_queue_expire(time_r());
                 if(cpuid() == 0) {
                         tick_intr();
 		}
