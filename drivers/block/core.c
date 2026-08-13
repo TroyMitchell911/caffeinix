@@ -13,15 +13,18 @@ void block_device_init(void)
 
 int block_device_register(struct block_device *device)
 {
-	uint32 id;
+	uint32 id, first, last;
 
 	if (!device || !device->name || !device->operations ||
 	    !device->operations->read || !device->operations->write ||
 	    !device->sector_size || !device->sector_count)
 		return -1;
-
+	first = device->id ? device->id : 1;
+	last = device->id ? device->id + 1 : BLOCK_DEVICE_MAX;
+	if (first >= BLOCK_DEVICE_MAX)
+		return -1;
 	spinlock_acquire(&block_devices.lock);
-	for (id = 1; id < BLOCK_DEVICE_MAX; id++) {
+	for (id = first; id < last; id++) {
 		if (!block_devices.devices[id]) {
 			device->id = id;
 			block_devices.devices[id] = device;
@@ -31,6 +34,17 @@ int block_device_register(struct block_device *device)
 	}
 	spinlock_release(&block_devices.lock);
 	return -1;
+}
+
+void block_device_unregister(struct block_device *device)
+{
+	if (!device || !device->id || device->id >= BLOCK_DEVICE_MAX)
+		return;
+	spinlock_acquire(&block_devices.lock);
+	if (block_devices.devices[device->id] == device)
+		block_devices.devices[device->id] = 0;
+	device->id = 0;
+	spinlock_release(&block_devices.lock);
 }
 
 struct block_device *block_device_get(uint32 id)
