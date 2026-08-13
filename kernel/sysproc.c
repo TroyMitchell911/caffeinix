@@ -196,6 +196,42 @@ uint64 sys_linux_gettid(void)
 	return cur_thread()->tid;
 }
 
+uint64 sys_linux_setpriority(void)
+{
+	process_t process = cur_proc();
+	int which, who, nice;
+
+	argint(0, &which);
+	argint(1, &who);
+	argint(2, &nice);
+	if (which != LINUX_PRIO_PROCESS)
+		return -LINUX_EINVAL;
+	if (!who)
+		who = process->pid;
+	if (nice < -20)
+		nice = -20;
+	if (nice > 19)
+		nice = 19;
+	return process_set_nice(who, nice) ? -LINUX_ESRCH : 0;
+}
+
+uint64 sys_linux_getpriority(void)
+{
+	process_t process = cur_proc();
+	int nice, which, who;
+
+	argint(0, &which);
+	argint(1, &who);
+	if (which != LINUX_PRIO_PROCESS)
+		return -LINUX_EINVAL;
+	if (!who)
+		who = process->pid;
+	if (process_get_nice(who, &nice))
+		return -LINUX_ESRCH;
+	/* Linux returns 20 - nice so a negative nice value is not an error. */
+	return 20 - nice;
+}
+
 uint64 sys_linux_umask(void)
 {
 	process_t process = cur_proc();

@@ -34,6 +34,10 @@ _Static_assert(LINUX_SYS_fsync == __NR_fsync, "fsync number");
 _Static_assert(LINUX_SYS_umask == __NR_umask, "umask number");
 _Static_assert(LINUX_SYS_rt_sigaction == __NR_rt_sigaction,
 	       "rt_sigaction number");
+_Static_assert(LINUX_SYS_setpriority == __NR_setpriority,
+	       "setpriority number");
+_Static_assert(LINUX_SYS_getpriority == __NR_getpriority,
+	       "getpriority number");
 _Static_assert(LINUX_SYS_clock_gettime == __NR_clock_gettime,
 	       "clock_gettime number");
 _Static_assert(LINUX_SYS_clone == __NR_clone, "clone number");

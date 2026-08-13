@@ -523,6 +523,55 @@ int process_wait(int target, uint64 status_address, int nohang)
         }
 }
 
+static process_t process_find_locked(int pid)
+{
+	process_t process;
+	list_t entry;
+
+	if (!spinlock_holding(&wait_lock))
+		PANIC("process lookup unlocked");
+	for (entry = proc.next; entry != &proc; entry = entry->next) {
+		process = list_entry(entry, struct process, all_tag);
+		if (process->pid == pid && process->state == PROCESS_LIVE)
+			return process;
+	}
+	return 0;
+}
+
+int process_set_nice(int pid, int nice)
+{
+	process_t process;
+	thread_t thread;
+	int result = -1;
+
+	spinlock_acquire(&wait_lock);
+	process = process_find_locked(pid);
+	thread = process ? process->thread[0] : 0;
+	if (thread)
+		result = scheduler_set_nice(thread, nice);
+	spinlock_release(&wait_lock);
+	return result;
+}
+
+int process_get_nice(int pid, int *nice)
+{
+	process_t process;
+	thread_t thread;
+	int result = -1;
+
+	if (!nice)
+		return -1;
+	spinlock_acquire(&wait_lock);
+	process = process_find_locked(pid);
+	thread = process ? process->thread[0] : 0;
+	if (thread) {
+		*nice = scheduler_get_nice(thread);
+		result = 0;
+	}
+	spinlock_release(&wait_lock);
+	return result;
+}
+
 /**
  * @description: Kill a process
  * @param {int} pid of process

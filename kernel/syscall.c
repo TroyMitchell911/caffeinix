@@ -92,6 +92,8 @@ extern uint64 sys_linux_clone(void);
 extern uint64 sys_linux_clock_gettime(void);
 extern uint64 sys_linux_rt_sigaction(void);
 extern uint64 sys_linux_rt_sigprocmask(void);
+extern uint64 sys_linux_setpriority(void);
+extern uint64 sys_linux_getpriority(void);
 extern uint64 sys_linux_symlinkat(void);
 extern uint64 sys_linux_sync(void);
 extern uint64 sys_linux_umask(void);
@@ -155,6 +157,8 @@ static syscall_t linux_syscalls[LINUX_SYS_renameat2 + 1] = {
 	[LINUX_SYS_clock_gettime] = sys_linux_clock_gettime,
 	[LINUX_SYS_rt_sigaction] = sys_linux_rt_sigaction,
 	[LINUX_SYS_rt_sigprocmask] = sys_linux_rt_sigprocmask,
+	[LINUX_SYS_setpriority] = sys_linux_setpriority,
+	[LINUX_SYS_getpriority] = sys_linux_getpriority,
 	[LINUX_SYS_umask] = sys_linux_umask,
 	[LINUX_SYS_prctl] = sys_linux_prctl,
 	[LINUX_SYS_getpid] = sys_linux_getpid,

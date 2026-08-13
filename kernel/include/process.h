@@ -70,6 +70,8 @@ void process_freepagedir(pagedir_t pgdir, uint64 sz);
 int process_grow(int n);
 int process_fork(uint64 child_stack);
 int process_wait(int target, uint64 status_address, int nohang);
+int process_set_nice(int pid, int nice);
+int process_get_nice(int pid, int *nice);
 
 int killed(process_t p);
 int either_copyout(int user_dst, uint64 dst, void* src, uint64 len);

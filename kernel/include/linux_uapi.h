@@ -38,6 +38,8 @@
 #define LINUX_SYS_clock_gettime     113
 #define LINUX_SYS_rt_sigaction      134
 #define LINUX_SYS_rt_sigprocmask    135
+#define LINUX_SYS_setpriority       140
+#define LINUX_SYS_getpriority       141
 #define LINUX_SYS_umask             166
 #define LINUX_SYS_prctl             167
 #define LINUX_SYS_getpid            172
@@ -315,6 +317,8 @@ struct linux_linger {
 
 #define LINUX_CLOCK_REALTIME             0
 #define LINUX_CLOCK_MONOTONIC            1
+
+#define LINUX_PRIO_PROCESS               0
 
 #define LINUX_S_IFMT             00170000
 #define LINUX_S_IFREG            0100000
