@@ -121,3 +121,9 @@ int cancel_work_sync(struct work_struct *work)
 	spinlock_release(&system_workqueue.lock);
 	return cancelled;
 }
+
+int workqueue_in_worker(void)
+{
+	return system_workqueue.worker &&
+	       cur_thread() == system_workqueue.worker;
+}

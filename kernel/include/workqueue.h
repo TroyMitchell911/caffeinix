@@ -22,5 +22,6 @@ void work_init(struct work_struct *work, work_func_t function);
 int schedule_work(struct work_struct *work);
 int cancel_work(struct work_struct *work);
 int cancel_work_sync(struct work_struct *work);
+int workqueue_in_worker(void);
 
 #endif

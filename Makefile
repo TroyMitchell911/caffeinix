@@ -41,6 +41,7 @@ export TOPDIR
 # variable records (the subdirectory must contain a makefile)
 obj-y += arch/riscv/boot/
 obj-y += drivers/
+obj-y += net/
 obj-y += kernel/fs/
 obj-y += kernel/
 obj-y += arch/riscv/
@@ -128,7 +129,7 @@ qemu-gdb: all .gdbinit check-fs-img
 	@echo "*** Now run 'gdb' in another window." 1>&2
 
 clean:
-	@find arch drivers kernel -type f \( -name "*.o" -o \
+	@find arch drivers kernel net -type f \( -name "*.o" -o \
 		-name "*.asm" -o \
 		-name "*.sym" -o -name "*.d" \) -delete
 	@find . -maxdepth 1 -type f \( -name "*.o" -o \

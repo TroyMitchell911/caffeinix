@@ -42,6 +42,7 @@
 #include <wait.h>
 #include <workqueue.h>
 #include <virtio.h>
+#include <netdevice.h>
 
 volatile static uint8 start = 0;
 extern char end[];
@@ -92,6 +93,11 @@ void main(void)
 		if (uart_core_selftest() < 0)
 			PANIC("UART core selftest");
                 block_device_init();
+		net_device_init();
+		if (net_core_selftest() < 0)
+			PANIC("network core selftest");
+		if (net_loopback_init() < 0)
+			PANIC("register loopback device");
 		if (virtio_blk_init() < 0)
 			PANIC("register virtio-blk driver");
 		if (virtio_mmio_init() < 0)
