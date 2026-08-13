@@ -18,7 +18,6 @@
 #include <printf.h>
 #include <plic.h>
 #include <process.h>
-#include <virtio_disk.h>
 #include <block_device.h>
 #include <file.h>
 #include <mystring.h>
@@ -93,13 +92,16 @@ void main(void)
 		if (uart_core_selftest() < 0)
 			PANIC("UART core selftest");
                 block_device_init();
+		if (virtio_blk_init() < 0)
+			PANIC("register virtio-blk driver");
+		if (virtio_mmio_init() < 0)
+			PANIC("register virtio-mmio driver");
                 file_init();
 		vfs_init();
 		ext4fs_init();
 		fatfs_init();
 		devfs_init();
 		tmpfs_init();
-                virtio_disk_init();
 		userinit();
 
                 printf("Hello! Caffeinix\n");
