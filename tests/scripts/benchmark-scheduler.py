@@ -57,8 +57,12 @@ class Guest:
     def read_until(self, marker):
         deadline = time.monotonic() + self.timeout
         while marker not in self.buffer:
-            if b"[PANIC]" in self.buffer:
-                raise RuntimeError("kernel panic during scheduler benchmark")
+            panic = self.buffer.find(b"[PANIC]")
+            if panic >= 0 and b"\n" in self.buffer[panic:]:
+                tail = self.buffer[-4096:].decode(
+                    "utf-8", errors="replace")
+                raise RuntimeError(
+                    "kernel panic during scheduler benchmark:\n" + tail)
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise TimeoutError(f"guest did not produce {marker!r}")
@@ -83,7 +87,9 @@ class Guest:
         output = self.read_until(b"# ")
         elapsed = (time.perf_counter_ns() - start) / 1_000_000
         if b"[PANIC]" in output:
-            raise RuntimeError("kernel panic during scheduler benchmark")
+            tail = output[-4096:].decode("utf-8", errors="replace")
+            raise RuntimeError(
+                "kernel panic during scheduler benchmark:\n" + tail)
         for error in (b"Bad address", b"not found", b"No such file"):
             if error in output:
                 raise RuntimeError(
