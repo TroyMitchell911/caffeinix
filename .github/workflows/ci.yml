@@ -59,6 +59,7 @@ jobs:
             gcc-riscv64-linux-gnu \
             binutils-riscv64-linux-gnu \
             qemu-system-misc \
+            python3 \
             ripgrep \
             e2fsprogs \
             dosfstools \

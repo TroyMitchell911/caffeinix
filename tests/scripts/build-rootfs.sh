@@ -186,6 +186,12 @@ install -d \
 	"$tests_dir/scheduler_runtime.c" \
 	-o "$staging/bin/scheduler-runtime"
 
+"$musl_cc" \
+	-static -march=rv64gc -mabi=lp64d \
+	-O2 -Wall -Wextra -Werror \
+	"$tests_dir/network_runtime.c" \
+	-o "$staging/bin/network-runtime"
+
 if "${cross_compile}readelf" -l "$staging/bin/fs-runtime" |
 	grep -q INTERP; then
 	echo "guest selftest must be statically linked" >&2
@@ -201,6 +207,12 @@ fi
 if "${cross_compile}readelf" -l "$staging/bin/scheduler-runtime" |
 	grep -q INTERP; then
 	echo "scheduler selftest must be statically linked" >&2
+	exit 1
+fi
+
+if "${cross_compile}readelf" -l "$staging/bin/network-runtime" |
+	grep -q INTERP; then
+	echo "network selftest must be statically linked" >&2
 	exit 1
 fi
 

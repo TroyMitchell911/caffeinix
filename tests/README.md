@@ -36,10 +36,14 @@ per logical CPU. A static check rejects machine-mode CSR operations, direct
 CLINT access, `mret`, `-bios none`, and a kernel entry other than
 `0x80200000`.
 
+The full run attaches the network device before two VirtIO block devices.
+This verifies that transport enumeration cannot change root or data-disk
+selection. A host fixture behind QEMU user networking provides deterministic
+UDP, TCP, reverse-TCP, bulk-transfer, and HTTP replies.
+
 The guest selftest covers:
 
-- network device registration, packet ownership, queue state, and a
-  VirtIO network device attached to every boot;
+- network device registration, packet ownership, and queue state;
 - repeated fork, exec, exit, and wait cycles;
 - FIFO scheduler progress with 24 runnable processes, timer preemption, and
   more runnable work than CPUs;
@@ -54,7 +58,16 @@ The guest selftest covers:
   fsync, and open-unlink lifetime rules;
 - symlink metadata through `lstat`;
 - FAT open-file restrictions, unsupported Unix links, overwrite rename, and
-  UTF-8 long names.
+  UTF-8 long names;
+- DHCP, raw ICMP, UDP, TCP clients and servers, blocking and nonblocking
+  sockets, polling, metadata, options, shutdown, and close; and
+- BusyBox `nc` and `wget`, including a 32 KiB transfer across packet,
+  socket, pbuf, and virtqueue buffer boundaries.
+
+The one-, two-, and eight-hart smoke boots omit the NIC and exercise UDP
+loopback. A separate two-hart boot places an unsupported VirtIO device before
+the root disk and uses a socket-backed NIC without DHCP; it must still reach
+the shell and pass loopback.
 
 After QEMU exits, the host harness recovers and checks ext4 with `e2fsck`,
 checks FAT32 with `fsck.fat`, reads persistent values from both images, and

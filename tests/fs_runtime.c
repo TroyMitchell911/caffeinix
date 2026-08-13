@@ -9,7 +9,15 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
+#include <sys/uio.h>
+#include <sys/wait.h>
 #include <unistd.h>
+
+#define APPEND_RECORD_SIZE 16
+#define APPEND_RECORDS 64
+
+static char append_truncate_buffer[
+	APPEND_RECORD_SIZE * (APPEND_RECORDS * 3 + 1)];
 
 static int fail(int code)
 {
@@ -56,6 +64,178 @@ static int directory_has(const char *path, const char *name)
 	if (errno || closedir(directory))
 		return -1;
 	return found;
+}
+
+static int append_writer(const char *path, const char *record)
+{
+	struct iovec iovecs[2] = {
+		{ .iov_base = (void *)record, .iov_len = 8 },
+		{ .iov_base = (void *)(record + 8), .iov_len = 8 },
+	};
+	int fd, index;
+
+	poll(0, 0, 20);
+	fd = open(path, O_WRONLY | O_APPEND);
+	if (fd < 0)
+		return -1;
+	for (index = 0; index < APPEND_RECORDS; index++) {
+		if (writev(fd, iovecs, 2) != APPEND_RECORD_SIZE) {
+			close(fd);
+			return -1;
+		}
+	}
+	return close(fd);
+}
+
+static int test_append_writev(const char *directory)
+{
+	static const char records[2][APPEND_RECORD_SIZE + 1] = {
+		"A-BEGIN-A--END--",
+		"B-BEGIN-B--END--",
+	};
+	char path[128];
+	char buffer[APPEND_RECORD_SIZE * APPEND_RECORDS * 2];
+	int counts[2] = { 0, 0 };
+	pid_t children[2];
+	int fd, index, offset, status;
+	ssize_t length, total = 0;
+
+	snprintf(path, sizeof(path), "%s/append", directory);
+	fd = open(path, O_CREAT | O_TRUNC | O_WRONLY, 0644);
+	if (fd < 0 || close(fd))
+		return -1;
+	for (index = 0; index < 2; index++) {
+		children[index] = fork();
+		if (children[index] < 0)
+			return -1;
+		if (!children[index])
+			_exit(append_writer(path, records[index]) ? 1 : 0);
+	}
+	for (index = 0; index < 2; index++) {
+		if (waitpid(children[index], &status, 0) != children[index] ||
+		    !WIFEXITED(status) || WEXITSTATUS(status))
+			return -1;
+	}
+	fd = open(path, O_RDONLY);
+	if (fd < 0)
+		return -1;
+	while (total < (ssize_t)sizeof(buffer)) {
+		length = read(fd, buffer + total, sizeof(buffer) - total);
+		if (length <= 0) {
+			close(fd);
+			return -1;
+		}
+		total += length;
+	}
+	if (close(fd))
+		return -1;
+	for (offset = 0; offset < (int)sizeof(buffer);
+	     offset += APPEND_RECORD_SIZE) {
+		if (!memcmp(buffer + offset, records[0], APPEND_RECORD_SIZE))
+			counts[0]++;
+		else if (!memcmp(buffer + offset, records[1],
+				 APPEND_RECORD_SIZE))
+			counts[1]++;
+		else
+			return -1;
+	}
+	return counts[0] == APPEND_RECORDS &&
+		counts[1] == APPEND_RECORDS ? 0 : -1;
+}
+
+static int truncate_writer(const char *path, const char *record)
+{
+	struct iovec iovecs[2] = {
+		{ .iov_base = (void *)record, .iov_len = 8 },
+		{ .iov_base = (void *)(record + 8), .iov_len = 8 },
+	};
+	int fd, index;
+
+	poll(0, 0, 20);
+	fd = open(path, O_WRONLY | O_APPEND);
+	if (fd < 0)
+		return -1;
+	for (index = 0; index < APPEND_RECORDS; index++) {
+		if (ftruncate(fd, 0) ||
+		    writev(fd, iovecs, 2) != APPEND_RECORD_SIZE) {
+			close(fd);
+			return -1;
+		}
+	}
+	return close(fd);
+}
+
+static int test_append_truncate(const char *directory)
+{
+	static const char records[4][APPEND_RECORD_SIZE + 1] = {
+		"A-BEGIN-A--END--",
+		"B-BEGIN-B--END--",
+		"T-BEGIN-T--END--",
+		"P-BEGIN-P--END--",
+	};
+	struct iovec iovecs[2] = {
+		{ .iov_base = (void *)records[3], .iov_len = 8 },
+		{ .iov_base = (void *)(records[3] + 8), .iov_len = 8 },
+	};
+	char path[128];
+	struct stat statbuf;
+	pid_t children[3];
+	ssize_t length, total = 0;
+	int child, fd, offset, record, status;
+
+	snprintf(path, sizeof(path), "%s/append-truncate", directory);
+	fd = open(path, O_CREAT | O_TRUNC | O_WRONLY, 0644);
+	if (fd < 0 || close(fd))
+		return -1;
+	for (child = 0; child < 3; child++) {
+		children[child] = fork();
+		if (children[child] < 0)
+			return -1;
+		if (!children[child]) {
+			int result = child < 2 ?
+				append_writer(path, records[child]) :
+				truncate_writer(path, records[2]);
+
+			_exit(result ? 1 : 0);
+		}
+	}
+	for (child = 0; child < 3; child++) {
+		if (waitpid(children[child], &status, 0) != children[child] ||
+		    !WIFEXITED(status) || WEXITSTATUS(status))
+			return -1;
+	}
+	fd = open(path, O_WRONLY | O_APPEND);
+	if (fd < 0 || writev(fd, iovecs, 2) != APPEND_RECORD_SIZE ||
+	    close(fd))
+		return -1;
+	fd = open(path, O_RDONLY);
+	if (fd < 0 || fstat(fd, &statbuf) || !statbuf.st_size ||
+	    statbuf.st_size > (off_t)sizeof(append_truncate_buffer) ||
+	    statbuf.st_size % APPEND_RECORD_SIZE)
+		return -1;
+	while (total < (ssize_t)statbuf.st_size) {
+		length = read(fd, append_truncate_buffer + total,
+			      statbuf.st_size - total);
+		if (length <= 0) {
+			close(fd);
+			return -1;
+		}
+		total += length;
+	}
+	if (close(fd) ||
+	    memcmp(append_truncate_buffer + total - APPEND_RECORD_SIZE,
+		   records[3], APPEND_RECORD_SIZE))
+		return -1;
+	for (offset = 0; offset < total; offset += APPEND_RECORD_SIZE) {
+		for (record = 0; record < 4; record++) {
+			if (!memcmp(append_truncate_buffer + offset,
+				    records[record], APPEND_RECORD_SIZE))
+				break;
+		}
+		if (record == 4)
+			return -1;
+	}
+	return 0;
 }
 
 static int test_devices(void)
@@ -197,6 +377,10 @@ static int test_tree(const char *directory)
 	if (directory_has(directory, "target") != 1 ||
 	    directory_has(directory, "missing") != 0)
 		return 35;
+	if (test_append_writev(directory))
+		return 40;
+	if (test_append_truncate(directory))
+		return 41;
 	if (mkdir(child, 0755) || rename(child, renamed) || rmdir(renamed))
 		return 36;
 	return 0;

@@ -9,7 +9,7 @@ proc abort_test {message} {
 proc expect_prompt {} {
 	expect {
 		-re {\[PANIC\]} { abort_test "kernel panic before shell prompt" }
-		-re {\r?\n# $} {}
+		-re {(^|\r?\n)# $} {}
 		timeout { abort_test "shell prompt timeout" }
 		eof { abort_test "QEMU exited before shell prompt" }
 	}
@@ -41,11 +41,11 @@ set command [list \
 	-nographic \
 	-global virtio-mmio.force-legacy=false \
 	-drive file=$env(ROOT_IMAGE),if=none,format=raw,id=x0 \
-	-device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0 \
+	-device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.1 \
 	-drive file=$env(FAT_IMAGE),if=none,format=raw,id=x1 \
-	-device virtio-blk-device,drive=x1,bus=virtio-mmio-bus.1 \
-	-netdev user,id=n0 \
-	-device virtio-net-device,netdev=n0,bus=virtio-mmio-bus.2]
+	-device virtio-blk-device,drive=x1,bus=virtio-mmio-bus.2 \
+	-netdev user,id=n0,hostfwd=tcp:127.0.0.1:18082-:18082 \
+	-device virtio-net-device,netdev=n0,bus=virtio-mmio-bus.0,mac=52:54:00:12:34:56]
 
 spawn -noecho {*}$command
 
@@ -62,6 +62,61 @@ expect {
 	-re {\[PANIC\]} { abort_test "kernel panic in BusyBox shell" }
 	timeout { abort_test "BusyBox shell command timeout" }
 	eof { abort_test "QEMU exited in BusyBox shell" }
+}
+expect_prompt
+
+send -- "/bin/network-runtime\r"
+expect {
+	-re {\r?\nNETWORK_RUNTIME_OK} {}
+	-re {NETWORK_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "network runtime test reported failure"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in network runtime test" }
+	timeout { abort_test "network runtime test timeout" }
+	eof { abort_test "QEMU exited during network runtime test" }
+}
+expect_prompt
+
+send -- "/usr/bin/nc 10.0.2.2 18081\r"
+send -- "tcp-request\r"
+expect {
+	-re {tcp-reply} {}
+	-re {not found|applet not found|Bad system call} {
+		abort_test "BusyBox nc is unavailable"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in BusyBox nc" }
+	timeout { abort_test "BusyBox nc timeout" }
+	eof { abort_test "QEMU exited during BusyBox nc" }
+}
+expect_prompt
+send -- "echo BUSYBOX_NC_OK\r"
+expect {
+	-re {\r?\nBUSYBOX_NC_OK} {}
+	-re {\[PANIC\]} { abort_test "kernel panic after BusyBox nc" }
+	timeout { abort_test "BusyBox nc marker timeout" }
+	eof { abort_test "QEMU exited after BusyBox nc" }
+}
+expect_prompt
+
+send -- "/usr/bin/wget -q -O /tmp/http.out "
+send -- "http://10.0.2.2:18084/fixture && "
+send -- "/bin/cat /tmp/http.out\r"
+expect {
+	-re {\r?\ncaffeinix-http} {}
+	-re {not found|applet not found|Bad system call} {
+		abort_test "BusyBox wget is unavailable"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in BusyBox wget" }
+	timeout { abort_test "BusyBox wget timeout" }
+	eof { abort_test "QEMU exited during BusyBox wget" }
+}
+expect_prompt
+send -- "echo BUSYBOX_WGET_OK\r"
+expect {
+	-re {\r?\nBUSYBOX_WGET_OK} {}
+	-re {\[PANIC\]} { abort_test "kernel panic after BusyBox wget" }
+	timeout { abort_test "BusyBox wget marker timeout" }
+	eof { abort_test "QEMU exited after BusyBox wget" }
 }
 expect_prompt
 
