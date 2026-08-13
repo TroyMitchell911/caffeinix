@@ -912,6 +912,38 @@ netconn_mark_mbox_invalid(struct netconn *conn)
 }
 #endif /* LWIP_NETCONN_FULLDUPLEX */
 
+#if LWIP_NETCONN_FULLDUPLEX && LWIP_TCP
+static void
+netconn_mark_mbox_closed(struct netconn *conn)
+{
+  int i, num_waiting;
+  void *msg = LWIP_CONST_CAST(void *, &netconn_closed);
+  SYS_ARCH_DECL_PROTECT(lev);
+
+  SYS_ARCH_PROTECT(lev);
+  if (conn->flags & NETCONN_FLAG_MBOXCLOSED) {
+    SYS_ARCH_UNPROTECT(lev);
+    return;
+  }
+  conn->flags |= NETCONN_FLAG_MBOXCLOSED;
+  num_waiting = conn->mbox_threads_waiting;
+  SYS_ARCH_UNPROTECT(lev);
+
+  for (i = 0; i < num_waiting; i++) {
+    err_t err;
+
+    if (sys_mbox_valid_val(conn->recvmbox)) {
+      err = sys_mbox_trypost(&conn->recvmbox, msg);
+    } else {
+      err = sys_mbox_trypost(&conn->acceptmbox, msg);
+    }
+    if (err != ERR_OK) {
+      break;
+    }
+  }
+}
+#endif /* LWIP_NETCONN_FULLDUPLEX && LWIP_TCP */
+
 #if LWIP_TCP
 /**
  * Internal helper function to close a TCP netconn: since this sometimes
@@ -1420,7 +1452,7 @@ lwip_netconn_do_connect(void *m)
 
 /**
  * Disconnect a pcb contained inside a netconn
- * Only used for UDP netconns.
+ * Only used for UDP and RAW netconns.
  * Called from netconn_disconnect.
  *
  * @param m the api_msg pointing to the connection to disconnect
@@ -1436,6 +1468,12 @@ lwip_netconn_do_disconnect(void *m)
     msg->err = ERR_OK;
   } else
 #endif /* LWIP_UDP */
+#if LWIP_RAW
+  if (NETCONNTYPE_GROUP(msg->conn->type) == NETCONN_RAW) {
+    raw_disconnect(msg->conn->pcb.raw);
+    msg->err = ERR_OK;
+  } else
+#endif /* LWIP_RAW */
   {
     msg->err = ERR_VAL;
   }
@@ -1976,8 +2014,8 @@ lwip_netconn_do_close(void *m)
 #endif /* LWIP_NETCONN_FULLDUPLEX */
       if (msg->msg.sd.shut & NETCONN_SHUT_RD) {
 #if LWIP_NETCONN_FULLDUPLEX
-        /* Mark mboxes invalid */
-        netconn_mark_mbox_invalid(msg->conn);
+        /* Preserve queued data while preventing future receive waits. */
+        netconn_mark_mbox_closed(msg->conn);
 #else /* LWIP_NETCONN_FULLDUPLEX */
         netconn_drain(msg->conn);
 #endif /* LWIP_NETCONN_FULLDUPLEX */

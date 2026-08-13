@@ -399,8 +399,8 @@ netconn_connect(struct netconn *conn, const ip_addr_t *addr, u16_t port)
 }
 
 /**
- * @ingroup netconn_udp
- * Disconnect a netconn from its current peer (only valid for UDP netconns).
+ * @ingroup netconn_common
+ * Disconnect a UDP or RAW netconn from its current peer.
  *
  * @param conn the netconn to disconnect
  * @return See @ref err_t

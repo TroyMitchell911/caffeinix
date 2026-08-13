@@ -100,6 +100,23 @@ extern uint64 sys_linux_utimensat(void);
 extern uint64 sys_linux_write(void);
 extern uint64 sys_linux_writev(void);
 extern uint64 sys_linux_wait4(void);
+extern uint64 sys_linux_ppoll(void);
+extern uint64 sys_linux_socket(void);
+extern uint64 sys_linux_socketpair(void);
+extern uint64 sys_linux_bind(void);
+extern uint64 sys_linux_listen(void);
+extern uint64 sys_linux_accept(void);
+extern uint64 sys_linux_connect(void);
+extern uint64 sys_linux_getsockname(void);
+extern uint64 sys_linux_getpeername(void);
+extern uint64 sys_linux_sendto(void);
+extern uint64 sys_linux_recvfrom(void);
+extern uint64 sys_linux_setsockopt(void);
+extern uint64 sys_linux_getsockopt(void);
+extern uint64 sys_linux_shutdown(void);
+extern uint64 sys_linux_sendmsg(void);
+extern uint64 sys_linux_recvmsg(void);
+extern uint64 sys_linux_accept4(void);
 extern uint64 sys_linux_ftruncate(void);
 
 typedef uint64 (*syscall_t)(void);
@@ -124,6 +141,7 @@ static syscall_t linux_syscalls[LINUX_SYS_renameat2 + 1] = {
 	[LINUX_SYS_read] = sys_linux_read,
 	[LINUX_SYS_write] = sys_linux_write,
 	[LINUX_SYS_writev] = sys_linux_writev,
+	[LINUX_SYS_ppoll] = sys_linux_ppoll,
 	[LINUX_SYS_readlinkat] = sys_linux_readlinkat,
 	[LINUX_SYS_newfstatat] = sys_linux_newfstatat,
 	[LINUX_SYS_fstat] = sys_linux_fstat,
@@ -146,11 +164,27 @@ static syscall_t linux_syscalls[LINUX_SYS_renameat2 + 1] = {
 	[LINUX_SYS_getgid] = sys_linux_getgid,
 	[LINUX_SYS_getegid] = sys_linux_getegid,
 	[LINUX_SYS_gettid] = sys_linux_gettid,
+	[LINUX_SYS_socket] = sys_linux_socket,
+	[LINUX_SYS_socketpair] = sys_linux_socketpair,
+	[LINUX_SYS_bind] = sys_linux_bind,
+	[LINUX_SYS_listen] = sys_linux_listen,
+	[LINUX_SYS_accept] = sys_linux_accept,
+	[LINUX_SYS_connect] = sys_linux_connect,
+	[LINUX_SYS_getsockname] = sys_linux_getsockname,
+	[LINUX_SYS_getpeername] = sys_linux_getpeername,
+	[LINUX_SYS_sendto] = sys_linux_sendto,
+	[LINUX_SYS_recvfrom] = sys_linux_recvfrom,
+	[LINUX_SYS_setsockopt] = sys_linux_setsockopt,
+	[LINUX_SYS_getsockopt] = sys_linux_getsockopt,
+	[LINUX_SYS_shutdown] = sys_linux_shutdown,
+	[LINUX_SYS_sendmsg] = sys_linux_sendmsg,
+	[LINUX_SYS_recvmsg] = sys_linux_recvmsg,
 	[LINUX_SYS_brk] = sys_linux_brk,
 	[LINUX_SYS_munmap] = sys_linux_munmap,
 	[LINUX_SYS_clone] = sys_linux_clone,
 	[LINUX_SYS_execve] = sys_linux_execve,
 	[LINUX_SYS_mmap] = sys_linux_mmap,
+	[LINUX_SYS_accept4] = sys_linux_accept4,
 	[LINUX_SYS_wait4] = sys_linux_wait4,
 	[LINUX_SYS_renameat2] = sys_linux_renameat2,
 };

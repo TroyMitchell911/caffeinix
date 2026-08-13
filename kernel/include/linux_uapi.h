@@ -24,6 +24,7 @@
 #define LINUX_SYS_read               63
 #define LINUX_SYS_write              64
 #define LINUX_SYS_writev             66
+#define LINUX_SYS_ppoll              73
 #define LINUX_SYS_readlinkat         78
 #define LINUX_SYS_newfstatat         79
 #define LINUX_SYS_fstat              80
@@ -46,11 +47,27 @@
 #define LINUX_SYS_getgid            176
 #define LINUX_SYS_getegid           177
 #define LINUX_SYS_gettid            178
+#define LINUX_SYS_socket            198
+#define LINUX_SYS_socketpair        199
+#define LINUX_SYS_bind              200
+#define LINUX_SYS_listen            201
+#define LINUX_SYS_accept            202
+#define LINUX_SYS_connect           203
+#define LINUX_SYS_getsockname       204
+#define LINUX_SYS_getpeername       205
+#define LINUX_SYS_sendto            206
+#define LINUX_SYS_recvfrom          207
+#define LINUX_SYS_setsockopt        208
+#define LINUX_SYS_getsockopt        209
+#define LINUX_SYS_shutdown          210
+#define LINUX_SYS_sendmsg           211
+#define LINUX_SYS_recvmsg           212
 #define LINUX_SYS_brk               214
 #define LINUX_SYS_munmap            215
 #define LINUX_SYS_clone             220
 #define LINUX_SYS_execve            221
 #define LINUX_SYS_mmap              222
+#define LINUX_SYS_accept4           242
 #define LINUX_SYS_wait4             260
 #define LINUX_SYS_renameat2         276
 
@@ -89,7 +106,32 @@
 #define LINUX_ENOSYS                 38
 #define LINUX_ENOTEMPTY              39
 #define LINUX_ELOOP                  40
+#define LINUX_EOVERFLOW              75
+#define LINUX_ENOTSOCK               88
+#define LINUX_EDESTADDRREQ           89
+#define LINUX_EMSGSIZE               90
+#define LINUX_EPROTOTYPE             91
+#define LINUX_ENOPROTOOPT            92
+#define LINUX_EPROTONOSUPPORT        93
+#define LINUX_ESOCKTNOSUPPORT        94
 #define LINUX_EOPNOTSUPP             95
+#define LINUX_EAFNOSUPPORT           97
+#define LINUX_EADDRINUSE             98
+#define LINUX_EADDRNOTAVAIL          99
+#define LINUX_ENETDOWN              100
+#define LINUX_ENETUNREACH           101
+#define LINUX_ENETRESET             102
+#define LINUX_ECONNABORTED          103
+#define LINUX_ECONNRESET            104
+#define LINUX_ENOBUFS               105
+#define LINUX_EISCONN               106
+#define LINUX_ENOTCONN              107
+#define LINUX_ESHUTDOWN             108
+#define LINUX_ETIMEDOUT             110
+#define LINUX_ECONNREFUSED          111
+#define LINUX_EHOSTUNREACH          113
+#define LINUX_EALREADY              114
+#define LINUX_EINPROGRESS           115
 
 #define LINUX_IOV_MAX               16
 
@@ -101,6 +143,46 @@ struct linux_iovec {
 struct linux_timespec {
 	int64 seconds;
 	int64 nanoseconds;
+};
+
+struct linux_timeval {
+	int64 seconds;
+	int64 microseconds;
+};
+
+struct linux_pollfd {
+	int32 fd;
+	int16 events;
+	int16 revents;
+};
+
+struct linux_sockaddr {
+	uint16 family;
+	uint8 data[14];
+};
+
+struct linux_sockaddr_in {
+	uint16 family;
+	uint16 port;
+	uint32 address;
+	uint8 zero[8];
+};
+
+struct linux_msghdr {
+	uint64 name;
+	uint32 name_length;
+	uint32 pad1;
+	uint64 iov;
+	uint64 iov_length;
+	uint64 control;
+	uint64 control_length;
+	uint32 flags;
+	uint32 pad2;
+};
+
+struct linux_linger {
+	int32 enabled;
+	int32 seconds;
 };
 
 #define LINUX_AT_FDCWD              -100
@@ -119,14 +201,67 @@ struct linux_timespec {
 #define LINUX_O_EXCL            00000200
 #define LINUX_O_TRUNC           00001000
 #define LINUX_O_APPEND          00002000
+#define LINUX_O_NONBLOCK        00004000
 #define LINUX_O_LARGEFILE       00100000
 #define LINUX_O_DIRECTORY       00200000
 #define LINUX_O_CLOEXEC         02000000
+
+#define LINUX_AF_UNSPEC                  0
+#define LINUX_AF_INET                    2
+
+#define LINUX_SOCK_STREAM                1
+#define LINUX_SOCK_DGRAM                 2
+#define LINUX_SOCK_RAW                   3
+#define LINUX_SOCK_NONBLOCK      LINUX_O_NONBLOCK
+#define LINUX_SOCK_CLOEXEC        LINUX_O_CLOEXEC
+
+#define LINUX_IPPROTO_IP                 0
+#define LINUX_IPPROTO_ICMP               1
+#define LINUX_IPPROTO_TCP                6
+#define LINUX_IPPROTO_UDP               17
+
+#define LINUX_MSG_OOB                 0x1
+#define LINUX_MSG_PEEK                0x2
+#define LINUX_MSG_DONTROUTE           0x4
+#define LINUX_MSG_TRUNC              0x20
+#define LINUX_MSG_DONTWAIT           0x40
+#define LINUX_MSG_WAITALL           0x100
+#define LINUX_MSG_NOSIGNAL         0x4000
+#define LINUX_MSG_MORE             0x8000
+
+#define LINUX_SOL_SOCKET                  1
+#define LINUX_SO_REUSEADDR                2
+#define LINUX_SO_TYPE                     3
+#define LINUX_SO_ERROR                    4
+#define LINUX_SO_BROADCAST                6
+#define LINUX_SO_RCVBUF                   8
+#define LINUX_SO_KEEPALIVE                9
+#define LINUX_SO_LINGER                  13
+#define LINUX_SO_RCVTIMEO                20
+#define LINUX_SO_SNDTIMEO                21
+#define LINUX_SO_ACCEPTCONN              30
+
+#define LINUX_IP_TTL                      2
+#define LINUX_TCP_NODELAY                 1
+
+#define LINUX_SHUT_RD                     0
+#define LINUX_SHUT_WR                     1
+#define LINUX_SHUT_RDWR                   2
+
+#define LINUX_POLLIN                 0x001
+#define LINUX_POLLOUT                0x004
+#define LINUX_POLLERR                0x008
+#define LINUX_POLLHUP                0x010
+#define LINUX_POLLNVAL               0x020
+
+#define LINUX_FIONREAD              0x541b
+#define LINUX_FIONBIO               0x5421
 
 #define LINUX_F_DUPFD                  0
 #define LINUX_F_GETFD                  1
 #define LINUX_F_SETFD                  2
 #define LINUX_F_GETFL                  3
+#define LINUX_F_SETFL                  4
 #define LINUX_F_DUPFD_CLOEXEC       1030
 #define LINUX_FD_CLOEXEC               1
 
@@ -244,6 +379,14 @@ _Static_assert(sizeof(struct linux_iovec) == 16,
 	       "Linux iovec layout changed");
 _Static_assert(sizeof(struct linux_timespec) == 16,
 	       "Linux timespec layout changed");
+_Static_assert(sizeof(struct linux_timeval) == 16,
+	       "Linux timeval layout changed");
+_Static_assert(sizeof(struct linux_pollfd) == 8,
+	       "Linux pollfd layout changed");
+_Static_assert(sizeof(struct linux_sockaddr_in) == 16,
+	       "Linux sockaddr_in layout changed");
+_Static_assert(sizeof(struct linux_msghdr) == 56,
+	       "Linux msghdr layout changed");
 _Static_assert(sizeof(struct linux_stat) == 128,
 	       "Linux RISC-V stat layout changed");
 _Static_assert(__builtin_offsetof(struct linux_stat, size) == 48,
