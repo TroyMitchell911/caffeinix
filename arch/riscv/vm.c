@@ -74,6 +74,19 @@ uint64 va2pa(pagedir_t pgdir, uint64 va)
                 return pa;
 }
 
+uint64 kvm_va2pa(uint64 va)
+{
+	pte_t *pte;
+
+	if (!kernel_pgdir || va >= MAXVA)
+		return 0;
+	pte = PTE(kernel_pgdir, va, 0);
+	if (!pte || !(*pte & PTE_V) ||
+	    !(*pte & (PTE_R | PTE_W | PTE_X)))
+		return 0;
+	return PTE2PA(*pte) + (va & (PGSIZE - 1));
+}
+
 int vm_map(pagedir_t pgdir, uint64 va, uint64 pa, uint64 size, int perm)
 {
         uint64 start, end;
