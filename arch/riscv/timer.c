@@ -1,6 +1,8 @@
+#include <cpu.h>
 #include <debug.h>
 #include <kernel_config.h>
 #include <of.h>
+#include <palloc.h>
 #include <printf.h>
 #include <riscv.h>
 #include <sbi.h>
@@ -10,8 +12,13 @@
 static uint64 clock_frequency;
 static uint64 tick_interval;
 static uint64 idle_tick_interval;
-static volatile uint8 timer_seen[NCPU];
-static volatile uint8 timer_idle[NCPU];
+
+struct timer_cpu_state {
+	volatile uint8 seen;
+	volatile uint8 idle;
+};
+
+static struct timer_cpu_state *timer_cpus;
 
 void timer_init(void)
 {
@@ -27,6 +34,9 @@ void timer_init(void)
 	idle_tick_interval = clock_frequency * IDLE_TICK_INTERVAL / 1000;
 	if (!tick_interval || !idle_tick_interval)
 		PANIC("invalid timer interval");
+	timer_cpus = calloc(cpu_count(), sizeof(*timer_cpus));
+	if (!timer_cpus)
+		PANIC("allocate timer CPU state");
 }
 
 void timer_init_hart(void)
@@ -41,10 +51,10 @@ void timer_wait_for_interrupt(void)
 	uint64 start = time_r();
 	int logical = cpuid();
 
-	if (logical < 0 || logical >= NCPU)
+	if (logical < 0 || logical >= cpu_count())
 		PANIC("invalid timer CPU");
 	intr_on();
-	while (!timer_seen[logical]) {
+	while (!timer_cpus[logical].seen) {
 		if (time_r() - start > clock_frequency * 2) {
 			intr_off();
 			PANIC("supervisor timer timeout");
@@ -58,13 +68,14 @@ void timer_interrupt(void)
 	int logical = cpuid();
 	uint64 interval;
 
-	if (logical < 0 || logical >= NCPU)
+	if (logical < 0 || logical >= cpu_count())
 		PANIC("invalid timer CPU");
-	interval = timer_idle[logical] ? idle_tick_interval : tick_interval;
+	interval = timer_cpus[logical].idle ? idle_tick_interval :
+		   tick_interval;
 	if (sbi_set_timer(time_r() + interval))
 		PANIC("SBI timer rearm failed");
-	if (!timer_seen[logical]) {
-		timer_seen[logical] = 1;
+	if (!timer_cpus[logical].seen) {
+		timer_cpus[logical].seen = 1;
 		printf("CPU: logical=%d timer active\n", logical);
 	}
 }
@@ -73,9 +84,9 @@ void timer_set_active(void)
 {
 	int logical = cpuid();
 
-	if (logical < 0 || logical >= NCPU)
+	if (logical < 0 || logical >= cpu_count())
 		PANIC("invalid timer CPU");
-	if (!__atomic_exchange_n(&timer_idle[logical], 0,
+	if (!__atomic_exchange_n(&timer_cpus[logical].idle, 0,
 				 __ATOMIC_ACQ_REL))
 		return;
 	if (sbi_set_timer(time_r() + tick_interval))
@@ -86,10 +97,10 @@ void timer_set_idle(void)
 {
 	int logical = cpuid();
 
-	if (logical < 0 || logical >= NCPU)
+	if (logical < 0 || logical >= cpu_count())
 		PANIC("invalid timer CPU");
 	/* CPU0 retains the fine tick that expires global timed waits. */
-	if (!logical || __atomic_exchange_n(&timer_idle[logical], 1,
+	if (!logical || __atomic_exchange_n(&timer_cpus[logical].idle, 1,
 					    __ATOMIC_ACQ_REL))
 		return;
 	if (sbi_set_timer(time_r() + idle_tick_interval))

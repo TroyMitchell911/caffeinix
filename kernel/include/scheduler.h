@@ -23,7 +23,9 @@ typedef struct cpu {
 	volatile uint8 need_resched;
 }*cpu_t;
 
-uint8 cpuid(void);
+extern cpu_t *cpus;
+
+int cpuid(void);
 cpu_t cur_cpu(void);
 thread_t cur_thread(void);
 process_t cur_proc(void);

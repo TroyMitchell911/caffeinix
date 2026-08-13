@@ -163,6 +163,7 @@ run_boot_smoke 2 192M
 run_boot_smoke 3 96M
 run_boot_smoke 4 128M
 run_boot_smoke 8 256M
+run_boot_smoke 9 256M
 
 export QEMU_CPUS=2
 export QEMU_MEMORY=128M

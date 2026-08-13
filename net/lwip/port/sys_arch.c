@@ -38,7 +38,7 @@ struct lwip_sys_mbox {
 
 static struct {
 	struct spinlock lock;
-	uint32 depth[NCPU];
+	uint32 *depth;
 } lightweight_protection;
 
 static struct spinlock random_lock;
@@ -64,9 +64,11 @@ void sys_init(void)
 {
 	uint32 index;
 
+	lightweight_protection.depth = calloc(
+		cpu_count(), sizeof(*lightweight_protection.depth));
+	if (!lightweight_protection.depth)
+		PANIC("allocate lwIP CPU state");
 	spinlock_init(&lightweight_protection.lock, "lwIP protect");
-	memset(lightweight_protection.depth, 0,
-	       sizeof(lightweight_protection.depth));
 	spinlock_init(&random_lock, "lwIP random");
 	for (index = 0; index < NTHREAD; index++) {
 		struct lwip_sys_sem *semaphore =
@@ -363,12 +365,12 @@ u32_t sys_now(void)
 
 sys_prot_t sys_arch_protect(void)
 {
-	uint32 cpu;
 	uint32 previous;
+	int cpu;
 
 	enter_critical();
 	cpu = cpuid();
-	if (cpu >= NCPU)
+	if (cpu < 0 || cpu >= cpu_count())
 		PANIC("invalid lwIP protect CPU");
 	previous = lightweight_protection.depth[cpu];
 	if (!previous)
@@ -380,11 +382,11 @@ sys_prot_t sys_arch_protect(void)
 
 void sys_arch_unprotect(sys_prot_t previous)
 {
-	uint32 cpu;
+	int cpu;
 
 	enter_critical();
 	cpu = cpuid();
-	if (cpu >= NCPU ||
+	if (cpu < 0 || cpu >= cpu_count() ||
 	    lightweight_protection.depth[cpu] != previous + 1)
 		PANIC("unbalanced lwIP protection");
 	lightweight_protection.depth[cpu] = previous;

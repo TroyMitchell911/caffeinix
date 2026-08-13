@@ -295,21 +295,10 @@ static void process_free(process_t p)
 
 void process_init(void)
 {
-        // process_t p = proc;
-        // int i;
-        /* Init the spinlock */
-        spinlock_init(&pid_lock, "pid_lock");
-        spinlock_init(&wait_lock, "wait_lock");
-        list_init(&proc);
-        /* Set the state and starting kernel stack address of each process */
-        // for(; p <= &proc[NCPU - 1]; p++) {
-        //         spinlock_init(&p->lock, "proc");
-        //         p->state = UNUSED;
-        //         p->tnums = 0;
-        //         for(i = 0; i < PROC_MAXTHREAD; i++) {
-        //                 p->thread[i] = 0;
-        //         }
-        // }
+	/* Init the spinlock */
+	spinlock_init(&pid_lock, "pid_lock");
+	spinlock_init(&wait_lock, "wait_lock");
+	list_init(&proc);
 }
 
 void userinit(void)

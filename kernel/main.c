@@ -56,10 +56,10 @@ void main(void)
 		console_early_init();
 		if (of_status < 0)
 			PANIC("invalid boot DTB");
+		palloc_init();
 		cpu_topology_init(boot_hart_id);
 		sbi_init(cpu_count());
 		timer_init();
-                palloc_init();
 		file_init();
 		vfs_init();
 		irq_init();

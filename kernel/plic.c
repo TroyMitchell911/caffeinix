@@ -2,13 +2,13 @@
 #include <cpu.h>
 #include <debug.h>
 #include <irq.h>
-#include <kernel_config.h>
 #include <of.h>
+#include <palloc.h>
 #include <scheduler.h>
 
 #define RISCV_IRQ_S_EXT 9
 
-static int plic_contexts[NCPU];
+static int *plic_contexts;
 
 static struct device_node *plic_node(void)
 {
@@ -84,6 +84,9 @@ void plic_init(void)
 
 	if (!node)
 		PANIC("missing PLIC node");
+	plic_contexts = calloc(cpu_count(), sizeof(*plic_contexts));
+	if (!plic_contexts)
+		PANIC("allocate PLIC CPU contexts");
 	for (logical = 0; logical < cpu_count(); logical++) {
 		plic_contexts[logical] = plic_context_for_cpu(node, logical);
 		if (plic_contexts[logical] < 0)
