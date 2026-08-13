@@ -6,5 +6,5 @@ CFLAGS_file.o :=
 obj-y += string.o palloc.o spinlock.o ktime.o thread.o wait.o \
 sleeplock.o switchto.o trampoline.o process.o\
 plic.o console.o printf.o scheduler.o \
-exec.o sysfile.o syscall.o sysproc.o main.o
+exec.o sysfile.o syscall.o sysproc.o workqueue.o main.o
 obj-y += irq/
