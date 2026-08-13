@@ -149,11 +149,18 @@ run_boot_smoke()
 		exit 1
 	fi
 	check_net_device_log "$clean" 0
+	if [ "$cpus" -eq 1 ] &&
+	   [ "$(awk '$0 == "SCHED_CFS_FAIR_OK" { count++ }
+		END { print count + 0 }' "$clean")" -ne 1 ]; then
+		echo "CFS fairness marker is missing" >&2
+		exit 1
+	fi
 	check_boot_log "$clean" "$cpus"
 }
 
 run_boot_smoke 1 64M
 run_boot_smoke 2 192M
+run_boot_smoke 4 128M
 run_boot_smoke 8 256M
 
 export QEMU_CPUS=2
@@ -188,8 +195,8 @@ if ! grep -q '^NETWORK_FIXTURE_READY$' "$fixture_log"; then
 	exit 1
 fi
 
-export QEMU_CPUS=4
-export QEMU_MEMORY=128M
+export QEMU_CPUS=8
+export QEMU_MEMORY=256M
 export QEMU_LOG=$qemu_log
 expect "$script_dir/run-qemu.exp"
 tr -d '\r' < "$qemu_log" > "$clean_log"
@@ -206,6 +213,7 @@ for marker in \
 	SCHED_RUNTIME_OK \
 	SCHED_TTY_WAIT_OK \
 	NETWORK_RUNTIME_OK \
+	PRESSURE_RUNTIME_OK \
 	TTY_METADATA_OK \
 	TTY_NONBLOCK_OK \
 	TTY_CANONICAL_OK \
@@ -246,7 +254,7 @@ fi
 if grep -Eq \
 	-e '\[PANIC\]|Unhandled interrupt' \
 	-e 'FS_RUNTIME_FAIL=|NETWORK_RUNTIME_FAIL' \
-	-e 'SCHED_RUNTIME_FAIL=|TTY_RUNTIME_FAIL=' \
+	-e 'PRESSURE_RUNTIME_FAIL|SCHED_RUNTIME_FAIL=|TTY_RUNTIME_FAIL=' \
 	"$clean_log"; then
 	echo "QEMU log contains a guest failure" >&2
 	exit 1

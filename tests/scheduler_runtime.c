@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/resource.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -13,6 +14,7 @@
 #define RUNNABLE_SMOKE_CHILDREN 12
 #define MIXED_CHILDREN 16
 #define TTY_WAITERS 8
+#define FAIRNESS_ITERATIONS 30000000
 
 static int last_wait_status;
 
@@ -200,12 +202,61 @@ static int test_tty_wait(void)
 	return 0;
 }
 
+static void fairness_child(int nice_value, int exit_status)
+{
+	volatile uint64_t value = exit_status + 1;
+	int iteration;
+
+	if (setpriority(PRIO_PROCESS, 0, nice_value) < 0 ||
+	    getpriority(PRIO_PROCESS, 0) != nice_value)
+		_exit(125);
+	for (iteration = 0; iteration < FAIRNESS_ITERATIONS; iteration++)
+		value = value * 6364136223846793005ULL + 1;
+	_exit(value == UINT64_MAX ? 126 : exit_status);
+}
+
+static int test_fairness(void)
+{
+	pid_t low, normal, result;
+	int status;
+
+	low = fork();
+	if (low < 0)
+		return fail("fair-low-fork", 50);
+	if (!low)
+		fairness_child(10, 10);
+	if (setpriority(PRIO_PROCESS, low, 10) < 0 ||
+	    getpriority(PRIO_PROCESS, low) != 10)
+		return fail("fair-child-priority", 56);
+	errno = 0;
+	if (getpriority(PRIO_PROCESS, 0x7fffffff) != -1 || errno != ESRCH)
+		return fail("fair-missing-priority", 57);
+	normal = fork();
+	if (normal < 0)
+		return fail("fair-normal-fork", 51);
+	if (!normal)
+		fairness_child(0, 11);
+	if (wait_for_child(normal, 11))
+		return fail("fair-normal-wait", 52);
+	result = waitpid(low, &status, WNOHANG);
+	if (result < 0)
+		return fail("fair-low-poll", 53);
+	if (result == low)
+		return fail("fair-weight", 54);
+	if (wait_for_child(low, 10))
+		return fail("fair-low-wait", 55);
+	pass("SCHED_CFS_FAIR_OK\n");
+	return 0;
+}
+
 int main(int argc, char **argv)
 {
 	if (argc == 2 && !strcmp(argv[1], "exec-child"))
 		return 0;
 	if (argc == 2 && !strcmp(argv[1], "tty-wait"))
 		return test_tty_wait();
+	if (argc == 2 && !strcmp(argv[1], "fairness"))
+		return test_fairness();
 	if (argc == 2 && !strcmp(argv[1], "smoke")) {
 		if (test_exec(EXEC_SMOKE_ROUNDS) ||
 		    test_runqueue(RUNNABLE_SMOKE_CHILDREN))

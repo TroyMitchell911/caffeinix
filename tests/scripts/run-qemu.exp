@@ -77,6 +77,18 @@ expect {
 }
 expect_prompt
 
+send -- "/bin/pressure-runtime\r"
+expect {
+	-re {\r?\nPRESSURE_RUNTIME_OK} {}
+	-re {PRESSURE_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "mixed pressure test reported failure"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in mixed pressure test" }
+	timeout { abort_test "mixed pressure test timeout" }
+	eof { abort_test "QEMU exited during mixed pressure test" }
+}
+expect_prompt
+
 send -- "/usr/bin/nc 10.0.2.2 18081\r"
 send -- "tcp-request\r"
 expect {

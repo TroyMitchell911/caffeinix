@@ -29,16 +29,17 @@ make -C tests qemu
 The QEMU test downloads checksum-pinned musl 1.2.6 and BusyBox 1.38.0 source
 archives, builds both outside the kernel, and creates temporary ext4 and FAT32
 images under `output/tests`. It runs boot checks with one hart and 64 MiB, two
-harts and 192 MiB, and eight harts and 256 MiB. A four-hart, 128 MiB run waits
-for BusyBox ash, runs the full guest suite, syncs storage, and exits QEMU
-through its serial monitor.
+harts and 192 MiB, four harts and 128 MiB, and eight harts and 256 MiB. A
+second eight-hart, 256 MiB run waits for BusyBox ash, runs the full guest
+suite, syncs storage, and exits QEMU through its serial monitor.
 
 Each boot requires one SBI BASE report and exactly one online and timer marker
 per logical CPU. A static check rejects machine-mode CSR operations, direct
 CLINT access, `mret`, `-bios none`, and a kernel entry other than
 `0x80200000`.
 
-The full run attaches the network device before two VirtIO block devices.
+The full eight-hart run attaches the network device before two VirtIO block
+devices.
 This verifies that transport enumeration cannot change root or data-disk
 selection. A host fixture behind QEMU user networking provides deterministic
 UDP, TCP, reverse-TCP, bulk-transfer, and HTTP replies.
@@ -47,10 +48,11 @@ The guest selftest covers:
 
 - network device registration, packet ownership, and queue state;
 - repeated fork, exec, exit, and wait cycles;
-- FIFO scheduler progress with 24 runnable processes, timer preemption, and
-  more runnable work than CPUs;
+- CFS runqueue progress with 24 runnable processes, timer preemption,
+  weighted nice values, and more runnable work than CPUs;
 - concurrent CPU, allocator, ext4, VirtIO completion, sleeplock, and process
   wait activity;
+- concurrent CFS nice classes, ext4, tmpfs, FAT, and four TCP bulk clients;
 - multiple TTY sleepers and repeated wake-all/requeue behavior;
 - devfs character devices and device numbers;
 - `/dev/ttyS0` metadata, `/dev/tty` error semantics, and terminal ioctls;
@@ -66,10 +68,10 @@ The guest selftest covers:
 - BusyBox `nc` and `wget`, including a 32 KiB transfer across packet,
   socket, pbuf, and virtqueue buffer boundaries.
 
-The one-, two-, and eight-hart smoke boots omit the NIC and exercise UDP
-loopback. A separate two-hart boot places an unsupported VirtIO device before
-the root disk and uses a socket-backed NIC without DHCP; it must still reach
-the shell and pass loopback.
+The one-, two-, four-, and eight-hart smoke boots omit the NIC and exercise
+UDP loopback. A separate two-hart boot places an unsupported VirtIO device
+before the root disk and uses a socket-backed NIC without DHCP; it must still
+reach the shell and pass loopback.
 
 After QEMU exits, the host harness recovers and checks ext4 with `e2fsck`,
 checks FAT32 with `fsck.fat`, reads persistent values from both images, and
