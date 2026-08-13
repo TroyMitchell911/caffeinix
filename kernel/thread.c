@@ -103,6 +103,7 @@ found:
         p->thread[t->id_p] = t;
 
         t->state = THREAD_ALLOCATED;
+	t->lwip_errno = 0;
         t->on_runqueue = 0;
         list_init(&t->run_node);
         t->waiting_on = 0;
@@ -164,6 +165,7 @@ found:
 	t->kernel_function = function;
 	t->kernel_argument = argument;
 	t->kernel_thread = 1;
+	t->lwip_errno = 0;
 	t->on_runqueue = 0;
 	list_init(&t->run_node);
 	t->waiting_on = 0;
@@ -191,6 +193,7 @@ void kernel_thread_reap(thread_t t)
 	t->kernel_thread = 0;
 	t->kernel_function = 0;
 	t->kernel_argument = 0;
+	t->lwip_errno = 0;
 	list_init(&t->run_node);
 	list_init(&t->wait_node);
 	list_init(&t->timeout_node);

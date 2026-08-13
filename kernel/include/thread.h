@@ -112,6 +112,7 @@ typedef struct thread {
 	thread_func_t kernel_function;
 	void *kernel_argument;
 	uint8 kernel_thread;
+	int lwip_errno;
         struct list run_node;
         uint8 on_runqueue;
         struct wait_queue *waiting_on;

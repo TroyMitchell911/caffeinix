@@ -43,6 +43,7 @@
 #include <workqueue.h>
 #include <virtio.h>
 #include <netdevice.h>
+#include <network_stack.h>
 
 volatile static uint8 start = 0;
 extern char end[];
@@ -106,6 +107,7 @@ void main(void)
 			PANIC("register virtio-net driver");
 		if (virtio_mmio_init() < 0)
 			PANIC("register virtio-mmio driver");
+		network_stack_init();
 		ext4fs_init();
 		fatfs_init();
 		devfs_init();

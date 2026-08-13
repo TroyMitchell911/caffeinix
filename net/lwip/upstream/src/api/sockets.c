@@ -2604,6 +2604,7 @@ event_callback(struct netconn *conn, enum netconn_evt evt, u16_t len)
   } else {
     SYS_ARCH_UNPROTECT(lev);
   }
+  LWIP_SOCKET_EVENT_NOTIFY();
   done_socket(sock);
 }
 
@@ -3012,7 +3013,8 @@ lwip_getsockopt_impl(int s, int level, int optname, void *optval, socklen_t *opt
         case SO_REUSEADDR:
 #endif /* SO_REUSE */
           if ((optname == SO_BROADCAST) &&
-              (NETCONNTYPE_GROUP(sock->conn->type) != NETCONN_UDP)) {
+              (NETCONNTYPE_GROUP(sock->conn->type) != NETCONN_UDP) &&
+              (NETCONNTYPE_GROUP(sock->conn->type) != NETCONN_RAW)) {
             done_socket(sock);
             return ENOPROTOOPT;
           }
@@ -3421,7 +3423,8 @@ lwip_setsockopt_impl(int s, int level, int optname, const void *optval, socklen_
         case SO_REUSEADDR:
 #endif /* SO_REUSE */
           if ((optname == SO_BROADCAST) &&
-              (NETCONNTYPE_GROUP(sock->conn->type) != NETCONN_UDP)) {
+              (NETCONNTYPE_GROUP(sock->conn->type) != NETCONN_UDP) &&
+              (NETCONNTYPE_GROUP(sock->conn->type) != NETCONN_RAW)) {
             done_socket(sock);
             return ENOPROTOOPT;
           }

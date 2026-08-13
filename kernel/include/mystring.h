@@ -30,5 +30,6 @@ char* strrchr(const char *p, int c);
 size_t strnlen(const char *s, size_t max);
 void qsort(void *base, size_t count, size_t size,
 	   int (*compare)(const void *, const void *));
+int atoi(const char *string);
 
 #endif
