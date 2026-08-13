@@ -13,8 +13,8 @@ modern VirtIO network device through lwIP.
 
 - Architecture: RISC-V 64-bit little-endian
 - ISA and ABI: RV64GC with LP64D
-- Machine: QEMU `virt`, one, two, and four harts tested
-- Firmware: OpenSBI with SBI v0.2 or newer, TIME, and HSM for SMP
+- Machine: QEMU `virt`, one, two, four, and eight harts tested
+- Firmware: OpenSBI with SBI v0.2 or newer, TIME, HSM, and IPI for SMP
 - Userspace: static non-PIE musl ELF executables
 - Root filesystem: ext4 with 1 KiB filesystem blocks
 - Optional data filesystem: FAT16 or FAT32
@@ -230,6 +230,8 @@ layer ownership rules and the Device Tree needed to add another serial port.
 The shared VirtIO, block, network-device, and protocol-stack boundaries are
 described in the
 [`network architecture`](Documentation/networking/architecture.md).
+The SMP scheduling and virtual-runtime rules are described in
+[`Documentation/scheduler.md`](Documentation/scheduler.md).
 
 ## Run
 

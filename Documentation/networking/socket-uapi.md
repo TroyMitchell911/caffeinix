@@ -23,10 +23,10 @@ datagram, and raw ICMP sockets.  The implemented calls are:
 - `ppoll`, `FIONREAD`, `FIONBIO`, `SOCK_CLOEXEC`, `SOCK_NONBLOCK`, and
   `F_SETFL(O_NONBLOCK)`.
 
-The socket path also supplies monotonic `clock_gettime` and `ftruncate`
-required by the current musl tests.  Linux errors are translated explicitly;
-unsupported families, flags, control messages, and options fail instead of
-reporting false success.
+The current musl tests also use monotonic `clock_gettime`, `ftruncate`, and
+process nice calls. Linux errors are translated explicitly; unsupported
+families, flags, control messages, and options fail instead of reporting
+false success.
 
 Socket payload copies are bounded to one page per syscall.  TCP may return a
 short read or write and userspace must retry.  An oversized datagram fails

@@ -54,8 +54,8 @@ git -C /tmp/lwip-update rev-parse HEAD
 Replace only `COPYING`, `src/api`, `src/core`, `src/include`, and
 `src/netif/ethernet.c`.  Do not overwrite `net/lwip/port/` or the Caffeinix
 Makefiles under `upstream/`.  Update `UPSTREAM`, inspect upstream option and
-API changes, then run the UAPI, host ring, QEMU networking, offline-NIC, SMP,
-and filesystem-consistency tests.
+API changes, then run the UAPI, host ring/tree, QEMU networking, offline-NIC,
+SMP, pressure, and filesystem-consistency tests.
 
 Keep upstream C files unchanged unless an independently explained upstream
 compatibility patch is unavoidable.  Caffeinix-specific headers and libc
