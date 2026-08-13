@@ -42,6 +42,7 @@
 #include <cpu.h>
 #include <wait.h>
 #include <workqueue.h>
+#include <virtio.h>
 
 volatile static uint8 start = 0;
 extern char end[];
@@ -82,6 +83,7 @@ void main(void)
 		if (driver_core_selftest())
 			PANIC("driver core selftest");
 		platform_bus_init();
+		virtio_bus_init();
 		if (platform_core_selftest() < 0)
 			PANIC("platform core selftest");
 		if (of_platform_populate() < 0)

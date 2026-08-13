@@ -6,3 +6,4 @@ obj-y += dma/
 obj-y += of/
 obj-y += platform/
 obj-y += tty/
+obj-y += virtio/
