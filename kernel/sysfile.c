@@ -90,6 +90,8 @@ static uint64 linux_error(int result)
 		return -LINUX_EFAULT;
 	case VFS_ERR_IO:
 		return -LINUX_EIO;
+	case VFS_ERR_SPIPE:
+		return -LINUX_ESPIPE;
 	default:
 		return -LINUX_EIO;
 	}

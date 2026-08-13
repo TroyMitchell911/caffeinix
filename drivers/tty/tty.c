@@ -197,11 +197,32 @@ static int64 tty_device_ioctl(struct char_device *device,
 	return VFS_ERR_NOTTY;
 }
 
+static uint32 tty_device_poll(struct char_device *device,
+			      struct vfs_file *file, uint32 events)
+{
+	struct tty *tty = tty_from_device(device, file);
+	uint32 ready = 0;
+
+	if (!tty)
+		return VFS_POLL_ERR;
+	spinlock_acquire(&tty->lock);
+	if ((events & VFS_POLL_IN) &&
+	    (tty->read_position != tty->commit_position ||
+	     tty->eof_pending))
+		ready |= VFS_POLL_IN;
+	if ((events & VFS_POLL_OUT) && tty->operations &&
+	    tty->operations->write)
+		ready |= VFS_POLL_OUT;
+	spinlock_release(&tty->lock);
+	return ready;
+}
+
 static const struct char_device_operations tty_operations = {
 	.open = tty_device_open,
 	.read = tty_device_read,
 	.write = tty_device_write,
 	.ioctl = tty_device_ioctl,
+	.poll = tty_device_poll,
 };
 
 static void tty_echo(struct tty *tty, int character)
@@ -219,7 +240,7 @@ static void tty_echo(struct tty *tty, int character)
 
 void tty_receive_char(struct tty *tty, int character)
 {
-	int canonical, echo;
+	int canonical, echo, notify = 0;
 
 	if (!tty || !tty->registered)
 		return;
@@ -243,6 +264,7 @@ void tty_receive_char(struct tty *tty, int character)
 		tty->eof_pending = 1;
 		wait_queue_wake_all(&tty->read_wait);
 		spinlock_release(&tty->lock);
+		vfs_poll_notify();
 		return;
 	}
 	if (tty->edit_position - tty->read_position >= TTY_INPUT_SIZE) {
@@ -256,8 +278,11 @@ void tty_receive_char(struct tty *tty, int character)
 	    tty->edit_position - tty->read_position == TTY_INPUT_SIZE) {
 		tty->commit_position = tty->edit_position;
 		wait_queue_wake_all(&tty->read_wait);
+		notify = 1;
 	}
 	spinlock_release(&tty->lock);
+	if (notify)
+		vfs_poll_notify();
 }
 
 static int make_tty_name(char *name, uint32 size, const char *prefix,

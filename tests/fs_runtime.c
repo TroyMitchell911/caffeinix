@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <dirent.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -60,8 +61,9 @@ static int directory_has(const char *path, const char *name)
 static int test_devices(void)
 {
 	unsigned char buffer[8192];
+	struct pollfd pollfds[2];
 	struct stat statbuf;
-	int fd, i;
+	int fd, i, null_fd;
 
 	fd = open("/dev/zero", O_RDONLY);
 	if (fd < 0 || read(fd, buffer, sizeof(buffer)) != sizeof(buffer))
@@ -70,12 +72,21 @@ static int test_devices(void)
 		if (buffer[i])
 			return 11;
 	}
-	if (close(fd))
-		return 12;
-	fd = open("/dev/null", O_RDWR);
-	if (fd < 0 || write(fd, buffer, sizeof(buffer)) != sizeof(buffer) ||
-	    read(fd, buffer, sizeof(buffer)) != 0 || close(fd))
+	null_fd = open("/dev/null", O_RDWR);
+	if (null_fd < 0 ||
+	    write(null_fd, buffer, sizeof(buffer)) != sizeof(buffer) ||
+	    read(null_fd, buffer, sizeof(buffer)) != 0)
 		return 13;
+	pollfds[0].fd = fd;
+	pollfds[0].events = POLLIN | POLLOUT;
+	pollfds[1].fd = null_fd;
+	pollfds[1].events = POLLIN | POLLOUT;
+	if (poll(pollfds, 2, 0) != 2 ||
+	    pollfds[0].revents != (POLLIN | POLLOUT) ||
+	    pollfds[1].revents != (POLLIN | POLLOUT))
+		return 15;
+	if (close(null_fd) || close(fd))
+		return 12;
 	if (stat("/dev/console", &statbuf) || !S_ISCHR(statbuf.st_mode) ||
 	    major(statbuf.st_rdev) != 5 || minor(statbuf.st_rdev) != 1)
 		return 14;

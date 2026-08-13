@@ -59,6 +59,8 @@ void main(void)
 		sbi_init(cpu_count());
 		timer_init();
                 palloc_init();
+		file_init();
+		vfs_init();
 		irq_init();
 		plic_init();
 		plic_init_hart();
@@ -104,8 +106,6 @@ void main(void)
 			PANIC("register virtio-net driver");
 		if (virtio_mmio_init() < 0)
 			PANIC("register virtio-mmio driver");
-                file_init();
-		vfs_init();
 		ext4fs_init();
 		fatfs_init();
 		devfs_init();

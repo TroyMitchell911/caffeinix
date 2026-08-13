@@ -1,12 +1,14 @@
 #include <debug.h>
 #include <device.h>
 #include <file.h>
+#include <ktime.h>
 #include <mystring.h>
 #include <palloc.h>
 #include <process.h>
 #include <scheduler.h>
 #include <spinlock.h>
 #include <vfs.h>
+#include <wait.h>
 
 #define VFS_FILESYSTEM_MAX 8
 #define VFS_SUPER_MAX 16
@@ -38,6 +40,12 @@ static struct {
 	struct vfs_mount *root;
 } vfs;
 
+static struct {
+	struct spinlock lock;
+	struct wait_queue wait;
+	uint64 generation;
+} poll_state;
+
 static int string_equal(const char *left, const char *right)
 {
 	uint32 left_length = strlen(left);
@@ -50,6 +58,8 @@ static int string_equal(const char *left, const char *right)
 void vfs_init(void)
 {
 	spinlock_init(&vfs.lock, "vfs");
+	spinlock_init(&poll_state.lock, "VFS poll");
+	wait_queue_init(&poll_state.wait, "VFS poll");
 }
 
 int vfs_register_filesystem(struct vfs_filesystem_type *type)
@@ -105,6 +115,7 @@ struct vfs_super_block *vfs_super_alloc(struct vfs_filesystem_type *type,
 		if (!superblock->ref) {
 			memset(superblock, 0, sizeof(*superblock));
 			superblock->ref = 1;
+			sleeplock_init(&superblock->write_lock, "VFS write");
 			superblock->type = type;
 			superblock->device = device;
 			spinlock_release(&vfs.lock);
@@ -868,6 +879,138 @@ int vfs_open(const char *path, uint32 flags, uint32 mode, int *fd_out)
 	return VFS_OK;
 }
 
+int vfs_install_file(file_t file, uint8 flags, int *fd_out)
+{
+	int fd;
+
+	if (!file || !fd_out)
+		return VFS_ERR_INVAL;
+	fd = fd_alloc(file, 0, flags);
+	if (fd < 0)
+		return VFS_ERR_MFILE;
+	*fd_out = fd;
+	return VFS_OK;
+}
+
+int vfs_get_file_fd(int fd, file_t *result)
+{
+	file_t file;
+
+	if (!result)
+		return VFS_ERR_INVAL;
+	if (fd_get(fd, &file) != VFS_OK)
+		return VFS_ERR_BADF;
+	*result = file_dup(file);
+	return VFS_OK;
+}
+
+uint32 vfs_file_poll(struct vfs_file *file, uint32 events)
+{
+	uint32 ready = 0;
+
+	if (!file || !file->operations)
+		return VFS_POLL_NVAL;
+	if (file->operations->poll)
+		return file->operations->poll(file, events);
+	if ((events & VFS_POLL_IN) && file->operations->read)
+		ready |= VFS_POLL_IN;
+	if ((events & VFS_POLL_OUT) && file->operations->write)
+		ready |= VFS_POLL_OUT;
+	return ready;
+}
+
+int vfs_poll(struct vfs_pollfd *fds, uint32 count, int timeout_ms)
+{
+	file_t files[NOFILE];
+	uint64 generation, start = ktime_get_ms();
+	uint32 index;
+	int ready, remaining;
+
+	if (!fds || count > NOFILE)
+		return VFS_ERR_INVAL;
+	memset(files, 0, sizeof(files));
+	for (index = 0; index < count; index++) {
+		fds[index].revents = 0;
+		if (fds[index].fd < 0)
+			continue;
+		if (vfs_get_file_fd(fds[index].fd, &files[index]) < 0)
+			fds[index].revents = VFS_POLL_NVAL;
+	}
+	for (;;) {
+		generation = vfs_poll_generation();
+		ready = 0;
+		for (index = 0; index < count; index++) {
+			if (fds[index].fd < 0)
+				continue;
+			if (!files[index]) {
+				fds[index].revents = VFS_POLL_NVAL;
+				ready++;
+				continue;
+			}
+			fds[index].revents = vfs_file_poll(
+				files[index], fds[index].events);
+			if (fds[index].revents)
+				ready++;
+		}
+		if (ready || !timeout_ms)
+			break;
+		if (timeout_ms < 0)
+			remaining = -1;
+		else {
+			uint64 elapsed = ktime_get_ms() - start;
+
+			if (elapsed >= (uint32)timeout_ms)
+				break;
+			remaining = timeout_ms - elapsed;
+		}
+		vfs_poll_wait(generation, remaining);
+	}
+	for (index = 0; index < count; index++) {
+		if (files[index])
+			vfs_file_put(files[index]);
+	}
+	return ready;
+}
+
+uint64 vfs_poll_generation(void)
+{
+	uint64 generation;
+
+	spinlock_acquire(&poll_state.lock);
+	generation = poll_state.generation;
+	spinlock_release(&poll_state.lock);
+	return generation;
+}
+
+int vfs_poll_wait(uint64 generation, int timeout_ms)
+{
+	int result = 0;
+
+	spinlock_acquire(&poll_state.lock);
+	if (poll_state.generation != generation)
+		goto out;
+	if (!timeout_ms) {
+		result = -1;
+		goto out;
+	}
+	if (timeout_ms < 0)
+		wait_queue_sleep(&poll_state.wait, &poll_state.lock);
+	else
+		result = wait_queue_sleep_timeout(
+			&poll_state.wait, &poll_state.lock, timeout_ms);
+out:
+	spinlock_release(&poll_state.lock);
+	return result;
+}
+
+void vfs_poll_notify(void)
+{
+	spinlock_acquire(&poll_state.lock);
+	poll_state.generation++;
+	wait_queue_wake_all(&poll_state.wait);
+	spinlock_release(&poll_state.lock);
+}
+
 int vfs_close(int fd)
 {
 	file_t file;
@@ -877,6 +1020,7 @@ int vfs_close(int fd)
 	cur_proc()->ofile[fd] = 0;
 	cur_proc()->fd_flags[fd] = 0;
 	file_close(file);
+	vfs_poll_notify();
 	return VFS_OK;
 }
 
@@ -926,9 +1070,34 @@ int vfs_read(int fd, uint64 address, int length)
 	return result > 0x7fffffff ? VFS_ERR_INVAL : result;
 }
 
-int vfs_write(int fd, uint64 address, int length)
+static int vfs_prepare_append(file_t file)
 {
 	struct vfs_stat stat;
+	int result;
+
+	if (!(file->flags & VFS_OPEN_APPEND) || !file->path.dentry)
+		return VFS_OK;
+	result = vfs_inode_stat(file->path.dentry->inode, &stat);
+	if (result < 0)
+		return result;
+	file->position = stat.size;
+	return VFS_OK;
+}
+
+static sleeplock_t vfs_regular_write_lock(file_t file)
+{
+	struct vfs_inode *inode;
+
+	if (!file->path.dentry ||
+	    !(inode = file->path.dentry->inode) ||
+	    inode->type != VFS_INODE_REGULAR || !inode->superblock)
+		return 0;
+	return &inode->superblock->write_lock;
+}
+
+int vfs_write(int fd, uint64 address, int length)
+{
+	sleeplock_t lock;
 	file_t file;
 	int64 result;
 
@@ -936,14 +1105,62 @@ int vfs_write(int fd, uint64 address, int length)
 		return VFS_ERR_BADF;
 	if (length < 0)
 		return VFS_ERR_INVAL;
-	if (file->flags & VFS_OPEN_APPEND) {
-		result = vfs_inode_stat(file->path.dentry->inode, &stat);
-		if (result < 0)
-			return result;
-		file->position = stat.size;
-	}
-	result = file_write(file, 1, address, length, &file->position);
+	lock = vfs_regular_write_lock(file);
+	if (lock)
+		sleeplock_acquire(lock);
+	result = vfs_prepare_append(file);
+	if (result >= 0)
+		result = file_write(file, 1, address, length,
+				    &file->position);
+	if (lock)
+		sleeplock_release(lock);
 	return result > 0x7fffffff ? VFS_ERR_INVAL : result;
+}
+
+int64 vfs_writev(int fd, int user_source,
+		 const struct vfs_iovec *iovecs, uint32 count)
+{
+	sleeplock_t lock;
+	file_t file;
+	uint64 total = 0;
+	uint32 index;
+	int64 result;
+
+	if (fd_get(fd, &file) != VFS_OK)
+		return VFS_ERR_BADF;
+	if (!(file->flags & VFS_OPEN_WRITE))
+		return VFS_ERR_BADF;
+	for (index = 0; index < count; index++) {
+		if (iovecs[index].length > 0x7fffffff)
+			return VFS_ERR_INVAL;
+	}
+	lock = vfs_regular_write_lock(file);
+	if (lock)
+		sleeplock_acquire(lock);
+	if (file->operations && file->operations->writev) {
+		result = file->operations->writev(file, user_source, iovecs,
+						  count);
+		goto out;
+	}
+	result = vfs_prepare_append(file);
+	if (result < 0)
+		goto out;
+	for (index = 0; index < count; index++) {
+		result = file_write(file, user_source, iovecs[index].base,
+				    iovecs[index].length, &file->position);
+		if (result < 0) {
+			result = total ? total : result;
+			goto out;
+		}
+		total += result;
+		if ((uint64)result != iovecs[index].length)
+			break;
+	}
+	result = total;
+out:
+	if (lock)
+		sleeplock_release(lock);
+	return result;
 }
 
 int64 vfs_ioctl(int fd, uint64 request, uint64 argument)
@@ -964,6 +1181,8 @@ int vfs_seek(int fd, int64 offset, int whence, uint64 *result)
 
 	if (fd_get(fd, &file) != VFS_OK)
 		return VFS_ERR_BADF;
+	if (!file->path.dentry)
+		return VFS_ERR_SPIPE;
 	if (whence == 0)
 		next = offset;
 	else if (whence == 1)
@@ -989,6 +1208,11 @@ int vfs_stat_fd(int fd, struct vfs_stat *stat)
 
 	if (fd_get(fd, &file) != VFS_OK)
 		return VFS_ERR_BADF;
+	if (!file->path.dentry) {
+		if (!file->operations || !file->operations->getattr)
+			return VFS_ERR_INVAL;
+		return file->operations->getattr(file, stat);
+	}
 	return vfs_inode_stat(file->path.dentry->inode, stat);
 }
 
@@ -1012,6 +1236,8 @@ int vfs_next_dirent(int fd, struct vfs_dirent *dirent)
 
 	if (fd_get(fd, &file) != VFS_OK)
 		return VFS_ERR_BADF;
+	if (!file->path.dentry)
+		return VFS_ERR_NOTDIR;
 	if (file->path.dentry->inode->type != VFS_INODE_DIRECTORY)
 		return VFS_ERR_NOTDIR;
 	if (!file->operations || !file->operations->readdir)
@@ -1371,6 +1597,25 @@ int vfs_get_file_flags(int fd, uint32 *flags)
 	if (fd_get(fd, &file) != VFS_OK)
 		return VFS_ERR_BADF;
 	*flags = file->flags;
+	return VFS_OK;
+}
+
+int vfs_set_file_flags(int fd, uint32 flags)
+{
+	const uint32 mutable = VFS_OPEN_APPEND | VFS_OPEN_NONBLOCK;
+	file_t file;
+	uint32 next;
+	int status;
+
+	if (fd_get(fd, &file) != VFS_OK)
+		return VFS_ERR_BADF;
+	next = (file->flags & ~mutable) | (flags & mutable);
+	if (file->operations && file->operations->set_flags) {
+		status = file->operations->set_flags(file, next);
+		if (status < 0)
+			return status;
+	}
+	file->flags = next;
 	return VFS_OK;
 }
 
