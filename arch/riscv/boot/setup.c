@@ -16,7 +16,7 @@
 extern void main(void);
 
 /* OpenSBI starts only the boot hart before SBI HSM is used. */
-__attribute__((aligned(16))) int8 boot_stack[4096];
+__attribute__((aligned(16))) int8 boot_stack[BOOT_STACK_SIZE];
 __attribute__((aligned(16))) int8 secondary_stacks[4096 * NCPU];
 uint64 boot_dtb_address;
 uint64 boot_hart_id;

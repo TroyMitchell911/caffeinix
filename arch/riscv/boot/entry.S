@@ -1,3 +1,4 @@
+#include <boot.h>
 #include <kernel_config.h>
 
 .section .text
@@ -7,7 +8,7 @@
 _entry:
 	# OpenSBI passes the boot hart ID in a0 and the DTB address in a1.
 	la sp, boot_stack
-	li t0, 4096
+	li t0, BOOT_STACK_SIZE
 	add sp, sp, t0
 	tail setup
 
