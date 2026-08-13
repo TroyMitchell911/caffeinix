@@ -112,6 +112,26 @@ static int test_canonical(void)
 	return 0;
 }
 
+static int test_nonblock(void)
+{
+	char value;
+	int fd, flags;
+
+	fd = open("/dev/ttyS0", O_RDONLY);
+	if (fd < 0)
+		return fail("nonblock-open", 50);
+	flags = fcntl(fd, F_GETFL);
+	if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0)
+		return fail("nonblock-flags", 51);
+	errno = 0;
+	if (read(fd, &value, 1) != -1 || errno != EAGAIN)
+		return fail("nonblock-read", 52);
+	if (close(fd))
+		return fail("nonblock-close", 53);
+	write_all(1, "TTY_NONBLOCK_OK\n", 16);
+	return 0;
+}
+
 static int test_raw(void)
 {
 	static const char expected[] = { 'R', '\r', 'X', '!' };
@@ -173,6 +193,8 @@ int main(int argc, char **argv)
 		return test_metadata();
 	if (!strcmp(argv[1], "canonical"))
 		return test_canonical();
+	if (!strcmp(argv[1], "nonblock"))
+		return test_nonblock();
 	if (!strcmp(argv[1], "raw"))
 		return test_raw();
 	if (!strcmp(argv[1], "long-output"))

@@ -173,6 +173,18 @@ expect {
 }
 expect_prompt
 
+send -- "/bin/tty-runtime nonblock\r"
+expect {
+	-re {\r?\nTTY_NONBLOCK_OK} {}
+	-re {TTY_RUNTIME_FAIL=[^\r\n]*} {
+		abort_test "nonblocking TTY test reported failure"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in nonblocking TTY test" }
+	timeout { abort_test "nonblocking TTY test timeout" }
+	eof { abort_test "QEMU exited during nonblocking TTY test" }
+}
+expect_prompt
+
 send -- "/bin/tty-runtime canonical\r"
 expect {
 	-re {\r?\nTTY_CANONICAL_READY} {}

@@ -60,7 +60,7 @@ static int tty_device_open(struct char_device *device,
 }
 
 static int64 tty_read(struct tty *tty, int user_destination,
-		      uint64 destination, uint64 count)
+		      uint64 destination, uint64 count, int nonblock)
 {
 	uint64 total = 0;
 	int canonical;
@@ -72,6 +72,10 @@ static int64 tty_read(struct tty *tty, int user_destination,
 	while (total < count) {
 		while (tty->read_position == tty->commit_position &&
 		       !tty->eof_pending) {
+			if (nonblock) {
+				spinlock_release(&tty->lock);
+				return total ? total : VFS_ERR_AGAIN;
+			}
 			if (!canonical && !tty->termios.control[LINUX_VMIN]) {
 				spinlock_release(&tty->lock);
 				return total;
@@ -140,7 +144,8 @@ static int64 tty_device_read(struct char_device *device,
 {
 	struct tty *tty = tty_from_device(device, file);
 
-	return tty ? tty_read(tty, user_destination, destination, count) :
+	return tty ? tty_read(tty, user_destination, destination, count,
+			      file->flags & VFS_OPEN_NONBLOCK) :
 		     VFS_ERR_NODEV;
 }
 
