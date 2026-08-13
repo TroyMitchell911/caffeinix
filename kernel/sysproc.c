@@ -1,4 +1,5 @@
 #include <linux_uapi.h>
+#include <ktime.h>
 #include <mem_layout.h>
 #include <mystring.h>
 #include <process.h>
@@ -7,6 +8,26 @@
 #include <vm.h>
 
 extern void exit(int cause);
+
+uint64 sys_linux_clock_gettime(void)
+{
+	struct linux_timespec time;
+	process_t process = cur_proc();
+	uint64 address, nanoseconds;
+	int clock;
+
+	argint(0, &clock);
+	argaddr(1, &address);
+	if (clock != LINUX_CLOCK_MONOTONIC)
+		return -LINUX_EINVAL;
+	nanoseconds = ktime_get_ns();
+	time.seconds = nanoseconds / 1000000000ULL;
+	time.nanoseconds = nanoseconds % 1000000000ULL;
+	if (copyout(process->pagetable, address, (char *)&time,
+		    sizeof(time)) < 0)
+		return -LINUX_EFAULT;
+	return 0;
+}
 
 uint64 sys_linux_exit_group(void)
 {

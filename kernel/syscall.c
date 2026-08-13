@@ -89,6 +89,7 @@ extern uint64 sys_linux_readlinkat(void);
 extern uint64 sys_linux_renameat2(void);
 extern uint64 sys_linux_set_tid_address(void);
 extern uint64 sys_linux_clone(void);
+extern uint64 sys_linux_clock_gettime(void);
 extern uint64 sys_linux_rt_sigaction(void);
 extern uint64 sys_linux_rt_sigprocmask(void);
 extern uint64 sys_linux_symlinkat(void);
@@ -131,6 +132,7 @@ static syscall_t linux_syscalls[LINUX_SYS_renameat2 + 1] = {
 	[LINUX_SYS_exit] = sys_linux_exit,
 	[LINUX_SYS_exit_group] = sys_linux_exit_group,
 	[LINUX_SYS_set_tid_address] = sys_linux_set_tid_address,
+	[LINUX_SYS_clock_gettime] = sys_linux_clock_gettime,
 	[LINUX_SYS_rt_sigaction] = sys_linux_rt_sigaction,
 	[LINUX_SYS_rt_sigprocmask] = sys_linux_rt_sigprocmask,
 	[LINUX_SYS_umask] = sys_linux_umask,

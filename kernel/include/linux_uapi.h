@@ -33,6 +33,7 @@
 #define LINUX_SYS_exit               93
 #define LINUX_SYS_exit_group         94
 #define LINUX_SYS_set_tid_address    96
+#define LINUX_SYS_clock_gettime     113
 #define LINUX_SYS_rt_sigaction      134
 #define LINUX_SYS_rt_sigprocmask    135
 #define LINUX_SYS_umask             166
@@ -94,6 +95,11 @@
 struct linux_iovec {
 	uint64 base;
 	uint64 len;
+};
+
+struct linux_timespec {
+	int64 seconds;
+	int64 nanoseconds;
 };
 
 #define LINUX_AT_FDCWD              -100
@@ -171,6 +177,9 @@ struct linux_iovec {
 
 #define LINUX_WNOHANG                   1
 
+#define LINUX_CLOCK_REALTIME             0
+#define LINUX_CLOCK_MONOTONIC            1
+
 #define LINUX_S_IFMT             00170000
 #define LINUX_S_IFREG            0100000
 #define LINUX_S_IFDIR            0040000
@@ -232,6 +241,8 @@ struct linux_winsize {
 
 _Static_assert(sizeof(struct linux_iovec) == 16,
 	       "Linux iovec layout changed");
+_Static_assert(sizeof(struct linux_timespec) == 16,
+	       "Linux timespec layout changed");
 _Static_assert(sizeof(struct linux_stat) == 128,
 	       "Linux RISC-V stat layout changed");
 _Static_assert(__builtin_offsetof(struct linux_stat, size) == 48,

@@ -9,6 +9,7 @@
 #include <asm/termbits.h>
 #include <asm/unistd.h>
 #include <asm-generic/termios.h>
+#include <linux/time_types.h>
 
 _Static_assert(LINUX_SYS_getcwd == __NR_getcwd, "getcwd number");
 _Static_assert(LINUX_SYS_openat == __NR_openat, "openat number");
@@ -24,6 +25,8 @@ _Static_assert(LINUX_SYS_fsync == __NR_fsync, "fsync number");
 _Static_assert(LINUX_SYS_umask == __NR_umask, "umask number");
 _Static_assert(LINUX_SYS_rt_sigaction == __NR_rt_sigaction,
 	       "rt_sigaction number");
+_Static_assert(LINUX_SYS_clock_gettime == __NR_clock_gettime,
+	       "clock_gettime number");
 _Static_assert(LINUX_SYS_clone == __NR_clone, "clone number");
 _Static_assert(LINUX_SYS_execve == __NR_execve, "execve number");
 _Static_assert(LINUX_SYS_wait4 == __NR_wait4, "wait4 number");
@@ -43,6 +46,8 @@ _Static_assert(sizeof(struct linux_termios) == sizeof(struct termios),
 	       "termios size");
 _Static_assert(sizeof(struct linux_winsize) == sizeof(struct winsize),
 	       "winsize size");
+_Static_assert(sizeof(struct linux_timespec) ==
+	       sizeof(struct __kernel_timespec), "timespec size");
 _Static_assert(LINUX_TCGETS == TCGETS, "TCGETS value");
 _Static_assert(LINUX_TCSETS == TCSETS, "TCSETS value");
 _Static_assert(LINUX_TCSETSW == TCSETSW, "TCSETSW value");
