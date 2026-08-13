@@ -418,6 +418,12 @@ void exit(int cause)
 
         reparent(p);
 
+	/*
+	 * Keep the final thread alive from publishing PROCESS_ZOMBIE until
+	 * the scheduler has switched away. A parent on another CPU may reap
+	 * the process as soon as wait_lock is released.
+	 */
+	spinlock_acquire(&cur_thread()->lock);
         spinlock_acquire(&p->lock);
 	if (p->tnums != 1)
 		PANIC("multithreaded exit unsupported");
@@ -426,10 +432,10 @@ void exit(int cause)
         spinlock_release(&p->lock);
 
         if(p->parent)
-                wait_queue_wake_all(&p->parent->child_wait);
+		wait_queue_wake_all(&p->parent->child_wait);
 
         spinlock_release(&wait_lock);
-	scheduler_exit();
+	scheduler_exit_locked();
 }
 
 int process_wait(int target, uint64 status_address, int nohang)

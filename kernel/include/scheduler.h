@@ -29,6 +29,7 @@ void scheduler(void);
 void yield(void);
 void sched(void);
 void scheduler_exit(void);
+void scheduler_exit_locked(void);
 void scheduler_make_runnable(thread_t thread);
 void scheduler_request_resched(void);
 int scheduler_should_resched(void);

@@ -209,16 +209,26 @@ void yield(void)
         sched();
         spinlock_release(&current->lock);
 }
-void scheduler_exit(void)
+void scheduler_exit_locked(void)
 {
 	thread_t current = cur_thread();
 
-	spinlock_acquire(&current->lock);
-	if (current->state != THREAD_RUNNING)
+	if (!current || !spinlock_holding(&current->lock) ||
+	    current->state != THREAD_RUNNING)
 		PANIC("exit non-running thread");
 	current->state = THREAD_EXITED;
 	sched();
 	PANIC("scheduled exited thread");
+}
+
+void scheduler_exit(void)
+{
+	thread_t current = cur_thread();
+
+	if (!current)
+		PANIC("exit without thread");
+	spinlock_acquire(&current->lock);
+	scheduler_exit_locked();
 }
 
 void scheduler_request_resched(void)
