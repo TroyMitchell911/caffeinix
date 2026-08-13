@@ -26,11 +26,13 @@ struct block_device {
 
 void block_device_init(void);
 int block_device_register(struct block_device *device);
+void block_device_unregister(struct block_device *device);
 struct block_device *block_device_get(uint32 id);
 int block_device_read(struct block_device *device, uint64 sector,
 		      void *buffer, uint32 count);
 int block_device_write(struct block_device *device, uint64 sector,
 		       const void *buffer, uint32 count);
 int block_device_flush(struct block_device *device);
+int virtio_blk_init(void);
 
 #endif

@@ -42,6 +42,67 @@ expect {
 	eof { abort_test "QEMU exited before shell startup" }
 }
 
+send -- "/bin/scheduler-runtime smoke\r"
+expect {
+	-re {\r?\nSCHED_SMOKE_OK} {}
+	-re {SCHED_RUNTIME_FAIL=[^\r\n]*} {
+		abort_test "scheduler smoke test reported failure"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in scheduler smoke test" }
+	timeout { abort_test "scheduler smoke test timeout" }
+	eof { abort_test "QEMU exited during scheduler smoke test" }
+}
+expect {
+	-re {\r?\n# $} {}
+	-re {\[PANIC\]} { abort_test "kernel panic after scheduler smoke test" }
+	timeout { abort_test "shell prompt timeout" }
+	eof { abort_test "QEMU exited before final shell prompt" }
+}
+
+send -- "/bin/network-runtime loopback\r"
+expect {
+	-re {\r?\nNETWORK_LOOPBACK_OK} {}
+	-re {NETWORK_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "network loopback test reported failure"
+	}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic in network loopback test"
+	}
+	timeout { abort_test "network loopback test timeout" }
+	eof { abort_test "QEMU exited during network loopback test" }
+}
+expect {
+	-re {\r?\n# $} {}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic after network loopback test"
+	}
+	timeout { abort_test "shell prompt timeout" }
+	eof { abort_test "QEMU exited after network loopback test" }
+}
+
+if {$env(QEMU_CPUS) == 1} {
+	send -- "/bin/scheduler-runtime fairness\r"
+	expect {
+		-re {\r?\nSCHED_CFS_FAIR_OK} {}
+		-re {SCHED_RUNTIME_FAIL=[^\r\n]*} {
+			abort_test "CFS fairness test reported failure"
+		}
+		-re {\[PANIC\]} {
+			abort_test "kernel panic in CFS fairness test"
+		}
+		timeout { abort_test "CFS fairness test timeout" }
+		eof { abort_test "QEMU exited during CFS fairness test" }
+	}
+	expect {
+		-re {\r?\n# $} {}
+		-re {\[PANIC\]} {
+			abort_test "kernel panic after CFS fairness test"
+		}
+		timeout { abort_test "shell prompt timeout" }
+		eof { abort_test "QEMU exited after CFS fairness test" }
+	}
+}
+
 send -- "echo OPENSBI_BOOT_OK\r"
 expect {
 	-re {\r?\nOPENSBI_BOOT_OK} {}

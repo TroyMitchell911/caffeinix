@@ -50,6 +50,7 @@ struct device {
 	struct device_driver *driver;
 	struct device_node *of_node;
 	void *driver_data;
+	uint64 dma_mask;
 	void (*release)(struct device *device);
 	struct list node;
 	struct list children;

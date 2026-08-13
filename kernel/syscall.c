@@ -8,8 +8,7 @@
 
 static uint64 argraw(int n)
 {
-	process_t p = cur_proc();
-	uint64 *args = &p->cur_thread->trapframe->a0;
+	uint64 *args = &cur_thread()->trapframe->a0;
 
 	if (n >= 0 && n <= 5)
 		return args[n];
@@ -90,8 +89,11 @@ extern uint64 sys_linux_readlinkat(void);
 extern uint64 sys_linux_renameat2(void);
 extern uint64 sys_linux_set_tid_address(void);
 extern uint64 sys_linux_clone(void);
+extern uint64 sys_linux_clock_gettime(void);
 extern uint64 sys_linux_rt_sigaction(void);
 extern uint64 sys_linux_rt_sigprocmask(void);
+extern uint64 sys_linux_setpriority(void);
+extern uint64 sys_linux_getpriority(void);
 extern uint64 sys_linux_symlinkat(void);
 extern uint64 sys_linux_sync(void);
 extern uint64 sys_linux_umask(void);
@@ -100,6 +102,24 @@ extern uint64 sys_linux_utimensat(void);
 extern uint64 sys_linux_write(void);
 extern uint64 sys_linux_writev(void);
 extern uint64 sys_linux_wait4(void);
+extern uint64 sys_linux_ppoll(void);
+extern uint64 sys_linux_socket(void);
+extern uint64 sys_linux_socketpair(void);
+extern uint64 sys_linux_bind(void);
+extern uint64 sys_linux_listen(void);
+extern uint64 sys_linux_accept(void);
+extern uint64 sys_linux_connect(void);
+extern uint64 sys_linux_getsockname(void);
+extern uint64 sys_linux_getpeername(void);
+extern uint64 sys_linux_sendto(void);
+extern uint64 sys_linux_recvfrom(void);
+extern uint64 sys_linux_setsockopt(void);
+extern uint64 sys_linux_getsockopt(void);
+extern uint64 sys_linux_shutdown(void);
+extern uint64 sys_linux_sendmsg(void);
+extern uint64 sys_linux_recvmsg(void);
+extern uint64 sys_linux_accept4(void);
+extern uint64 sys_linux_ftruncate(void);
 
 typedef uint64 (*syscall_t)(void);
 
@@ -113,6 +133,7 @@ static syscall_t linux_syscalls[LINUX_SYS_renameat2 + 1] = {
 	[LINUX_SYS_unlinkat] = sys_linux_unlinkat,
 	[LINUX_SYS_symlinkat] = sys_linux_symlinkat,
 	[LINUX_SYS_linkat] = sys_linux_linkat,
+	[LINUX_SYS_ftruncate] = sys_linux_ftruncate,
 	[LINUX_SYS_faccessat] = sys_linux_faccessat,
 	[LINUX_SYS_chdir] = sys_linux_chdir,
 	[LINUX_SYS_openat] = sys_linux_openat,
@@ -122,6 +143,7 @@ static syscall_t linux_syscalls[LINUX_SYS_renameat2 + 1] = {
 	[LINUX_SYS_read] = sys_linux_read,
 	[LINUX_SYS_write] = sys_linux_write,
 	[LINUX_SYS_writev] = sys_linux_writev,
+	[LINUX_SYS_ppoll] = sys_linux_ppoll,
 	[LINUX_SYS_readlinkat] = sys_linux_readlinkat,
 	[LINUX_SYS_newfstatat] = sys_linux_newfstatat,
 	[LINUX_SYS_fstat] = sys_linux_fstat,
@@ -132,8 +154,11 @@ static syscall_t linux_syscalls[LINUX_SYS_renameat2 + 1] = {
 	[LINUX_SYS_exit] = sys_linux_exit,
 	[LINUX_SYS_exit_group] = sys_linux_exit_group,
 	[LINUX_SYS_set_tid_address] = sys_linux_set_tid_address,
+	[LINUX_SYS_clock_gettime] = sys_linux_clock_gettime,
 	[LINUX_SYS_rt_sigaction] = sys_linux_rt_sigaction,
 	[LINUX_SYS_rt_sigprocmask] = sys_linux_rt_sigprocmask,
+	[LINUX_SYS_setpriority] = sys_linux_setpriority,
+	[LINUX_SYS_getpriority] = sys_linux_getpriority,
 	[LINUX_SYS_umask] = sys_linux_umask,
 	[LINUX_SYS_prctl] = sys_linux_prctl,
 	[LINUX_SYS_getpid] = sys_linux_getpid,
@@ -143,11 +168,27 @@ static syscall_t linux_syscalls[LINUX_SYS_renameat2 + 1] = {
 	[LINUX_SYS_getgid] = sys_linux_getgid,
 	[LINUX_SYS_getegid] = sys_linux_getegid,
 	[LINUX_SYS_gettid] = sys_linux_gettid,
+	[LINUX_SYS_socket] = sys_linux_socket,
+	[LINUX_SYS_socketpair] = sys_linux_socketpair,
+	[LINUX_SYS_bind] = sys_linux_bind,
+	[LINUX_SYS_listen] = sys_linux_listen,
+	[LINUX_SYS_accept] = sys_linux_accept,
+	[LINUX_SYS_connect] = sys_linux_connect,
+	[LINUX_SYS_getsockname] = sys_linux_getsockname,
+	[LINUX_SYS_getpeername] = sys_linux_getpeername,
+	[LINUX_SYS_sendto] = sys_linux_sendto,
+	[LINUX_SYS_recvfrom] = sys_linux_recvfrom,
+	[LINUX_SYS_setsockopt] = sys_linux_setsockopt,
+	[LINUX_SYS_getsockopt] = sys_linux_getsockopt,
+	[LINUX_SYS_shutdown] = sys_linux_shutdown,
+	[LINUX_SYS_sendmsg] = sys_linux_sendmsg,
+	[LINUX_SYS_recvmsg] = sys_linux_recvmsg,
 	[LINUX_SYS_brk] = sys_linux_brk,
 	[LINUX_SYS_munmap] = sys_linux_munmap,
 	[LINUX_SYS_clone] = sys_linux_clone,
 	[LINUX_SYS_execve] = sys_linux_execve,
 	[LINUX_SYS_mmap] = sys_linux_mmap,
+	[LINUX_SYS_accept4] = sys_linux_accept4,
 	[LINUX_SYS_wait4] = sys_linux_wait4,
 	[LINUX_SYS_renameat2] = sys_linux_renameat2,
 };
@@ -156,14 +197,15 @@ void syscall(void)
 {
 	uint64 nr;
 	process_t p = cur_proc();
+	thread_t current = cur_thread();
 
-	nr = p->cur_thread->trapframe->a7;
+	nr = current->trapframe->a7;
 	if (nr < NELEM(linux_syscalls) && linux_syscalls[nr]) {
-		p->cur_thread->trapframe->a0 = linux_syscalls[nr]();
+		current->trapframe->a0 = linux_syscalls[nr]();
 		return;
 	}
 
 	printf("Unsupported Linux syscall %d from pid %d (%s)\n",
 	       nr, p->pid, p->name);
-	p->cur_thread->trapframe->a0 = -LINUX_ENOSYS;
+	current->trapframe->a0 = -LINUX_ENOSYS;
 }

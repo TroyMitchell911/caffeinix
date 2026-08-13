@@ -1,0 +1,16 @@
+Name: lwIP
+Version: 2.2.1
+Tag: STABLE-2_2_1_RELEASE
+Commit: 77dcd25a72509eb83f72b033d219b1d40cd8eb95
+URL: https://github.com/lwip-tcpip/lwip.git
+License: BSD-3-Clause (see upstream/COPYING)
+
+Imported paths:
+  COPYING
+  src/api
+  src/core
+  src/include
+  src/netif/ethernet.c
+
+The Makefiles under upstream/ are Caffeinix build metadata.  Port headers,
+OS adaptation, network-interface glue, and configuration live under port/.

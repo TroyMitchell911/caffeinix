@@ -18,7 +18,6 @@
 #include <printf.h>
 #include <plic.h>
 #include <process.h>
-#include <virtio_disk.h>
 #include <block_device.h>
 #include <file.h>
 #include <mystring.h>
@@ -40,6 +39,11 @@
 #include <sbi.h>
 #include <timer.h>
 #include <cpu.h>
+#include <wait.h>
+#include <workqueue.h>
+#include <virtio.h>
+#include <netdevice.h>
+#include <network_stack.h>
 
 volatile static uint8 start = 0;
 extern char end[];
@@ -56,6 +60,8 @@ void main(void)
 		sbi_init(cpu_count());
 		timer_init();
                 palloc_init();
+		file_init();
+		vfs_init();
 		irq_init();
 		plic_init();
 		plic_init_hart();
@@ -69,6 +75,9 @@ void main(void)
 			PANIC("map early console");
                 kvm_init();
                 thread_setup();
+                scheduler_init();
+		wait_queue_timeout_init();
+		workqueue_init();
                 trap_init_lock();
                 trap_init();
 		timer_init_hart();
@@ -77,6 +86,7 @@ void main(void)
 		if (driver_core_selftest())
 			PANIC("driver core selftest");
 		platform_bus_init();
+		virtio_bus_init();
 		if (platform_core_selftest() < 0)
 			PANIC("platform core selftest");
 		if (of_platform_populate() < 0)
@@ -86,13 +96,22 @@ void main(void)
 		if (uart_core_selftest() < 0)
 			PANIC("UART core selftest");
                 block_device_init();
-                file_init();
-		vfs_init();
+		net_device_init();
+		if (net_core_selftest() < 0)
+			PANIC("network core selftest");
+		if (net_loopback_init() < 0)
+			PANIC("register loopback device");
+		if (virtio_blk_init() < 0)
+			PANIC("register virtio-blk driver");
+		if (virtio_net_init() < 0)
+			PANIC("register virtio-net driver");
+		if (virtio_mmio_init() < 0)
+			PANIC("register virtio-mmio driver");
+		network_stack_init();
 		ext4fs_init();
 		fatfs_init();
 		devfs_init();
 		tmpfs_init();
-                virtio_disk_init();
 		userinit();
 
                 printf("Hello! Caffeinix\n");

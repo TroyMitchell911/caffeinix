@@ -9,7 +9,7 @@ proc abort_test {message} {
 proc expect_prompt {} {
 	expect {
 		-re {\[PANIC\]} { abort_test "kernel panic before shell prompt" }
-		-re {\r?\n# $} {}
+		-re {(^|\r?\n)# $} {}
 		timeout { abort_test "shell prompt timeout" }
 		eof { abort_test "QEMU exited before shell prompt" }
 	}
@@ -41,9 +41,11 @@ set command [list \
 	-nographic \
 	-global virtio-mmio.force-legacy=false \
 	-drive file=$env(ROOT_IMAGE),if=none,format=raw,id=x0 \
-	-device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0 \
+	-device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.1 \
 	-drive file=$env(FAT_IMAGE),if=none,format=raw,id=x1 \
-	-device virtio-blk-device,drive=x1,bus=virtio-mmio-bus.1]
+	-device virtio-blk-device,drive=x1,bus=virtio-mmio-bus.2 \
+	-netdev user,id=n0,hostfwd=tcp:127.0.0.1:18082-:18082 \
+	-device virtio-net-device,netdev=n0,bus=virtio-mmio-bus.0,mac=52:54:00:12:34:56]
 
 spawn -noecho {*}$command
 
@@ -63,6 +65,114 @@ expect {
 }
 expect_prompt
 
+send -- "/bin/network-runtime\r"
+expect {
+	-re {\r?\nNETWORK_RUNTIME_OK} {}
+	-re {NETWORK_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "network runtime test reported failure"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in network runtime test" }
+	timeout { abort_test "network runtime test timeout" }
+	eof { abort_test "QEMU exited during network runtime test" }
+}
+expect_prompt
+
+send -- "/bin/pressure-runtime\r"
+expect {
+	-re {\r?\nPRESSURE_RUNTIME_OK} {}
+	-re {PRESSURE_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "mixed pressure test reported failure"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in mixed pressure test" }
+	timeout { abort_test "mixed pressure test timeout" }
+	eof { abort_test "QEMU exited during mixed pressure test" }
+}
+expect_prompt
+
+send -- "/usr/bin/nc 10.0.2.2 18081\r"
+send -- "tcp-request\r"
+expect {
+	-re {tcp-reply} {}
+	-re {not found|applet not found|Bad system call} {
+		abort_test "BusyBox nc is unavailable"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in BusyBox nc" }
+	timeout { abort_test "BusyBox nc timeout" }
+	eof { abort_test "QEMU exited during BusyBox nc" }
+}
+expect_prompt
+send -- "echo BUSYBOX_NC_OK\r"
+expect {
+	-re {\r?\nBUSYBOX_NC_OK} {}
+	-re {\[PANIC\]} { abort_test "kernel panic after BusyBox nc" }
+	timeout { abort_test "BusyBox nc marker timeout" }
+	eof { abort_test "QEMU exited after BusyBox nc" }
+}
+expect_prompt
+
+send -- "/usr/bin/wget -q -O /tmp/http.out "
+send -- "http://10.0.2.2:18084/fixture && "
+send -- "/bin/cat /tmp/http.out\r"
+expect {
+	-re {\r?\ncaffeinix-http} {}
+	-re {not found|applet not found|Bad system call} {
+		abort_test "BusyBox wget is unavailable"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in BusyBox wget" }
+	timeout { abort_test "BusyBox wget timeout" }
+	eof { abort_test "QEMU exited during BusyBox wget" }
+}
+expect_prompt
+send -- "echo BUSYBOX_WGET_OK\r"
+expect {
+	-re {\r?\nBUSYBOX_WGET_OK} {}
+	-re {\[PANIC\]} { abort_test "kernel panic after BusyBox wget" }
+	timeout { abort_test "BusyBox wget marker timeout" }
+	eof { abort_test "QEMU exited after BusyBox wget" }
+}
+expect_prompt
+
+send -- "/bin/scheduler-runtime\r"
+expect {
+	-re {\r?\nSCHED_RUNTIME_OK} {}
+	-re {SCHED_RUNTIME_FAIL=[^\r\n]*} {
+		abort_test "scheduler runtime test reported failure"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in scheduler runtime test" }
+	timeout { abort_test "scheduler runtime test timeout" }
+	eof { abort_test "QEMU exited during scheduler runtime test" }
+}
+expect_prompt
+
+send -- "/bin/scheduler-runtime tty-wait\r"
+set ready_count 0
+while {$ready_count < 8} {
+	expect {
+		-re {\r?\nSCHED_TTY_READY} { incr ready_count }
+		-re {SCHED_RUNTIME_FAIL=[^\r\n]*} {
+			abort_test "scheduler TTY wait setup failed"
+		}
+		-re {\[PANIC\]} {
+			abort_test "kernel panic before scheduler TTY wait"
+		}
+		timeout { abort_test "scheduler TTY waiter ready timeout" }
+		eof { abort_test "QEMU exited before scheduler TTY wait" }
+	}
+}
+for {set index 0} {$index < 8} {incr index} {
+	send -- "scheduler-wakeup-$index\r"
+}
+expect {
+	-re {\r?\nSCHED_TTY_WAIT_OK} {}
+	-re {SCHED_RUNTIME_FAIL=[^\r\n]*} {
+		abort_test "scheduler TTY wait test reported failure"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in scheduler TTY wait" }
+	timeout { abort_test "scheduler TTY wait completion timeout" }
+	eof { abort_test "QEMU exited during scheduler TTY wait" }
+}
+expect_prompt
+
 send -- "/bin/tty-runtime metadata\r"
 expect {
 	-re {\r?\nTTY_METADATA_OK} {}
@@ -72,6 +182,18 @@ expect {
 	-re {\[PANIC\]} { abort_test "kernel panic in TTY metadata test" }
 	timeout { abort_test "TTY metadata test timeout" }
 	eof { abort_test "QEMU exited during TTY metadata test" }
+}
+expect_prompt
+
+send -- "/bin/tty-runtime nonblock\r"
+expect {
+	-re {\r?\nTTY_NONBLOCK_OK} {}
+	-re {TTY_RUNTIME_FAIL=[^\r\n]*} {
+		abort_test "nonblocking TTY test reported failure"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in nonblocking TTY test" }
+	timeout { abort_test "nonblocking TTY test timeout" }
+	eof { abort_test "QEMU exited during nonblocking TTY test" }
 }
 expect_prompt
 

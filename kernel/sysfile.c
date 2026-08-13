@@ -90,6 +90,58 @@ static uint64 linux_error(int result)
 		return -LINUX_EFAULT;
 	case VFS_ERR_IO:
 		return -LINUX_EIO;
+	case VFS_ERR_SPIPE:
+		return -LINUX_ESPIPE;
+	case VFS_ERR_AGAIN:
+		return -LINUX_EAGAIN;
+	case VFS_ERR_NOTSOCK:
+		return -LINUX_ENOTSOCK;
+	case VFS_ERR_DESTADDRREQ:
+		return -LINUX_EDESTADDRREQ;
+	case VFS_ERR_MSGSIZE:
+		return -LINUX_EMSGSIZE;
+	case VFS_ERR_PROTOTYPE:
+		return -LINUX_EPROTOTYPE;
+	case VFS_ERR_NOPROTOOPT:
+		return -LINUX_ENOPROTOOPT;
+	case VFS_ERR_PROTONOSUPPORT:
+		return -LINUX_EPROTONOSUPPORT;
+	case VFS_ERR_SOCKTNOSUPPORT:
+		return -LINUX_ESOCKTNOSUPPORT;
+	case VFS_ERR_AFNOSUPPORT:
+		return -LINUX_EAFNOSUPPORT;
+	case VFS_ERR_ADDRINUSE:
+		return -LINUX_EADDRINUSE;
+	case VFS_ERR_ADDRNOTAVAIL:
+		return -LINUX_EADDRNOTAVAIL;
+	case VFS_ERR_NETDOWN:
+		return -LINUX_ENETDOWN;
+	case VFS_ERR_NETUNREACH:
+		return -LINUX_ENETUNREACH;
+	case VFS_ERR_CONNABORTED:
+		return -LINUX_ECONNABORTED;
+	case VFS_ERR_CONNRESET:
+		return -LINUX_ECONNRESET;
+	case VFS_ERR_NOBUFS:
+		return -LINUX_ENOBUFS;
+	case VFS_ERR_ISCONN:
+		return -LINUX_EISCONN;
+	case VFS_ERR_NOTCONN:
+		return -LINUX_ENOTCONN;
+	case VFS_ERR_SHUTDOWN:
+		return -LINUX_ESHUTDOWN;
+	case VFS_ERR_TIMEDOUT:
+		return -LINUX_ETIMEDOUT;
+	case VFS_ERR_CONNREFUSED:
+		return -LINUX_ECONNREFUSED;
+	case VFS_ERR_HOSTUNREACH:
+		return -LINUX_EHOSTUNREACH;
+	case VFS_ERR_ALREADY:
+		return -LINUX_EALREADY;
+	case VFS_ERR_INPROGRESS:
+		return -LINUX_EINPROGRESS;
+	case VFS_ERR_PIPE:
+		return -LINUX_EPIPE;
 	default:
 		return -LINUX_EIO;
 	}
@@ -120,6 +172,8 @@ static int linux_open_flags(int linux_flags, uint32 *vfs_flags)
 		flags |= VFS_OPEN_TRUNCATE;
 	if (linux_flags & LINUX_O_APPEND)
 		flags |= VFS_OPEN_APPEND;
+	if (linux_flags & LINUX_O_NONBLOCK)
+		flags |= VFS_OPEN_NONBLOCK;
 	if (linux_flags & LINUX_O_DIRECTORY)
 		flags |= VFS_OPEN_DIRECTORY;
 	*vfs_flags = flags;
@@ -189,6 +243,21 @@ uint64 sys_linux_openat(void)
 	if (linux_flags & LINUX_O_CLOEXEC)
 		vfs_set_fd_flags(fd, VFS_FD_CLOEXEC);
 	return fd;
+}
+
+uint64 sys_linux_ftruncate(void)
+{
+	uint64 length;
+	int64 signed_length;
+	int fd, result;
+
+	argint(0, &fd);
+	argaddr(1, &length);
+	signed_length = (int64)length;
+	if (signed_length < 0)
+		return -LINUX_EINVAL;
+	result = vfs_ftruncate(fd, signed_length);
+	return result < 0 ? linux_error(result) : 0;
 }
 
 uint64 sys_linux_close(void)
@@ -367,7 +436,18 @@ uint64 sys_linux_fcntl(void)
 			value = LINUX_O_RDONLY;
 		if (file_flags & VFS_OPEN_APPEND)
 			value |= LINUX_O_APPEND;
+		if (file_flags & VFS_OPEN_NONBLOCK)
+			value |= LINUX_O_NONBLOCK;
 		return value;
+	}
+	if (command == LINUX_F_SETFL) {
+		file_flags = 0;
+		if (value & LINUX_O_APPEND)
+			file_flags |= VFS_OPEN_APPEND;
+		if (value & LINUX_O_NONBLOCK)
+			file_flags |= VFS_OPEN_NONBLOCK;
+		result = vfs_set_file_flags(fd, file_flags);
+		return result < 0 ? linux_error(result) : 0;
 	}
 	return -LINUX_EINVAL;
 }
@@ -624,11 +704,12 @@ uint64 sys_linux_ioctl(void)
 uint64 sys_linux_writev(void)
 {
 	process_t p = cur_proc();
-	struct linux_iovec iov;
+	struct linux_iovec linux_iov;
+	struct vfs_iovec iovecs[LINUX_IOV_MAX];
 	uint64 iov_address;
-	uint64 total = 0;
 	file_t f;
-	int fd, count, i, written;
+	int fd, count, i;
+	int64 written;
 
 	argint(0, &fd);
 	argaddr(1, &iov_address);
@@ -640,21 +721,17 @@ uint64 sys_linux_writev(void)
 		return -LINUX_EINVAL;
 
 	for (i = 0; i < count; i++) {
-		if (copyin(p->pagetable, (char *)&iov,
-		           iov_address + i * sizeof(iov), sizeof(iov)) < 0)
-			return total ? total : -LINUX_EFAULT;
-		if (iov.len > 0x7fffffff)
-			return total ? total : -LINUX_EINVAL;
-
-		written = vfs_write(fd, iov.base, iov.len);
-		if (written < 0)
-			return total ? total : linux_error(written);
-		total += written;
-		if ((uint64)written != iov.len)
-			break;
+		if (copyin(p->pagetable, (char *)&linux_iov,
+		           iov_address + i * sizeof(linux_iov),
+			   sizeof(linux_iov)) < 0)
+			return -LINUX_EFAULT;
+		if (linux_iov.len > 0x7fffffff)
+			return -LINUX_EINVAL;
+		iovecs[i].base = linux_iov.base;
+		iovecs[i].length = linux_iov.len;
 	}
-
-	return total;
+	written = vfs_writev(fd, 1, iovecs, count);
+	return written < 0 ? linux_error(written) : written;
 }
 
 uint64 sys_linux_execve(void)

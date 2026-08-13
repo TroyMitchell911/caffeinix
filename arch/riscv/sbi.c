@@ -5,6 +5,7 @@
 #define SBI_EXT_BASE 0x10
 #define SBI_EXT_TIME 0x54494d45
 #define SBI_EXT_HSM 0x48534d
+#define SBI_EXT_IPI 0x735049
 
 #define SBI_BASE_GET_SPEC_VERSION 0
 #define SBI_BASE_GET_IMPL_ID 1
@@ -14,6 +15,7 @@
 #define SBI_TIME_SET_TIMER 0
 #define SBI_HSM_HART_START 0
 #define SBI_HSM_HART_GET_STATUS 2
+#define SBI_IPI_SEND_IPI 0
 
 #define SBI_SUCCESS 0
 
@@ -88,6 +90,8 @@ void sbi_init(int requested_cpus)
 		PANIC("SBI TIME extension required");
 	if (requested_cpus > 1 && !sbi_extension_available(SBI_EXT_HSM))
 		PANIC("SBI HSM extension required");
+	if (requested_cpus > 1 && !sbi_extension_available(SBI_EXT_IPI))
+		PANIC("SBI IPI extension required");
 }
 
 void sbi_report(void)
@@ -127,5 +131,15 @@ int64 sbi_hart_get_status(uint64 hart_id, uint64 *status)
 	                   0, 0, 0, 0, 0);
 	if (!result.error)
 		*status = result.value;
+	return result.error;
+}
+
+int64 sbi_send_ipi(uint64 hart_id)
+{
+	struct sbi_return result;
+
+	/* A one-bit mask based at hart_id also handles sparse hart IDs. */
+	result = sbi_ecall(SBI_EXT_IPI, SBI_IPI_SEND_IPI, 1, hart_id,
+	                   0, 0, 0, 0);
 	return result.error;
 }

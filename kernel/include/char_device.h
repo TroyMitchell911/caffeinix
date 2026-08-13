@@ -19,6 +19,8 @@ struct char_device_operations {
 	int64 (*ioctl)(struct char_device *device, struct vfs_file *file,
 	               uint64 request, uint64 argument);
 	int (*fsync)(struct char_device *device, struct vfs_file *file);
+	uint32 (*poll)(struct char_device *device, struct vfs_file *file,
+		       uint32 events);
 };
 
 struct char_device {

@@ -4,7 +4,6 @@ __build:
 obj-y :=
 subdir-y :=
 EXTRA_CFLAGS :=
-EXTRA_LDFLAGS :=
 
 # Tell the top-level Makefile that it is being parsed by the recursive build
 # engine, so it does not add the top-level bootstrap dependency again.
@@ -68,7 +67,7 @@ built-in.o : $(cur_objs) $(subdir_objs)
     # LD represents the cross-compiler linker; the -r option represents relocatable output, 
     # and an output file can be input again as ld
     # -o Set output file; $@ target name; $^ all non-duplicate dependent files
-	$(LD) $(LDFLAGS) $(EXTRA_LDFLAGS) -r -o $@ $^
+	$(LD) $(LDFLAGS) -r -o $@ $^
 
 dep_file = .$@.d
 

@@ -15,17 +15,11 @@
 #include <spinlock.h>
 #include <riscv.h>
 #include <file.h>
-
-/* TODO:Delete this macro */
-// #define PROCESS_NO_SCHED                1
+#include <wait.h>
 
 typedef enum process_state{
-        UNUSED,
-        ALLOCED,
-        RUNNABLE,
-        RUNNING,
-        SLEEPING,
-        ZOMBIE,
+        PROCESS_LIVE,
+        PROCESS_ZOMBIE,
 }process_state_t;
 
 typedef struct trapframe_info {
@@ -56,18 +50,16 @@ typedef struct process{
 	uint32 umask;
         file_t ofile[NOFILE];
 	uint8 fd_flags[NOFILE];
-        void *sleep_chan;
-
         int exit_state;
         int killed;
 	uint64 clear_child_tid;
 	uint64 signal_mask;
 	struct process_signal_action signal_actions[64];
         struct process *parent;
+        struct wait_queue child_wait;
         trapframe_info_t tinfo;
         int tnums;
         thread_t thread[PROC_MAXTHREAD];
-        thread_t cur_thread;
         
         struct list all_tag;
 }*process_t;
@@ -78,12 +70,10 @@ void process_freepagedir(pagedir_t pgdir, uint64 sz);
 int process_grow(int n);
 int process_fork(uint64 child_stack);
 int process_wait(int target, uint64 status_address, int nohang);
+int process_set_nice(int pid, int nice);
+int process_get_nice(int pid, int *nice);
 
 int killed(process_t p);
-void sleep(void* chan, spinlock_t lk);
-void wakeup(void* chan);
-void sleep_(void* chan, spinlock_t lk);
-void wakeup_(void* chan);
 int either_copyout(int user_dst, uint64 dst, void* src, uint64 len);
 int either_copyin(void *dst, int user_src, uint64 src, uint64 len);
 /* User init for first process */

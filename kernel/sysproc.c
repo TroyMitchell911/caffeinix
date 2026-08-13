@@ -1,4 +1,5 @@
 #include <linux_uapi.h>
+#include <ktime.h>
 #include <mem_layout.h>
 #include <mystring.h>
 #include <process.h>
@@ -7,6 +8,26 @@
 #include <vm.h>
 
 extern void exit(int cause);
+
+uint64 sys_linux_clock_gettime(void)
+{
+	struct linux_timespec time;
+	process_t process = cur_proc();
+	uint64 address, nanoseconds;
+	int clock;
+
+	argint(0, &clock);
+	argaddr(1, &address);
+	if (clock != LINUX_CLOCK_MONOTONIC)
+		return -LINUX_EINVAL;
+	nanoseconds = ktime_get_ns();
+	time.seconds = nanoseconds / 1000000000ULL;
+	time.nanoseconds = nanoseconds % 1000000000ULL;
+	if (copyout(process->pagetable, address, (char *)&time,
+		    sizeof(time)) < 0)
+		return -LINUX_EFAULT;
+	return 0;
+}
 
 uint64 sys_linux_exit_group(void)
 {
@@ -29,7 +50,7 @@ uint64 sys_linux_set_tid_address(void)
 
 	argaddr(0, &address);
 	p->clear_child_tid = address;
-	return p->cur_thread->tid;
+	return cur_thread()->tid;
 }
 
 uint64 sys_linux_brk(void)
@@ -172,7 +193,43 @@ uint64 sys_linux_getegid(void)
 
 uint64 sys_linux_gettid(void)
 {
-	return cur_proc()->cur_thread->tid;
+	return cur_thread()->tid;
+}
+
+uint64 sys_linux_setpriority(void)
+{
+	process_t process = cur_proc();
+	int which, who, nice;
+
+	argint(0, &which);
+	argint(1, &who);
+	argint(2, &nice);
+	if (which != LINUX_PRIO_PROCESS)
+		return -LINUX_EINVAL;
+	if (!who)
+		who = process->pid;
+	if (nice < -20)
+		nice = -20;
+	if (nice > 19)
+		nice = 19;
+	return process_set_nice(who, nice) ? -LINUX_ESRCH : 0;
+}
+
+uint64 sys_linux_getpriority(void)
+{
+	process_t process = cur_proc();
+	int nice, which, who;
+
+	argint(0, &which);
+	argint(1, &who);
+	if (which != LINUX_PRIO_PROCESS)
+		return -LINUX_EINVAL;
+	if (!who)
+		who = process->pid;
+	if (process_get_nice(who, &nice))
+		return -LINUX_ESRCH;
+	/* Linux returns 20 - nice so a negative nice value is not an error. */
+	return 20 - nice;
 }
 
 uint64 sys_linux_umask(void)

@@ -1,0 +1,201 @@
+#!/usr/bin/env python3
+
+import argparse
+import json
+import os
+import pty
+import select
+import statistics
+import subprocess
+import sys
+import time
+
+
+COMMANDS = (
+    ":",
+    "/bin/pwd >/dev/null",
+    "/bin/ls /tmp >/dev/null",
+    "/bin/ls /dev >/dev/null",
+    "/bin/ls / >/dev/null",
+    "/bin/ls /",
+)
+
+
+class Guest:
+    def __init__(self, qemu, kernel, root_image, cpus, memory, timeout):
+        self.timeout = timeout
+        self.buffer = b""
+        self.master, slave = pty.openpty()
+        command = [
+            qemu,
+            "-machine", "virt",
+            "-bios", os.environ.get("SBI_FIRMWARE", "default"),
+            "-kernel", kernel,
+            "-m", memory,
+            "-smp", str(cpus),
+            "-nographic",
+            "-snapshot",
+            "-global", "virtio-mmio.force-legacy=false",
+            "-drive", f"file={root_image},if=none,format=raw,id=x0",
+            "-device",
+            "virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0",
+        ]
+        self.process = subprocess.Popen(
+            command,
+            stdin=slave,
+            stdout=slave,
+            stderr=slave,
+            close_fds=True,
+        )
+        os.close(slave)
+        try:
+            self.read_until(b"# ")
+        except Exception:
+            self.close()
+            raise
+
+    def read_until(self, marker):
+        deadline = time.monotonic() + self.timeout
+        while marker not in self.buffer:
+            panic = self.buffer.find(b"[PANIC]")
+            if panic >= 0 and b"\n" in self.buffer[panic:]:
+                tail = self.buffer[-4096:].decode(
+                    "utf-8", errors="replace")
+                raise RuntimeError(
+                    "kernel panic during scheduler benchmark:\n" + tail)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(f"guest did not produce {marker!r}")
+            readable, _, _ = select.select([self.master], [], [], remaining)
+            if not readable:
+                continue
+            try:
+                data = os.read(self.master, 65536)
+            except OSError as error:
+                raise RuntimeError("QEMU terminal closed") from error
+            if not data:
+                raise RuntimeError("QEMU exited unexpectedly")
+            self.buffer += data
+        position = self.buffer.index(marker) + len(marker)
+        result = self.buffer[:position]
+        self.buffer = self.buffer[position:]
+        return result
+
+    def run(self, command):
+        start = time.perf_counter_ns()
+        os.write(self.master, command.encode() + b"\n")
+        output = self.read_until(b"# ")
+        elapsed = (time.perf_counter_ns() - start) / 1_000_000
+        if b"[PANIC]" in output:
+            tail = output[-4096:].decode("utf-8", errors="replace")
+            raise RuntimeError(
+                "kernel panic during scheduler benchmark:\n" + tail)
+        for error in (b"Bad address", b"not found", b"No such file"):
+            if error in output:
+                raise RuntimeError(
+                    f"benchmark command failed: {command}: {error!r}")
+        return elapsed
+
+    def cpu_ticks(self):
+        with open(f"/proc/{self.process.pid}/stat", encoding="ascii") as file:
+            fields = file.read().split()
+        return int(fields[13]) + int(fields[14])
+
+    def idle_cpu_percent(self, seconds):
+        ticks = self.cpu_ticks()
+        start = time.monotonic()
+        time.sleep(seconds)
+        elapsed = time.monotonic() - start
+        ticks = self.cpu_ticks() - ticks
+        return ticks / os.sysconf("SC_CLK_TCK") / elapsed * 100
+
+    def close(self):
+        if self.process.poll() is None:
+            try:
+                os.write(self.master, b"\x01x")
+                self.process.wait(timeout=5)
+            except (BrokenPipeError, subprocess.TimeoutExpired):
+                self.process.terminate()
+                try:
+                    self.process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    self.process.kill()
+                    self.process.wait()
+        os.close(self.master)
+
+
+def benchmark(args, cpus):
+    guest = Guest(args.qemu, args.kernel, args.root_image, cpus,
+                  args.memory, args.timeout)
+    try:
+        for command in COMMANDS:
+            for _ in range(args.warmups):
+                guest.run(command)
+        idle = guest.idle_cpu_percent(args.idle_seconds)
+        commands = {}
+        for command in COMMANDS:
+            samples = [guest.run(command) for _ in range(args.samples)]
+            commands[command] = {
+                "median_ms": round(statistics.median(samples), 3),
+                "min_ms": round(min(samples), 3),
+                "max_ms": round(max(samples), 3),
+            }
+        return {
+            "idle_host_cpu_percent": round(idle, 1),
+            "commands": commands,
+        }
+    finally:
+        guest.close()
+
+
+def parse_arguments():
+    parser = argparse.ArgumentParser(
+        description="Measure Caffeinix SMP scheduler behavior under QEMU")
+    parser.add_argument("--qemu", default=os.environ.get(
+        "QEMU", "qemu-system-riscv64"))
+    parser.add_argument("--kernel", default=os.environ.get("KERNEL"))
+    parser.add_argument("--root-image", default=os.environ.get("ROOT_IMAGE"))
+    parser.add_argument("--memory", default="256M")
+    parser.add_argument("--samples", type=int, default=13)
+    parser.add_argument("--warmups", type=int, default=3)
+    parser.add_argument("--idle-seconds", type=float, default=3)
+    parser.add_argument("--timeout", type=float, default=60)
+    parser.add_argument("--max-idle-cpu", type=float, default=100)
+    parser.add_argument("--check", action="store_true")
+    parser.add_argument("--output")
+    args = parser.parse_args()
+    if not args.kernel or not args.root_image:
+        parser.error("--kernel and --root-image are required")
+    args.kernel = os.path.abspath(args.kernel)
+    args.root_image = os.path.abspath(args.root_image)
+    return args
+
+
+def main():
+    args = parse_arguments()
+    result = {"results": {}}
+
+    for cpus in (1, 8):
+        result["results"][str(cpus)] = benchmark(args, cpus)
+    one = result["results"]["1"]["commands"]
+    eight = result["results"]["8"]["commands"]
+    result["eight_to_one_median_ratio"] = {
+        command: round(eight[command]["median_ms"] /
+                       one[command]["median_ms"], 3)
+        for command in COMMANDS
+    }
+    output = json.dumps(result, indent=2, sort_keys=True)
+    print(output)
+    if args.output:
+        with open(args.output, "w", encoding="utf-8") as file:
+            file.write(output + "\n")
+    if args.check and result["results"]["8"][
+            "idle_host_cpu_percent"] >= args.max_idle_cpu:
+        print("eight-CPU guest consumes a full host CPU while idle",
+              file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

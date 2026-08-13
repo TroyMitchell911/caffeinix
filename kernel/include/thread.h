@@ -13,19 +13,22 @@
 
 #include <typedefs.h>
 #include <list.h>
+#include <rbtree.h>
 #include <spinlock.h>
 #include <kernel_config.h>
 #include <riscv.h>
 
 typedef struct process *process_t;
+struct wait_queue;
+typedef void (*thread_func_t)(void *);
 
 typedef enum thread_state {
-        NUSED,
-        NREADY,
-        READY,
-        RESETING,
-        ACTIVE,
-        DIED,
+        THREAD_UNUSED,
+        THREAD_ALLOCATED,
+        THREAD_RUNNABLE,
+        THREAD_RUNNING,
+        THREAD_SLEEPING,
+        THREAD_EXITED,
 }thread_state_t;
 
 typedef struct context {
@@ -93,6 +96,18 @@ typedef struct trapframe {
 	/* 544 */ uint64 fcsr;
 }*trapframe_t;
 
+struct sched_entity {
+	struct rb_node run_node;
+	uint64 vruntime;
+	uint64 exec_start;
+	uint64 sum_exec_runtime;
+	uint64 slice_ns;
+	uint32 weight;
+	int8 nice;
+	uint8 initialized;
+	uint8 on_runqueue;
+};
+
 typedef struct thread {
         char name[MAXNAME];
         struct spinlock lock;
@@ -106,19 +121,30 @@ typedef struct thread {
         trapframe_t trapframe;
         struct context context;
 
-        void *sleep_chan;
         process_t home;
-        struct list all_tag;
+	thread_func_t kernel_function;
+	void *kernel_argument;
+	uint8 kernel_thread;
+	int lwip_errno;
+	struct sched_entity sched;
+        struct wait_queue *waiting_on;
+        struct list wait_node;
+        uint8 on_waitqueue;
+	struct list timeout_node;
+	uint64 wait_deadline;
+	int wait_result;
+	uint8 on_timeout_queue;
 }*thread_t;
 
 extern struct thread thread[NTHREAD];
-
-typedef void (*thread_func_t)(void*);
 
 void map_kernel_stack(pagedir_t pgdir);
 
 void thread_setup(void);
 thread_t thread_alloc(process_t p);
 void thread_free(thread_t t);
+thread_t kernel_thread_create(const char *name, thread_func_t function,
+			      void *argument);
+void kernel_thread_reap(thread_t thread);
 
 #endif

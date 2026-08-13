@@ -23,6 +23,7 @@ void vm_unmap(pagedir_t pgdir, uint64 va, uint64 npages, int do_free);
 void vm_unmap_range(pagedir_t pgdir, uint64 va, uint64 size);
 pte_t *PTE(pagedir_t pgdir, uint64 va, int flag);
 uint64 va2pa(pagedir_t pgdir, uint64 va);
+uint64 kvm_va2pa(uint64 va);
 int vm_mapped(pagedir_t pgdir, uint64 va);
 uint64 vm_alloc(pagedir_t pgdir, uint64 oldsz, uint64 newsz, int eperm);
 uint64 vm_dealloc(pagedir_t pgdir, uint64 oldsz, uint64 newsz);

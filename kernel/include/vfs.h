@@ -2,6 +2,7 @@
 #define __CAFFEINIX_KERNEL_VFS_H
 
 #include <block_device.h>
+#include <sleeplock.h>
 #include <typedefs.h>
 
 #define VFS_NAME_MAX 255
@@ -14,8 +15,15 @@
 #define VFS_OPEN_TRUNCATE   (1U << 4)
 #define VFS_OPEN_DIRECTORY  (1U << 5)
 #define VFS_OPEN_APPEND     (1U << 6)
+#define VFS_OPEN_NONBLOCK   (1U << 7)
 
 #define VFS_FD_CLOEXEC      (1U << 0)
+
+#define VFS_POLL_IN   0x001
+#define VFS_POLL_OUT  0x004
+#define VFS_POLL_ERR  0x008
+#define VFS_POLL_HUP  0x010
+#define VFS_POLL_NVAL 0x020
 
 #define VFS_MODE_PERMISSIONS 07777U
 
@@ -48,6 +56,32 @@ enum vfs_result {
 	VFS_ERR_NOTTY = -20,
 	VFS_ERR_NXIO = -21,
 	VFS_ERR_FAULT = -22,
+	VFS_ERR_AGAIN = -23,
+	VFS_ERR_SPIPE = -24,
+	VFS_ERR_NOTSOCK = -25,
+	VFS_ERR_DESTADDRREQ = -26,
+	VFS_ERR_MSGSIZE = -27,
+	VFS_ERR_PROTOTYPE = -28,
+	VFS_ERR_NOPROTOOPT = -29,
+	VFS_ERR_PROTONOSUPPORT = -30,
+	VFS_ERR_SOCKTNOSUPPORT = -31,
+	VFS_ERR_AFNOSUPPORT = -32,
+	VFS_ERR_ADDRINUSE = -33,
+	VFS_ERR_ADDRNOTAVAIL = -34,
+	VFS_ERR_NETDOWN = -35,
+	VFS_ERR_NETUNREACH = -36,
+	VFS_ERR_CONNABORTED = -37,
+	VFS_ERR_CONNRESET = -38,
+	VFS_ERR_NOBUFS = -39,
+	VFS_ERR_ISCONN = -40,
+	VFS_ERR_NOTCONN = -41,
+	VFS_ERR_SHUTDOWN = -42,
+	VFS_ERR_TIMEDOUT = -43,
+	VFS_ERR_CONNREFUSED = -44,
+	VFS_ERR_HOSTUNREACH = -45,
+	VFS_ERR_ALREADY = -46,
+	VFS_ERR_INPROGRESS = -47,
+	VFS_ERR_PIPE = -48,
 };
 
 #define VFS_RENAME_NOREPLACE (1U << 0)
@@ -102,6 +136,17 @@ struct vfs_dirent {
 	char name[VFS_NAME_MAX + 1];
 };
 
+struct vfs_iovec {
+	uint64 base;
+	uint64 length;
+};
+
+struct vfs_pollfd {
+	int fd;
+	uint32 events;
+	uint32 revents;
+};
+
 struct vfs_inode_operations {
 	int (*lookup)(struct vfs_inode *directory, const char *name,
 	              struct vfs_inode **result);
@@ -130,9 +175,14 @@ struct vfs_file_operations {
 	              uint64 destination, uint64 count, uint64 *position);
 	int64 (*write)(struct vfs_file *file, int user_source, uint64 source,
 	               uint64 count, uint64 *position);
+	int64 (*writev)(struct vfs_file *file, int user_source,
+		        const struct vfs_iovec *iovecs, uint32 count);
 	int (*readdir)(struct vfs_file *file, struct vfs_dirent *dirent);
 	int64 (*ioctl)(struct vfs_file *file, uint64 request, uint64 argument);
 	int (*fsync)(struct vfs_file *file);
+	int (*getattr)(struct vfs_file *file, struct vfs_stat *stat);
+	int (*set_flags)(struct vfs_file *file, uint32 flags);
+	uint32 (*poll)(struct vfs_file *file, uint32 events);
 };
 
 struct vfs_super_operations {
@@ -153,6 +203,7 @@ struct vfs_filesystem_type {
 
 struct vfs_super_block {
 	int ref;
+	struct sleeplock write_lock;
 	struct vfs_filesystem_type *type;
 	struct block_device *device;
 	struct vfs_inode *root;
@@ -237,11 +288,21 @@ int64 vfs_file_pread(struct vfs_file *file, int user_destination,
 		     uint64 destination, uint64 count, uint64 offset);
 
 int vfs_open(const char *path, uint32 flags, uint32 mode, int *fd_out);
+int vfs_install_file(struct vfs_file *file, uint8 flags, int *fd_out);
+int vfs_get_file_fd(int fd, struct vfs_file **result);
+uint32 vfs_file_poll(struct vfs_file *file, uint32 events);
+int vfs_poll(struct vfs_pollfd *fds, uint32 count, int timeout_ms);
+uint64 vfs_poll_generation(void);
+int vfs_poll_wait(uint64 generation, int timeout_ms);
+void vfs_poll_notify(void);
 int vfs_close(int fd);
 int vfs_dup(int oldfd, int minimum, uint8 flags, int *fd_out);
 int vfs_dup_to(int oldfd, int newfd, uint8 flags);
 int vfs_read(int fd, uint64 address, int length);
 int vfs_write(int fd, uint64 address, int length);
+int64 vfs_writev(int fd, int user_source,
+		 const struct vfs_iovec *iovecs, uint32 count);
+int vfs_ftruncate(int fd, uint64 size);
 int64 vfs_ioctl(int fd, uint64 request, uint64 argument);
 int vfs_seek(int fd, int64 offset, int whence, uint64 *result);
 int vfs_stat_fd(int fd, struct vfs_stat *stat);
@@ -264,6 +325,7 @@ int vfs_access(const char *path);
 int vfs_get_fd_flags(int fd, uint8 *flags);
 int vfs_set_fd_flags(int fd, uint8 flags);
 int vfs_get_file_flags(int fd, uint32 *flags);
+int vfs_set_file_flags(int fd, uint32 flags);
 void vfs_close_on_exec(void);
 
 #endif

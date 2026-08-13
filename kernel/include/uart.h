@@ -23,6 +23,7 @@ struct uart_operations {
 
 struct uart_port {
 	struct spinlock lock;
+	struct wait_queue transmit_wait;
 	void *membase;
 	uint64 mapbase;
 	uint64 mapsize;

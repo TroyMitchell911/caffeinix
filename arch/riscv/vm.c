@@ -74,6 +74,19 @@ uint64 va2pa(pagedir_t pgdir, uint64 va)
                 return pa;
 }
 
+uint64 kvm_va2pa(uint64 va)
+{
+	pte_t *pte;
+
+	if (!kernel_pgdir || va >= MAXVA)
+		return 0;
+	pte = PTE(kernel_pgdir, va, 0);
+	if (!pte || !(*pte & PTE_V) ||
+	    !(*pte & (PTE_R | PTE_W | PTE_X)))
+		return 0;
+	return PTE2PA(*pte) + (va & (PGSIZE - 1));
+}
+
 int vm_map(pagedir_t pgdir, uint64 va, uint64 pa, uint64 size, int perm)
 {
         uint64 start, end;
@@ -117,9 +130,6 @@ static pagedir_t kernel_pagedir_t_create(void)
         
         memset(pgdir, 0, PGSIZE);
 
-	/* Map the QEMU virt machine's virtio MMIO transports. */
-	vm_map(pgdir, VIRTIO0, VIRTIO0, VIRTIO_MMIO_SLOTS * PGSIZE,
-	       PTE_R | PTE_W);
         /* Map the trampoline */        
         vm_map(pgdir, TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_X | PTE_R);
         /* PLIC */

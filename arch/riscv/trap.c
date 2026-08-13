@@ -6,6 +6,7 @@
 #include <printf.h>
 #include <plic.h>
 #include <timer.h>
+#include <wait.h>
 
 extern void kernel_vec(void);
 extern char trampoline[], user_vec[], user_ret[];
@@ -22,19 +23,21 @@ static void tick_intr(void)
         spinlock_acquire(&tick_lock);
 
         tick_count ++;
-        if(tick_count % 10 == 0) {
-                // printf("timer interrupt\n");
-        }
-        wakeup((void*)&tick_count);
         spinlock_release(&tick_lock);
 }
 
 static int dev_intr(uint64 scause)
 {
         int irq = 0;
-        /* This is a supervisor external interrupt via PLIC */
+
         if((scause & 0x8000000000000000L) &&
-           (scause & 0xff) == 9) {
+           (scause & 0xff) == 1) {
+                sip_clear_ssip();
+                return 3;
+        }
+        /* This is a supervisor external interrupt via PLIC */
+        else if((scause & 0x8000000000000000L) &&
+                (scause & 0xff) == 9) {
                 /* Get interrupt number from PLIC */
                 irq = plic_claim();
 		if (irq && irq_dispatch(irq) != IRQ_HANDLED)
@@ -45,8 +48,9 @@ static int dev_intr(uint64 scause)
                 }
                 return 1;
         } else if(scause == 0x8000000000000005L) {
-                /* Supervisor timer interrupt delivered through SBI TIME. */
+		/* Supervisor timer interrupt delivered through SBI TIME. */
 		timer_interrupt();
+		wait_queue_expire(time_r());
                 if(cpuid() == 0) {
                         tick_intr();
 		}
@@ -74,7 +78,12 @@ void kernel_trap(void)
                 PANIC("kerneltrap");
         }
 
-        if(which_dev == 2 && cur_proc() != 0 && cur_proc()->state == RUNNING)
+	if (which_dev == 2)
+		scheduler_tick();
+	else if (which_dev == 3)
+                scheduler_request_resched();
+
+        if(scheduler_should_resched())
                 yield();
 
         sepc_w(sepc);
@@ -94,21 +103,21 @@ void user_trap_entry(void)
 
         stvec_w((uint64)kernel_vec);
 
-        p->cur_thread->trapframe->epc = sepc_r();
+        cur_thread()->trapframe->epc = sepc_r();
 
         if(cause == 8) {
                 if(killed(p))
                         exit(-1);
 
                 /* System call */
-                p->cur_thread->trapframe->epc += 4;
+                cur_thread()->trapframe->epc += 4;
                 intr_on();
                 syscall();
         } else {
                 if((which_dev = dev_intr(cause)) == 0) {
                         printf("scause %p\n", cause);
                         printf("sepc=%p stval=%p\n",
-                               p->cur_thread->trapframe->epc, stval_r());
+                               cur_thread()->trapframe->epc, stval_r());
                         PANIC("user_trap_entry");
                 }
         }
@@ -116,7 +125,12 @@ void user_trap_entry(void)
         if(killed(p))
                 exit(-1);
 
-        if(which_dev == 2)
+	if (which_dev == 2)
+		scheduler_tick();
+	else if (which_dev == 3)
+                scheduler_request_resched();
+
+        if(scheduler_should_resched())
                 yield();
 
         user_trap_ret();
@@ -137,11 +151,11 @@ void user_trap_ret(void)
         trampoline_uservec = TRAMPOLINE + (user_vec - trampoline);
         stvec_w(trampoline_uservec);
 
-        p->cur_thread->trapframe->kernel_satp = satp_r();
-	p->cur_thread->trapframe->kernel_sp =
-		p->cur_thread->kstack + KSTACK_SIZE;
-        p->cur_thread->trapframe->kernel_hartid = tp_r();
-        p->cur_thread->trapframe->kernel_trap = (uint64)user_trap_entry;
+        cur_thread()->trapframe->kernel_satp = satp_r();
+	cur_thread()->trapframe->kernel_sp =
+		cur_thread()->kstack + KSTACK_SIZE;
+        cur_thread()->trapframe->kernel_hartid = tp_r();
+        cur_thread()->trapframe->kernel_trap = (uint64)user_trap_entry;
 
         sstatus = sstatus_r();
         /* Set the interrupt is from user mode */
@@ -153,7 +167,7 @@ void user_trap_ret(void)
         sstatus_w(sstatus);
 
         /* Write the epc. It will be set to 0 if the process is first started */
-        sepc_w(p->cur_thread->trapframe->epc);
+        sepc_w(cur_thread()->trapframe->epc);
 
         satp = MAKE_SATP(p->pagetable);
 
@@ -172,5 +186,5 @@ void trap_init_lock(void)
 void trap_init(void)
 {
         stvec_w((uint64)kernel_vec);
-	sie_w(sie_r() | SIE_SEIE);
+	sie_w(sie_r() | SIE_SEIE | SIE_SSIE);
 }

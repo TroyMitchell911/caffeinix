@@ -22,7 +22,7 @@ require_command()
 }
 
 for command in \
-	"$qemu" expect e2fsck debugfs fsck.fat mtype rg \
+	"$qemu" expect e2fsck debugfs fsck.fat mtype python3 rg \
 	"${CROSS_COMPILE:-riscv64-linux-gnu-}objdump" \
 	"${CROSS_COMPILE:-riscv64-linux-gnu-}readelf"; do
 	require_command "$command"
@@ -37,6 +37,18 @@ root_image=$test_output/root.ext4
 fat_image=$test_output/data-fat32.img
 qemu_log=$test_output/qemu.log
 clean_log=$test_output/qemu.clean.log
+fixture_log=$test_output/network-fixture.log
+fixture_pid=
+
+stop_fixture()
+{
+	if [ -n "$fixture_pid" ]; then
+		kill "$fixture_pid" 2>/dev/null || true
+		wait "$fixture_pid" 2>/dev/null || true
+		fixture_pid=
+	fi
+}
+trap stop_fixture EXIT
 
 export QEMU=$qemu
 export SBI_FIRMWARE=$sbi_firmware
@@ -95,6 +107,20 @@ check_boot_log()
 	fi
 }
 
+check_net_device_log()
+{
+	local clean=$1
+	local expected=$2
+	local count
+
+	count=$(awk '$0 == "virtio-net: registered eth0" { count++ }
+		END { print count + 0 }' "$clean")
+	if [ "$count" -ne "$expected" ]; then
+		echo "unexpected VirtIO network device count: $count" >&2
+		exit 1
+	fi
+}
+
 run_boot_smoke()
 {
 	local cpus=$1
@@ -112,23 +138,84 @@ run_boot_smoke()
 		echo "OpenSBI BusyBox smoke marker is missing" >&2
 		exit 1
 	fi
+	if [ "$(awk '$0 == "SCHED_SMOKE_OK" { count++ }
+		END { print count + 0 }' "$clean")" -ne 1 ]; then
+		echo "scheduler smoke marker is missing" >&2
+		exit 1
+	fi
+	if [ "$(awk '$0 == "NETWORK_LOOPBACK_OK" { count++ }
+		END { print count + 0 }' "$clean")" -ne 1 ]; then
+		echo "network loopback marker is missing" >&2
+		exit 1
+	fi
+	check_net_device_log "$clean" 0
+	if [ "$cpus" -eq 1 ] &&
+	   [ "$(awk '$0 == "SCHED_CFS_FAIR_OK" { count++ }
+		END { print count + 0 }' "$clean")" -ne 1 ]; then
+		echo "CFS fairness marker is missing" >&2
+		exit 1
+	fi
 	check_boot_log "$clean" "$cpus"
 }
 
 run_boot_smoke 1 64M
 run_boot_smoke 2 192M
+run_boot_smoke 4 128M
 run_boot_smoke 8 256M
 
-export QEMU_CPUS=4
+export QEMU_CPUS=2
 export QEMU_MEMORY=128M
+export QEMU_LOG=$test_output/qemu-network-offline.log
+expect "$script_dir/run-network-offline.exp"
+offline_clean=$test_output/qemu-network-offline.clean.log
+tr -d '\r' < "$QEMU_LOG" > "$offline_clean"
+if [ "$(awk '$0 == "NETWORK_OFFLINE_BOOT_OK" { count++ }
+	END { print count + 0 }' "$offline_clean")" -ne 1 ]; then
+	echo "offline network boot marker is missing" >&2
+	exit 1
+fi
+check_net_device_log "$offline_clean" 1
+check_boot_log "$offline_clean" "$QEMU_CPUS"
+
+python3 "$tests_dir/network_fixture.py" >"$fixture_log" 2>&1 &
+fixture_pid=$!
+for attempt in $(seq 1 50); do
+	if grep -q '^NETWORK_FIXTURE_READY$' "$fixture_log"; then
+		break
+	fi
+	if ! kill -0 "$fixture_pid" 2>/dev/null; then
+		cat "$fixture_log" >&2
+		echo "network fixture exited before becoming ready" >&2
+		exit 1
+	fi
+	sleep 0.1
+done
+if ! grep -q '^NETWORK_FIXTURE_READY$' "$fixture_log"; then
+	echo "network fixture did not become ready" >&2
+	exit 1
+fi
+
+export QEMU_CPUS=8
+export QEMU_MEMORY=256M
 export QEMU_LOG=$qemu_log
 expect "$script_dir/run-qemu.exp"
 tr -d '\r' < "$qemu_log" > "$clean_log"
+check_net_device_log "$clean_log" 1
 check_boot_log "$clean_log" "$QEMU_CPUS"
 
 for marker in \
 	BUSYBOX_SHELL_OK \
+	BUSYBOX_NC_OK \
+	BUSYBOX_WGET_OK \
+	SCHED_EXEC_OK \
+	SCHED_RUNQUEUE_OK \
+	SCHED_MIXED_OK \
+	SCHED_RUNTIME_OK \
+	SCHED_TTY_WAIT_OK \
+	NETWORK_RUNTIME_OK \
+	PRESSURE_RUNTIME_OK \
 	TTY_METADATA_OK \
+	TTY_NONBLOCK_OK \
 	TTY_CANONICAL_OK \
 	TTY_RAW_OK \
 	TTY_LONG_BEGIN \
@@ -165,11 +252,15 @@ if ! grep -Fq $'abc\b \bd' "$qemu_log"; then
 fi
 
 if grep -Eq \
-	'\[PANIC\]|Unhandled interrupt|FS_RUNTIME_FAIL=|TTY_RUNTIME_FAIL=' \
+	-e '\[PANIC\]|Unhandled interrupt' \
+	-e 'FS_RUNTIME_FAIL=|NETWORK_RUNTIME_FAIL' \
+	-e 'PRESSURE_RUNTIME_FAIL|SCHED_RUNTIME_FAIL=|TTY_RUNTIME_FAIL=' \
 	"$clean_log"; then
 	echo "QEMU log contains a guest failure" >&2
 	exit 1
 fi
+
+stop_fixture
 
 set +e
 e2fsck -fy "$root_image"
@@ -206,5 +297,12 @@ if [ "$fat_utf8" != utf8 ]; then
 	echo "FAT UTF-8 long-name value was not persisted" >&2
 	exit 1
 fi
+
+"$script_dir/benchmark-scheduler.py" \
+	--qemu "$qemu" \
+	--kernel "$KERNEL" \
+	--root-image "$root_image" \
+	--output "$test_output/scheduler-benchmark.json" \
+	--check
 
 echo QEMU_RUNTIME_OK

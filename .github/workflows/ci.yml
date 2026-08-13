@@ -3,8 +3,6 @@ name: Caffeinix CI
 
 on:
   pull_request:
-    branches:
-      - main
   push:
     branches:
       - main
@@ -61,6 +59,7 @@ jobs:
             gcc-riscv64-linux-gnu \
             binutils-riscv64-linux-gnu \
             qemu-system-misc \
+            python3 \
             ripgrep \
             e2fsprogs \
             dosfstools \
@@ -74,4 +73,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: qemu-runtime-logs
-          path: output/tests/*.log
+          path: |
+            output/tests/*.log
+            output/tests/scheduler-benchmark.json

@@ -8,13 +8,23 @@
 #include <asm/stat.h>
 #include <asm/termbits.h>
 #include <asm/unistd.h>
+#include <asm-generic/poll.h>
+#include <asm-generic/socket.h>
 #include <asm-generic/termios.h>
+#include <linux/in.h>
+#include <linux/tcp.h>
+#include <linux/time_types.h>
 
 _Static_assert(LINUX_SYS_getcwd == __NR_getcwd, "getcwd number");
 _Static_assert(LINUX_SYS_openat == __NR_openat, "openat number");
 _Static_assert(LINUX_SYS_symlinkat == __NR_symlinkat,
 	       "symlinkat number");
 _Static_assert(LINUX_SYS_linkat == __NR_linkat, "linkat number");
+_Static_assert(LINUX_SYS_ftruncate == __NR_ftruncate,
+	       "ftruncate number");
+_Static_assert(LINUX_SYS_ppoll == __NR_ppoll, "ppoll number");
+_Static_assert(LINUX_SYS_socket == __NR_socket, "socket number");
+_Static_assert(LINUX_SYS_accept4 == __NR_accept4, "accept4 number");
 _Static_assert(LINUX_SYS_getdents64 == __NR_getdents64,
 	       "getdents64 number");
 _Static_assert(LINUX_SYS_readlinkat == __NR_readlinkat,
@@ -24,6 +34,12 @@ _Static_assert(LINUX_SYS_fsync == __NR_fsync, "fsync number");
 _Static_assert(LINUX_SYS_umask == __NR_umask, "umask number");
 _Static_assert(LINUX_SYS_rt_sigaction == __NR_rt_sigaction,
 	       "rt_sigaction number");
+_Static_assert(LINUX_SYS_setpriority == __NR_setpriority,
+	       "setpriority number");
+_Static_assert(LINUX_SYS_getpriority == __NR_getpriority,
+	       "getpriority number");
+_Static_assert(LINUX_SYS_clock_gettime == __NR_clock_gettime,
+	       "clock_gettime number");
 _Static_assert(LINUX_SYS_clone == __NR_clone, "clone number");
 _Static_assert(LINUX_SYS_execve == __NR_execve, "execve number");
 _Static_assert(LINUX_SYS_wait4 == __NR_wait4, "wait4 number");
@@ -43,6 +59,23 @@ _Static_assert(sizeof(struct linux_termios) == sizeof(struct termios),
 	       "termios size");
 _Static_assert(sizeof(struct linux_winsize) == sizeof(struct winsize),
 	       "winsize size");
+_Static_assert(sizeof(struct linux_timespec) ==
+	       sizeof(struct __kernel_timespec), "timespec size");
+_Static_assert(sizeof(struct linux_pollfd) == sizeof(struct pollfd),
+	       "pollfd size");
+_Static_assert(offsetof(struct linux_pollfd, revents) ==
+	       offsetof(struct pollfd, revents), "pollfd revents offset");
+_Static_assert(sizeof(struct linux_sockaddr_in) ==
+	       sizeof(struct sockaddr_in), "sockaddr_in size");
+_Static_assert(offsetof(struct linux_sockaddr_in, port) ==
+	       offsetof(struct sockaddr_in, sin_port),
+	       "sockaddr_in port offset");
+_Static_assert(LINUX_SOL_SOCKET == SOL_SOCKET, "SOL_SOCKET value");
+_Static_assert(LINUX_SO_REUSEADDR == SO_REUSEADDR,
+	       "SO_REUSEADDR value");
+_Static_assert(LINUX_SO_RCVTIMEO == SO_RCVTIMEO,
+	       "SO_RCVTIMEO value");
+_Static_assert(LINUX_TCP_NODELAY == TCP_NODELAY, "TCP_NODELAY value");
 _Static_assert(LINUX_TCGETS == TCGETS, "TCGETS value");
 _Static_assert(LINUX_TCSETS == TCSETS, "TCSETS value");
 _Static_assert(LINUX_TCSETSW == TCSETSW, "TCSETSW value");

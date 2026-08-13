@@ -41,6 +41,7 @@ export TOPDIR
 # variable records (the subdirectory must contain a makefile)
 obj-y += arch/riscv/boot/
 obj-y += drivers/
+obj-y += net/
 obj-y += kernel/fs/
 obj-y += kernel/
 obj-y += arch/riscv/
@@ -72,7 +73,7 @@ ifndef KBUILD_RECURSIVE
 built-in.o: start_recursive_build
 endif
 
-$(TARGET) : built-in.o
+$(TARGET) : built-in.o kernel/kernel.ld
 	@if [ ! -d $(OUTPUT) ]; then \
         	mkdir $(OUTPUT); \
     	fi
@@ -85,6 +86,9 @@ QEMU ?= qemu-system-riscv64
 SBI_FIRMWARE ?= default
 FS_IMG ?=
 FAT_IMG ?=
+NET_BACKEND ?=
+NET_BUS ?= virtio-mmio-bus.2
+NET_MAC ?= 52:54:00:12:34:56
 MEMORY ?= 256M
 QEMUOPTS = -machine virt -bios $(SBI_FIRMWARE) -kernel $(TARGET)
 QEMUOPTS += -m $(MEMORY) -smp $(CPUS) -nographic
@@ -94,6 +98,10 @@ QEMUOPTS += -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
 ifneq ($(strip $(FAT_IMG)),)
 QEMUOPTS += -drive file=$(FAT_IMG),if=none,format=raw,id=x1
 QEMUOPTS += -device virtio-blk-device,drive=x1,bus=virtio-mmio-bus.1
+endif
+ifneq ($(strip $(NET_BACKEND)),)
+QEMUOPTS += -netdev $(NET_BACKEND),id=n0
+QEMUOPTS += -device virtio-net-device,netdev=n0,bus=$(NET_BUS),mac=$(NET_MAC)
 endif
 ifndef CPUS
 CPUS := 8
@@ -128,7 +136,7 @@ qemu-gdb: all .gdbinit check-fs-img
 	@echo "*** Now run 'gdb' in another window." 1>&2
 
 clean:
-	@find arch drivers kernel -type f \( -name "*.o" -o \
+	@find arch drivers kernel net -type f \( -name "*.o" -o \
 		-name "*.asm" -o \
 		-name "*.sym" -o -name "*.d" \) -delete
 	@find . -maxdepth 1 -type f \( -name "*.o" -o \

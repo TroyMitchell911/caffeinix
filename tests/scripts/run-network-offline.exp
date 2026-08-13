@@ -1,0 +1,84 @@
+#!/usr/bin/expect -f
+
+proc abort_test {message} {
+	puts stderr "offline network test failed: $message"
+	catch {close}
+	exit 1
+}
+
+foreach variable {
+	QEMU SBI_FIRMWARE KERNEL ROOT_IMAGE QEMU_LOG QEMU_CPUS QEMU_MEMORY
+} {
+	if {![info exists env($variable)] || $env($variable) eq ""} {
+		puts stderr "missing environment variable: $variable"
+		exit 1
+	}
+}
+
+set timeout 60
+if {[info exists env(QEMU_TIMEOUT)] && $env(QEMU_TIMEOUT) ne ""} {
+	set timeout $env(QEMU_TIMEOUT)
+}
+
+log_file -noappend $env(QEMU_LOG)
+set command [list \
+	$env(QEMU) \
+	-machine virt \
+	-bios $env(SBI_FIRMWARE) \
+	-kernel $env(KERNEL) \
+	-m $env(QEMU_MEMORY) \
+	-smp $env(QEMU_CPUS) \
+	-nographic \
+	-snapshot \
+	-global virtio-mmio.force-legacy=false \
+	-object rng-random,id=rng0,filename=/dev/zero \
+	-device virtio-rng-device,rng=rng0,bus=virtio-mmio-bus.0 \
+	-drive file=$env(ROOT_IMAGE),if=none,format=raw,id=x0 \
+	-device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.1 \
+	-netdev socket,id=n0,udp=127.0.0.1:19991,localaddr=127.0.0.1:19990 \
+	-device virtio-net-device,netdev=n0,bus=virtio-mmio-bus.2]
+
+spawn -noecho {*}$command
+expect {
+	-re {\[PANIC\]} { abort_test "kernel panic before shell startup" }
+	-re {\r?\n# $} {}
+	timeout { abort_test "shell prompt timeout" }
+	eof { abort_test "QEMU exited before shell startup" }
+}
+
+send -- "/bin/network-runtime loopback\r"
+expect {
+	-re {\r?\nNETWORK_LOOPBACK_OK} {}
+	-re {NETWORK_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "loopback test reported failure"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in loopback test" }
+	timeout { abort_test "loopback test timeout" }
+	eof { abort_test "QEMU exited during loopback test" }
+}
+expect {
+	-re {\r?\n# $} {}
+	-re {\[PANIC\]} { abort_test "kernel panic after loopback test" }
+	timeout { abort_test "shell prompt timeout" }
+	eof { abort_test "QEMU exited after loopback test" }
+}
+
+send -- "echo NETWORK_OFFLINE_BOOT_OK\r"
+expect {
+	-re {\r?\nNETWORK_OFFLINE_BOOT_OK} {}
+	-re {\[PANIC\]} { abort_test "kernel panic in shell" }
+	timeout { abort_test "shell command timeout" }
+	eof { abort_test "QEMU exited in shell" }
+}
+expect {
+	-re {\r?\n# $} {}
+	-re {\[PANIC\]} { abort_test "kernel panic after shell command" }
+	timeout { abort_test "shell prompt timeout" }
+	eof { abort_test "QEMU exited before final prompt" }
+}
+
+send -- "\001x"
+expect {
+	eof {}
+	timeout { abort_test "QEMU exit timeout" }
+}

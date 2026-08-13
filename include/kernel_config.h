@@ -20,7 +20,10 @@
 #define MAXNAME                         16
 
 /* For ms */
-#define TICK_INTERVAL                   100
+#define TICK_INTERVAL                   1
+#define IDLE_TICK_INTERVAL              100
+
+#define WORKQUEUE_NAME                  "kworker"
 
 #define ROOT_FILESYSTEM                 "ext4"
 #define INIT_PATH                       "/bin/sh"

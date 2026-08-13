@@ -73,6 +73,22 @@ static int vfs_device_sync(struct vfs_file *file)
 	return device->operations->fsync(device, file);
 }
 
+static uint32 vfs_device_poll(struct vfs_file *file, uint32 events)
+{
+	struct char_device *device = file_char_device(file);
+	uint32 ready = 0;
+
+	if (!device)
+		return VFS_POLL_NVAL;
+	if (device->operations->poll)
+		return device->operations->poll(device, file, events);
+	if ((events & VFS_POLL_IN) && device->operations->read)
+		ready |= VFS_POLL_IN;
+	if ((events & VFS_POLL_OUT) && device->operations->write)
+		ready |= VFS_POLL_OUT;
+	return ready;
+}
+
 const struct vfs_file_operations vfs_device_operations = {
 	.open = vfs_device_open,
 	.release = vfs_device_release,
@@ -80,4 +96,5 @@ const struct vfs_file_operations vfs_device_operations = {
 	.write = vfs_device_write,
 	.ioctl = vfs_device_ioctl,
 	.fsync = vfs_device_sync,
+	.poll = vfs_device_poll,
 };

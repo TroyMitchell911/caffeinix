@@ -1,0 +1,9 @@
+EXTRA_CFLAGS := -I $(TOPDIR)/kernel/include
+EXTRA_CFLAGS += -I $(TOPDIR)/arch/riscv/include -I $(TOPDIR)/include
+EXTRA_CFLAGS += -I $(TOPDIR)/net/lwip/port/include
+EXTRA_CFLAGS += -I $(TOPDIR)/net/lwip/upstream/src/include
+obj-y += init.o def.o dns.o inet_chksum.o ip.o mem.o memp.o
+obj-y += netif.o pbuf.o raw.o stats.o sys.o
+obj-y += altcp.o altcp_alloc.o altcp_tcp.o
+obj-y += tcp.o tcp_in.o tcp_out.o timeouts.o udp.o
+obj-y += ipv4/

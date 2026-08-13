@@ -138,6 +138,8 @@ int device_register(struct device *device)
 	list_init(&device->sibling);
 	device->driver = 0;
 	device->driver_data = 0;
+	if (!device->dma_mask)
+		device->dma_mask = ~(uint64)0;
 	device->state = DEVICE_UNBOUND;
 	device->refcount = 1;
 	device->registered = 1;

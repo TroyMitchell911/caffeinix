@@ -201,3 +201,16 @@ void qsort(void *base, size_t count, size_t size,
 			          array + j * size, size);
 	}
 }
+
+int atoi(const char *string)
+{
+	int negative = 0, value = 0;
+
+	while (*string == ' ' || *string == '\t')
+		string++;
+	if (*string == '-' || *string == '+')
+		negative = *string++ == '-';
+	while (*string >= '0' && *string <= '9')
+		value = value * 10 + *string++ - '0';
+	return negative ? -value : value;
+}

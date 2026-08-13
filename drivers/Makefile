@@ -1,7 +1,9 @@
 EXTRA_CFLAGS := -I ../kernel/include -I ../arch/riscv/include -I ../include
-EXTRA_LDFLAGS := -T ../kernel/kernel.ld
-
 obj-y += base/
+obj-y += block/
+obj-y += dma/
+obj-y += net/
 obj-y += of/
 obj-y += platform/
 obj-y += tty/
+obj-y += virtio/
