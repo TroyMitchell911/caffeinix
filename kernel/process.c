@@ -47,6 +47,33 @@ static int setup_stdio(void)
 	return 0;
 }
 
+static struct block_device *mount_root_device(void)
+{
+	struct block_device *device;
+	uint32 id;
+
+	for (id = 1; id < BLOCK_DEVICE_MAX; id++) {
+		device = block_device_get(id);
+		if (device &&
+		    vfs_mount_root(ROOT_FILESYSTEM, device, 0) == VFS_OK)
+			return device;
+	}
+	return 0;
+}
+
+static void mount_fat_device(struct block_device *root)
+{
+	struct block_device *device;
+	uint32 id;
+
+	for (id = 1; id < BLOCK_DEVICE_MAX; id++) {
+		device = block_device_get(id);
+		if (device && device != root &&
+		    vfs_mount("fat", device, "/mnt/fat", 0) == VFS_OK)
+			return;
+	}
+}
+
 static void reparent(process_t p)
 {
         process_t pp;
@@ -128,6 +155,7 @@ void process_freepagedir(pagedir_t pgdir, uint64 sz)
 static void proc_first_start(void)
 {
 	static uint8 fs_started;
+	struct block_device *root_device;
 	char *argv[] = { INIT_PATH, 0 };
 	char *envp[] = {
 		"HOME=/",
@@ -141,7 +169,8 @@ static void proc_first_start(void)
         spinlock_release(&cur_thread()->lock);
 	if (!fs_started) {
 		fs_started = 1;
-		if (vfs_mount_root(ROOT_FILESYSTEM, block_device_get(1), 0) < 0)
+		root_device = mount_root_device();
+		if (!root_device)
 			PANIC("mount root");
 		if (vfs_get_root(&process->root) < 0)
 			PANIC("process root");
@@ -150,9 +179,7 @@ static void proc_first_start(void)
 			PANIC("mount devfs");
 		if (vfs_mount("tmpfs", 0, "/tmp", 0) < 0)
 			PANIC("mount tmpfs");
-		if (block_device_get(2) &&
-		    vfs_mount("fat", block_device_get(2), "/mnt/fat", 0) < 0)
-			PANIC("mount fat");
+		mount_fat_device(root_device);
 		if (setup_stdio() < 0)
 			PANIC("stdio setup");
 		if (exec_linux(INIT_PATH, argv, envp) < 0)
