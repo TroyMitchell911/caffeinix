@@ -767,12 +767,36 @@ static int ext4fs_truncate(struct vfs_inode *inode, uint64 size)
 {
 	struct ext4fs_inode *private = inode->private;
 	ext4_file file;
+	void *zeros = 0;
+	uint64 position;
 	int result;
 
 	result = ext4_fopen2(&file, private->path, O_RDWR);
 	if (result != EOK)
 		return ext4fs_result(result);
-	result = ext4_ftruncate(&file, size);
+	if (size > file.fsize) {
+		zeros = palloc();
+		if (!zeros) {
+			ext4_fclose(&file);
+			return VFS_ERR_NOMEM;
+		}
+		memset(zeros, 0, PGSIZE);
+		position = file.fsize;
+		result = ext4_fseek(&file, position, SEEK_SET);
+		while (result == EOK && position < size) {
+			size_t count = size - position > PGSIZE ?
+				PGSIZE : size - position;
+			size_t written = 0;
+
+			result = ext4_fwrite(&file, zeros, count, &written);
+			if (result == EOK && written != count)
+				result = EIO;
+			position += written;
+		}
+		pfree(zeros);
+	} else {
+		result = ext4_ftruncate(&file, size);
+	}
 	ext4_fclose(&file);
 	if (result == EOK)
 		ext4fs_refresh(inode);

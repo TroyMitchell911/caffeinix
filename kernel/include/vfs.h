@@ -278,6 +278,7 @@ int vfs_read(int fd, uint64 address, int length);
 int vfs_write(int fd, uint64 address, int length);
 int64 vfs_writev(int fd, int user_source,
 		 const struct vfs_iovec *iovecs, uint32 count);
+int vfs_ftruncate(int fd, uint64 size);
 int64 vfs_ioctl(int fd, uint64 request, uint64 argument);
 int vfs_seek(int fd, int64 offset, int whence, uint64 *result);
 int vfs_stat_fd(int fd, struct vfs_stat *stat);

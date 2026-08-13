@@ -162,8 +162,35 @@ static int test_tree(const char *directory)
 	if (lseek(fd, 8192, SEEK_SET) != 8192 ||
 	    read(fd, buffer, 1) != 1 || buffer[0] != 'Z')
 		return 32;
+	errno = 0;
+	if (ftruncate(fd, -1) != -1 || errno != EINVAL ||
+	    fstat(fd, &statbuf) || statbuf.st_size != 8193)
+		return 38;
+	if (ftruncate(fd, 12289) || fstat(fd, &statbuf) ||
+	    statbuf.st_size != 12289 ||
+	    lseek(fd, 8192, SEEK_SET) != 8192 ||
+	    read(fd, buffer, sizeof(buffer)) != sizeof(buffer) ||
+	    buffer[0] != 'Z')
+		return 42;
+	for (i = 1; i < (int)sizeof(buffer); i++) {
+		if (buffer[i])
+			return 43;
+	}
+	if (lseek(fd, 12273, SEEK_SET) != 12273 ||
+	    read(fd, buffer, sizeof(buffer)) != sizeof(buffer))
+		return 44;
+	for (i = 0; i < (int)sizeof(buffer); i++) {
+		if (buffer[i])
+			return 45;
+	}
 	if (close(fd))
 		return 33;
+	fd = open(sparse, O_RDONLY);
+	errno = 0;
+	if (fd < 0 || ftruncate(fd, 0) != -1 || errno != EBADF ||
+	    close(fd) || stat(sparse, &statbuf) ||
+	    statbuf.st_size != 12289)
+		return 39;
 	fd = open(sparse, O_WRONLY | O_TRUNC);
 	if (fd < 0 || close(fd) || stat(sparse, &statbuf) || statbuf.st_size)
 		return 34;

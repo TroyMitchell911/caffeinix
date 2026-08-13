@@ -55,6 +55,14 @@ static int string_equal(const char *left, const char *right)
 	       !strncmp(left, right, left_length);
 }
 
+static sleeplock_t vfs_inode_write_lock(struct vfs_inode *inode)
+{
+	if (!inode || inode->type != VFS_INODE_REGULAR ||
+	    !inode->superblock)
+		return 0;
+	return &inode->superblock->write_lock;
+}
+
 void vfs_init(void)
 {
 	spinlock_init(&vfs.lock, "vfs");
@@ -777,6 +785,7 @@ int vfs_open_file(const char *name, uint32 flags, uint32 mode,
 {
 	struct vfs_stat stat;
 	struct vfs_path path;
+	sleeplock_t lock;
 	file_t file;
 	int existed, status;
 
@@ -816,8 +825,13 @@ int vfs_open_file(const char *name, uint32 flags, uint32 mode,
 			status = VFS_ERR_NOTSUPP;
 			goto fail;
 		}
+		lock = vfs_inode_write_lock(path.dentry->inode);
+		if (lock)
+			sleeplock_acquire(lock);
 		status = path.dentry->inode->operations->truncate(
 			path.dentry->inode, 0);
+		if (lock)
+			sleeplock_release(lock);
 		if (status < 0)
 			goto fail;
 		stat.size = 0;
@@ -1086,13 +1100,9 @@ static int vfs_prepare_append(file_t file)
 
 static sleeplock_t vfs_regular_write_lock(file_t file)
 {
-	struct vfs_inode *inode;
-
-	if (!file->path.dentry ||
-	    !(inode = file->path.dentry->inode) ||
-	    inode->type != VFS_INODE_REGULAR || !inode->superblock)
+	if (!file->path.dentry)
 		return 0;
-	return &inode->superblock->write_lock;
+	return vfs_inode_write_lock(file->path.dentry->inode);
 }
 
 int vfs_write(int fd, uint64 address, int length)
@@ -1160,6 +1170,38 @@ int64 vfs_writev(int fd, int user_source,
 out:
 	if (lock)
 		sleeplock_release(lock);
+	return result;
+}
+
+int vfs_ftruncate(int fd, uint64 size)
+{
+	struct vfs_inode *inode;
+	sleeplock_t lock;
+	file_t file;
+	int result;
+
+	result = vfs_get_file_fd(fd, &file);
+	if (result < 0)
+		return result;
+	if (!(file->flags & VFS_OPEN_WRITE)) {
+		result = VFS_ERR_BADF;
+		goto out;
+	}
+	if (!file->path.dentry ||
+	    !(inode = file->path.dentry->inode) ||
+	    inode->type != VFS_INODE_REGULAR || !inode->operations ||
+	    !inode->operations->truncate) {
+		result = VFS_ERR_INVAL;
+		goto out;
+	}
+	lock = vfs_regular_write_lock(file);
+	if (lock)
+		sleeplock_acquire(lock);
+	result = inode->operations->truncate(inode, size);
+	if (lock)
+		sleeplock_release(lock);
+out:
+	vfs_file_put(file);
 	return result;
 }
 

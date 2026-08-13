@@ -13,6 +13,7 @@
 #define LINUX_SYS_unlinkat           35
 #define LINUX_SYS_symlinkat          36
 #define LINUX_SYS_linkat             37
+#define LINUX_SYS_ftruncate          46
 #define LINUX_SYS_faccessat          48
 #define LINUX_SYS_chdir              49
 #define LINUX_SYS_openat             56

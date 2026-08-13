@@ -16,6 +16,8 @@ _Static_assert(LINUX_SYS_openat == __NR_openat, "openat number");
 _Static_assert(LINUX_SYS_symlinkat == __NR_symlinkat,
 	       "symlinkat number");
 _Static_assert(LINUX_SYS_linkat == __NR_linkat, "linkat number");
+_Static_assert(LINUX_SYS_ftruncate == __NR_ftruncate,
+	       "ftruncate number");
 _Static_assert(LINUX_SYS_getdents64 == __NR_getdents64,
 	       "getdents64 number");
 _Static_assert(LINUX_SYS_readlinkat == __NR_readlinkat,

@@ -193,6 +193,21 @@ uint64 sys_linux_openat(void)
 	return fd;
 }
 
+uint64 sys_linux_ftruncate(void)
+{
+	uint64 length;
+	int64 signed_length;
+	int fd, result;
+
+	argint(0, &fd);
+	argaddr(1, &length);
+	signed_length = (int64)length;
+	if (signed_length < 0)
+		return -LINUX_EINVAL;
+	result = vfs_ftruncate(fd, signed_length);
+	return result < 0 ? linux_error(result) : 0;
+}
+
 uint64 sys_linux_close(void)
 {
 	int fd, result;

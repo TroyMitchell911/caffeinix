@@ -100,6 +100,7 @@ extern uint64 sys_linux_utimensat(void);
 extern uint64 sys_linux_write(void);
 extern uint64 sys_linux_writev(void);
 extern uint64 sys_linux_wait4(void);
+extern uint64 sys_linux_ftruncate(void);
 
 typedef uint64 (*syscall_t)(void);
 
@@ -113,6 +114,7 @@ static syscall_t linux_syscalls[LINUX_SYS_renameat2 + 1] = {
 	[LINUX_SYS_unlinkat] = sys_linux_unlinkat,
 	[LINUX_SYS_symlinkat] = sys_linux_symlinkat,
 	[LINUX_SYS_linkat] = sys_linux_linkat,
+	[LINUX_SYS_ftruncate] = sys_linux_ftruncate,
 	[LINUX_SYS_faccessat] = sys_linux_faccessat,
 	[LINUX_SYS_chdir] = sys_linux_chdir,
 	[LINUX_SYS_openat] = sys_linux_openat,
