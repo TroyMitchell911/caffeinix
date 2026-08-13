@@ -6,7 +6,8 @@ exposing the Linux RISC-V userspace ABI needed by static musl programs.
 
 The current milestone boots an unmodified static BusyBox from an ext4 root
 filesystem on QEMU `virt`. The kernel mounts devfs at `/dev`, tmpfs at `/tmp`,
-and can mount a second FAT16 or FAT32 disk at `/mnt/fat`.
+can mount a second FAT16 or FAT32 disk at `/mnt/fat`, and can run IPv4 over a
+modern VirtIO network device through lwIP.
 
 ## Supported target
 
@@ -18,6 +19,7 @@ and can mount a second FAT16 or FAT32 disk at `/mnt/fat`.
 - Root filesystem: ext4 with 1 KiB filesystem blocks
 - Optional data filesystem: FAT16 or FAT32
 - Serial console: DT-discovered NS16550A at `/dev/ttyS0` (device 4:64)
+- Network: optional DT-discovered modern VirtIO MMIO NIC, Ethernet and IPv4
 - UAPI reference: Linux 6.10 RISC-V headers
 
 ## Prerequisites
@@ -44,8 +46,20 @@ sudo pacman -S --needed \
 ```
 
 Install `gdb-multiarch` on Ubuntu or `riscv64-elf-gdb` on Arch only when
-using `make qemu-gdb`. Install `dosfstools` and `mtools` only for the optional
-FAT workflow.
+using `make qemu-gdb`. The complete test suite additionally needs `expect`,
+`dosfstools`, `mtools`, and Python 3.
+
+On Ubuntu:
+
+```bash
+sudo apt install expect dosfstools mtools python3
+```
+
+On Arch:
+
+```bash
+sudo pacman -S --needed expect dosfstools mtools python
+```
 
 ## Build the kernel
 
@@ -213,6 +227,9 @@ devfs creates `/dev/ttyS0` from the live character-device registry.
 
 See [`Documentation/driver-model.md`](Documentation/driver-model.md) for the
 layer ownership rules and the Device Tree needed to add another serial port.
+The shared VirtIO, block, network-device, and protocol-stack boundaries are
+described in the
+[`network architecture`](Documentation/networking/architecture.md).
 
 ## Run
 
@@ -250,6 +267,37 @@ make -C "$CAFFEINIX_DIR" qemu \
 The kernel Makefile never downloads or builds OpenSBI. See
 [`Documentation/opensbi.md`](Documentation/opensbi.md) for the boot register,
 memory, SBI extension, and multi-hart contracts.
+
+## Attach an optional network device
+
+Set `NET_BACKEND` to a QEMU `-netdev` backend value to add `virtio-net`.
+QEMU user networking needs no host privilege and supplies IPv4 configuration
+through DHCP:
+
+```bash
+make -C "$CAFFEINIX_DIR" qemu \
+  FS_IMG="$FS_IMG" \
+  NET_BACKEND=user
+```
+
+`NET_BUS` defaults to `virtio-mmio-bus.2`, after the root and optional FAT
+disks, and `NET_MAC` defaults to `52:54:00:12:34:56`. Both are configurable:
+
+```bash
+make -C "$CAFFEINIX_DIR" qemu \
+  FS_IMG="$FS_IMG" \
+  NET_BACKEND='user,hostfwd=tcp:127.0.0.1:18080-:18080' \
+  NET_BUS=virtio-mmio-bus.2 \
+  NET_MAC=52:54:00:12:34:56
+```
+
+Networking initializes asynchronously and never blocks the local shell when
+the NIC, link, or DHCP server is absent. The initial stack supports Ethernet,
+ARP, IPv4, ICMP, raw ICMP, DHCP, DNS, UDP, and TCP. Static musl programs use
+Linux RISC-V IPv4 socket calls through ordinary VFS descriptors. See the
+[`lwIP port`](Documentation/networking/lwip.md),
+[`VirtIO contracts`](Documentation/networking/virtio.md), and
+[`socket UAPI`](Documentation/networking/socket-uapi.md) documents.
 
 At the shell prompt, try:
 
@@ -324,9 +372,12 @@ the kernel. No separate rootfs repository or private compiler is required.
 ## Current limitations
 
 - Only a Linux RISC-V UAPI subset is implemented.
-- Pipelines, job control, polling, and real signal delivery are not ready.
-- Dynamic ELF loading, shared libraries, threads, and networking are not
-  ready.
+- Pipelines, job control, and real signal delivery are not ready.
+- Dynamic ELF loading, shared libraries, and userspace threads are not ready.
+- Networking is IPv4-only and omits interface configuration, AF_UNIX,
+  netlink, namespaces, firewalling, and the wider Linux socket option set.
+- VirtIO currently uses modern MMIO split rings without packed rings,
+  multiqueue, offloads, hot unplug, PCI, or a physical Ethernet MAC.
 - The VFS has fixed-size object tables and no unmount syscall yet.
 - FAT support excludes exFAT and returns `EBUSY` when unlinking an open file.
 - Docker is not supported; it also needs namespaces, cgroups, mounts,
