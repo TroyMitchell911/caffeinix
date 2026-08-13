@@ -160,6 +160,7 @@ run_boot_smoke()
 
 run_boot_smoke 1 64M
 run_boot_smoke 2 192M
+run_boot_smoke 3 96M
 run_boot_smoke 4 128M
 run_boot_smoke 8 256M
 

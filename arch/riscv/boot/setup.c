@@ -11,13 +11,11 @@
 #include <riscv.h>
 #include <boot.h>
 #include <cpu.h>
-#include <kernel_config.h>
 
 extern void main(void);
 
 /* OpenSBI starts only the boot hart before SBI HSM is used. */
 __attribute__((aligned(16))) int8 boot_stack[BOOT_STACK_SIZE];
-__attribute__((aligned(16))) int8 secondary_stacks[4096 * NCPU];
 uint64 boot_dtb_address;
 uint64 boot_hart_id;
 
@@ -35,12 +33,13 @@ void setup(uint64 hart_id, uint64 dtb_address)
 		;
 }
 
-void secondary_setup(uint64 hart_id, uint64 logical_id)
+void secondary_setup(uint64 hart_id, uint64 stack_address)
 {
+	uint64 logical_id = tp_r();
+
 	satp_w(0);
 	sfence_vma();
-	tp_w(logical_id);
-	cpu_secondary_validate(hart_id, logical_id);
+	cpu_secondary_validate(hart_id, logical_id, stack_address);
 	main();
 	for (;;)
 		;

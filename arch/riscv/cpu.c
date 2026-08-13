@@ -2,6 +2,7 @@
 #include <debug.h>
 #include <kernel_config.h>
 #include <of.h>
+#include <palloc.h>
 #include <printf.h>
 #include <riscv.h>
 #include <sbi.h>
@@ -65,10 +66,12 @@ struct device_node *cpu_of_node(int logical_id)
 	return cpus[logical_id].of_node;
 }
 
-void cpu_secondary_validate(uint64 hart_id, uint64 logical_id)
+void cpu_secondary_validate(uint64 hart_id, uint64 logical_id,
+			    uint64 stack_address)
 {
 	if (!logical_id || logical_id >= (uint64)logical_cpu_count ||
-	    cpus[logical_id].hart_id != hart_id)
+	    cpus[logical_id].hart_id != hart_id ||
+	    cpus[logical_id].scheduler_stack != (void *)stack_address)
 		PANIC("invalid secondary hart handoff");
 }
 
@@ -86,6 +89,8 @@ void cpu_start_secondary_harts(void)
 	int logical;
 
 	for (logical = 1; logical < logical_cpu_count; logical++) {
+		void *stack;
+
 		error = sbi_hart_get_status(cpu_hart_id(logical), &status);
 		if (error)
 			cpu_start_failed(logical, error);
@@ -94,10 +99,21 @@ void cpu_start_secondary_harts(void)
 			       cpu_hart_id(logical), (int)status);
 			PANIC("secondary hart is not stopped");
 		}
+		if (cpus[logical].scheduler_stack)
+			PANIC("secondary hart stack already allocated");
+		stack = palloc();
+		cpus[logical].scheduler_stack = stack;
+		/* entry.S reads the logical CPU ID before using the stack. */
+		*(uint64 *)stack = logical;
+		__sync_synchronize();
 		error = sbi_hart_start(cpu_hart_id(logical),
-		                       (uint64)secondary_entry, logical);
-		if (error)
+		                       (uint64)secondary_entry,
+		                       (uint64)stack);
+		if (error) {
+			cpus[logical].scheduler_stack = 0;
+			pfree(stack);
 			cpu_start_failed(logical, error);
+		}
 	}
 }
 

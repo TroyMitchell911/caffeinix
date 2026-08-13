@@ -1,5 +1,4 @@
 #include <boot.h>
-#include <kernel_config.h>
 
 .section .text
 .global _entry
@@ -13,16 +12,9 @@ _entry:
 	tail setup
 
 secondary_entry:
-	li t0, NCPU
-	bgeu a1, t0, .Lsecondary_park
-	la sp, secondary_stacks
-	slli t0, a1, 12
-	add sp, sp, t0
-	li t0, 4096
-	add sp, sp, t0
-	mv tp, a1
+	# The HSM opaque value points at this hart's scheduler stack.
+	mv t0, a1
+	ld tp, 0(t0)
+	li t1, PGSIZE
+	add sp, t0, t1
 	tail secondary_setup
-
-.Lsecondary_park:
-	wfi
-	j .Lsecondary_park
