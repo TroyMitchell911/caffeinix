@@ -86,6 +86,9 @@ QEMU ?= qemu-system-riscv64
 SBI_FIRMWARE ?= default
 FS_IMG ?=
 FAT_IMG ?=
+NET_BACKEND ?=
+NET_BUS ?= virtio-mmio-bus.2
+NET_MAC ?= 52:54:00:12:34:56
 MEMORY ?= 256M
 QEMUOPTS = -machine virt -bios $(SBI_FIRMWARE) -kernel $(TARGET)
 QEMUOPTS += -m $(MEMORY) -smp $(CPUS) -nographic
@@ -95,6 +98,10 @@ QEMUOPTS += -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
 ifneq ($(strip $(FAT_IMG)),)
 QEMUOPTS += -drive file=$(FAT_IMG),if=none,format=raw,id=x1
 QEMUOPTS += -device virtio-blk-device,drive=x1,bus=virtio-mmio-bus.1
+endif
+ifneq ($(strip $(NET_BACKEND)),)
+QEMUOPTS += -netdev $(NET_BACKEND),id=n0
+QEMUOPTS += -device virtio-net-device,netdev=n0,bus=$(NET_BUS),mac=$(NET_MAC)
 endif
 ifndef CPUS
 CPUS := 8
