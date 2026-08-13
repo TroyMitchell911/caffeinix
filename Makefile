@@ -72,7 +72,7 @@ ifndef KBUILD_RECURSIVE
 built-in.o: start_recursive_build
 endif
 
-$(TARGET) : built-in.o
+$(TARGET) : built-in.o kernel/kernel.ld
 	@if [ ! -d $(OUTPUT) ]; then \
         	mkdir $(OUTPUT); \
     	fi
