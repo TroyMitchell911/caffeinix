@@ -38,6 +38,8 @@ CLINT access, `mret`, `-bios none`, and a kernel entry other than
 
 The guest selftest covers:
 
+- network device registration, packet ownership, queue state, and a
+  VirtIO network device attached to every boot;
 - repeated fork, exec, exit, and wait cycles;
 - FIFO scheduler progress with 24 runnable processes, timer preemption, and
   more runnable work than CPUs;

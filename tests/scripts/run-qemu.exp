@@ -43,7 +43,9 @@ set command [list \
 	-drive file=$env(ROOT_IMAGE),if=none,format=raw,id=x0 \
 	-device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0 \
 	-drive file=$env(FAT_IMAGE),if=none,format=raw,id=x1 \
-	-device virtio-blk-device,drive=x1,bus=virtio-mmio-bus.1]
+	-device virtio-blk-device,drive=x1,bus=virtio-mmio-bus.1 \
+	-netdev user,id=n0 \
+	-device virtio-net-device,netdev=n0,bus=virtio-mmio-bus.2]
 
 spawn -noecho {*}$command
 

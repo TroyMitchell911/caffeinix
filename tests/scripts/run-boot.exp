@@ -32,7 +32,9 @@ set command [list \
 	-snapshot \
 	-global virtio-mmio.force-legacy=false \
 	-drive file=$env(ROOT_IMAGE),if=none,format=raw,id=x0 \
-	-device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0]
+	-device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0 \
+	-netdev user,id=n0 \
+	-device virtio-net-device,netdev=n0,bus=virtio-mmio-bus.1]
 
 spawn -noecho {*}$command
 expect {
@@ -77,4 +79,13 @@ send -- "\001x"
 expect {
 	eof {}
 	timeout { abort_test "QEMU exit timeout" }
+}
+
+log_file
+set log_handle [open $env(QEMU_LOG) r]
+set log_contents [read $log_handle]
+close $log_handle
+set net_devices [regexp -all -- {virtio-net: registered eth0} $log_contents]
+if {$net_devices != 1} {
+	abort_test "expected one registered VirtIO network device"
 }
