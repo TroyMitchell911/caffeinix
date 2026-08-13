@@ -7,6 +7,7 @@
 #include <riscv.h>
 #include <sbi.h>
 #include <scheduler.h>
+#include <timer.h>
 
 #define NICE_0_LOAD 1024U
 #define SCHED_TARGET_LATENCY_NS 48000000ULL
@@ -425,10 +426,12 @@ void scheduler(void)
 		intr_off();
 		next = scheduler_next(cpu);
 		if (!next) {
+			timer_set_idle();
 			wait_for_interrupt();
 			intr_on();
 			continue;
 		}
+		timer_set_active();
 		intr_on();
 
 		spinlock_acquire(&next->lock);

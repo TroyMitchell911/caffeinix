@@ -21,6 +21,7 @@
 
 /* For ms */
 #define TICK_INTERVAL                   1
+#define IDLE_TICK_INTERVAL              100
 
 #define WORKQUEUE_NAME                  "kworker"
 
