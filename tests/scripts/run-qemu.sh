@@ -88,7 +88,9 @@ normalize_kernel_log()
 	fi
 	if grep -Eq \
 		-e '^(Caffeinix |OF: machine:|SBI: spec=|memory: )' \
-		-e '^(clocksource: |smp: |irq: PLIC|mmu: |CPU: )' \
+		-e '^(clocksource: |smp: |irq: PLIC|mmu: |console: )' \
+		-e '^(virtio-mmio: |virtio-blk|eth[0-9]+: virtio-net)' \
+		-e '^(CPU: |lwIP: )' \
 		"$timestamped"; then
 		echo "kernel message without a timestamp" >&2
 		exit 1
@@ -110,6 +112,7 @@ check_boot_log()
 {
 	local clean=$1
 	local cpus=$2
+	local block_devices=${3:-1}
 	local logical
 	local marker_count
 
@@ -129,6 +132,7 @@ check_boot_log()
 		"^smp: detected $cpus CPUs$" \
 		"^irq: PLIC configured for $cpus CPUs$" \
 		'^mmu: Sv39 enabled$' \
+		'^console: ttyS0 at 0x[0-9a-f]+ irq=[0-9]+$' \
 		"^smp: brought up $cpus CPUs$"; do
 		marker_count=$(awk -v marker="$marker" \
 			'$0 ~ marker { count++ } END { print count + 0 }' \
@@ -138,6 +142,14 @@ check_boot_log()
 			exit 1
 		fi
 	done
+	marker_count=$(awk \
+		'$0 ~ /^virtio-blk[0-9]+: [0-9]+ sectors \([0-9]+ MiB\)$/ {
+			count++
+		} END { print count + 0 }' "$clean")
+	if [ "$marker_count" -ne "$block_devices" ]; then
+		echo "unexpected block device count: $marker_count" >&2
+		exit 1
+	fi
 	for logical in $(seq 0 $((cpus - 1))); do
 		marker_count=$(awk -v logical="$logical" \
 			'$0 ~ "^CPU: logical=" logical " hart=.* online$" {
@@ -175,11 +187,21 @@ check_net_device_log()
 	local clean=$1
 	local expected=$2
 	local count
+	local absent
 
-	count=$(awk '$0 == "virtio-net: registered eth0" { count++ }
+	count=$(awk \
+		'$0 ~ /^eth0: virtio-net MAC ([0-9a-f][0-9a-f]:){5}/ &&
+		 $0 ~ /[0-9a-f][0-9a-f]$/ { count++ }
 		END { print count + 0 }' "$clean")
 	if [ "$count" -ne "$expected" ]; then
 		echo "unexpected VirtIO network device count: $count" >&2
+		exit 1
+	fi
+	absent=$(awk '$0 == "lwIP: no external network device" { count++ }
+		END { print count + 0 }' "$clean")
+	if { [ "$expected" -eq 0 ] && [ "$absent" -ne 1 ]; } ||
+	   { [ "$expected" -ne 0 ] && [ "$absent" -ne 0 ]; }; then
+		echo "unexpected absent network device count: $absent" >&2
 		exit 1
 	fi
 }
@@ -266,7 +288,7 @@ export QEMU_LOG=$qemu_log
 expect "$script_dir/run-qemu.exp"
 normalize_kernel_log "$qemu_log" "$clean_log"
 check_net_device_log "$clean_log" 1
-check_boot_log "$clean_log" "$QEMU_CPUS"
+check_boot_log "$clean_log" "$QEMU_CPUS" 2
 
 for marker in \
 	BUSYBOX_SHELL_OK \

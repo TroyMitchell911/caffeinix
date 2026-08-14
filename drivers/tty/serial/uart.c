@@ -4,6 +4,7 @@
 #include <device_model.h>
 #include <irq.h>
 #include <mystring.h>
+#include <printk.h>
 #include <spinlock.h>
 #include <tty.h>
 #include <uart.h>
@@ -134,6 +135,9 @@ int uart_add_one_port(struct uart_port *port)
 	status = console_register(&port->console);
 	if (status < 0)
 		goto free_interrupt;
+	if (port->of_node)
+		pr_info("console: %s at %p irq=%u", port->tty.name,
+			port->mapbase, port->irq);
 	return DRIVER_OK;
 
 free_interrupt:

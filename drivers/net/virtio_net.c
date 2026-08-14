@@ -2,7 +2,7 @@
 #include <mystring.h>
 #include <netdevice.h>
 #include <palloc.h>
-#include <printf.h>
+#include <printk.h>
 #include <virtio.h>
 #include <virtio_ring.h>
 #include <workqueue.h>
@@ -290,7 +290,11 @@ static int virtio_net_probe(struct virtio_device *device)
 	if (net_device_register(&network->netdev) < 0)
 		goto failed;
 	dev_set_drvdata(&device->device, network);
-	printf("virtio-net: registered %s\n", network->netdev.name);
+	pr_info("%s: virtio-net MAC %02x:%02x:%02x:%02x:%02x:%02x",
+		network->netdev.name, network->netdev.address[0],
+		network->netdev.address[1], network->netdev.address[2],
+		network->netdev.address[3], network->netdev.address[4],
+		network->netdev.address[5]);
 	return DRIVER_OK;
 
 failed:
