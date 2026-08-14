@@ -74,6 +74,7 @@ static struct palloc_range reserved_ranges[PALLOC_RESERVED_RANGE_MAX];
 static int memory_range_count;
 static int reserved_range_count;
 static uint64 heap_start;
+static uint64 usable_bytes;
 
 _Static_assert((MALLOC_ALIGNMENT & (MALLOC_ALIGNMENT - 1)) == 0,
 	       "malloc alignment must be a power of two");
@@ -138,6 +139,11 @@ uint64 palloc_heap_start(void)
 	return heap_start;
 }
 
+uint64 palloc_usable_bytes(void)
+{
+	return usable_bytes;
+}
+
 static void palloc_discover_memory(void)
 {
 	struct of_memory_range range;
@@ -197,6 +203,7 @@ void palloc_init(void)
 	}
 	if (!pages)
 		PANIC("no usable memory");
+	usable_bytes = (uint64)pages * PGSIZE;
 	palloc_heap_alignment_selftest();
 }
 

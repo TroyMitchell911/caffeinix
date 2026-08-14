@@ -1,5 +1,5 @@
 #include <debug.h>
-#include <printf.h>
+#include <printk.h>
 #include <sbi.h>
 
 #define SBI_EXT_BASE 0x10
@@ -99,8 +99,8 @@ void sbi_report(void)
 	uint64 major = (sbi_spec_version >> 24) & 0x7f;
 	uint64 minor = sbi_spec_version & 0xffffff;
 
-	printf("SBI: spec=%d.%d implementation=%d version=%p\n",
-	       (int)major, (int)minor, (int)sbi_impl_id, sbi_impl_version);
+	pr_info("SBI: spec=%d.%d implementation=%d version=%p",
+		(int)major, (int)minor, (int)sbi_impl_id, sbi_impl_version);
 }
 
 int64 sbi_set_timer(uint64 deadline)

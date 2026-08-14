@@ -3,7 +3,7 @@
 #include <kernel_config.h>
 #include <of.h>
 #include <palloc.h>
-#include <printf.h>
+#include <printk.h>
 #include <riscv.h>
 #include <sbi.h>
 #include <scheduler.h>
@@ -82,7 +82,7 @@ void timer_interrupt(void)
 		PANIC("SBI timer rearm failed");
 	if (!timer_cpus[logical].seen) {
 		timer_cpus[logical].seen = 1;
-		printf("CPU: logical=%d timer active\n", logical);
+		pr_info("CPU: logical=%d timer active", logical);
 	}
 }
 
