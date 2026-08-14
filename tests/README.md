@@ -53,6 +53,12 @@ This verifies that transport enumeration cannot change root or data-disk
 selection. A host fixture behind QEMU user networking provides deterministic
 UDP, TCP, reverse-TCP, bulk-transfer, and HTTP replies.
 
+The Expect harnesses launch guests through the top-level `qemu` target, so
+interactive boots and selftests share one QEMU machine configuration. The
+boot-smoke matrix passes an empty `NET_BACKEND` to omit the NIC. A separate
+offline boot keeps the NIC but replaces user networking with a socket backend
+that has no DHCP server.
+
 The guest selftest covers:
 
 - network device registration, packet ownership, and queue state;

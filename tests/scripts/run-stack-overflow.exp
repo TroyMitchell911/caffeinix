@@ -6,7 +6,9 @@ proc abort_test {message} {
 	exit 1
 }
 
-foreach variable {QEMU SBI_FIRMWARE KERNEL QEMU_LOG} {
+foreach variable {
+	MAKE_COMMAND TEST_TOPDIR QEMU SBI_FIRMWARE ROOT_IMAGE QEMU_LOG
+} {
 	if {![info exists env($variable)] || $env($variable) eq ""} {
 		puts stderr "missing environment variable: $variable"
 		exit 1
@@ -16,13 +18,23 @@ foreach variable {QEMU SBI_FIRMWARE KERNEL QEMU_LOG} {
 set timeout 30
 log_file -noappend $env(QEMU_LOG)
 set command [list \
-	$env(QEMU) \
-	-machine virt \
-	-bios $env(SBI_FIRMWARE) \
-	-kernel $env(KERNEL) \
-	-m 64M \
-	-smp 1 \
-	-nographic]
+	$env(MAKE_COMMAND) \
+	--silent \
+	--no-print-directory \
+	-C $env(TEST_TOPDIR) \
+	QEMU=$env(QEMU) \
+	SBI_FIRMWARE=$env(SBI_FIRMWARE) \
+	FS_IMG=$env(ROOT_IMAGE) \
+	FAT_IMG= \
+	CPUS=1 \
+	MEMORY=64M \
+	NET_BACKEND= \
+	NET_OPTIONS= \
+	QEMU_SNAPSHOT=1 \
+	QEMU_EXTRA_OPTS= \
+	STACK_OVERFLOW_TEST=1 \
+	QEMU_PREBUILT=1 \
+	qemu]
 
 spawn -noecho {*}$command
 expect {

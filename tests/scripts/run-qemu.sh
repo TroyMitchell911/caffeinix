@@ -10,6 +10,7 @@ test_output=${TEST_OUTPUT:-$topdir/output/tests}
 jobs=${JOBS:-$(nproc)}
 qemu=${QEMU:-qemu-system-riscv64}
 sbi_firmware=${SBI_FIRMWARE:-default}
+make_command=${MAKE:-make}
 
 export LC_ALL=C.UTF-8
 
@@ -22,7 +23,7 @@ require_command()
 }
 
 for command in \
-	"$qemu" expect e2fsck debugfs fsck.fat mtype python3 rg \
+	"$make_command" "$qemu" expect e2fsck debugfs fsck.fat mtype python3 rg \
 	"${CROSS_COMPILE:-riscv64-linux-gnu-}objdump" \
 	"${CROSS_COMPILE:-riscv64-linux-gnu-}readelf"; do
 	require_command "$command"
@@ -52,6 +53,8 @@ trap stop_fixture EXIT
 
 export QEMU=$qemu
 export SBI_FIRMWARE=$sbi_firmware
+export MAKE_COMMAND=$make_command
+export TEST_TOPDIR=$topdir
 export KERNEL=$topdir/output/kernel
 export ROOT_IMAGE=$root_image
 export FAT_IMAGE=$fat_image
