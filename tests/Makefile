@@ -32,8 +32,19 @@ rbtree:
 		-o $(TEST_OUTPUT)/rbtree
 	$(TEST_OUTPUT)/rbtree
 
+.PHONY: printk
+printk:
+	mkdir -p $(TEST_OUTPUT)
+	$(CC) -std=gnu17 -Wall -Wextra -Werror -fno-builtin \
+		-I $(TOPDIR)/kernel/include \
+		-I $(TOPDIR)/arch/riscv/include \
+		$(CURDIR)/printk.c $(TOPDIR)/kernel/printf.c \
+		$(TOPDIR)/kernel/printk.c $(TOPDIR)/kernel/timeconv.c \
+		-o $(TEST_OUTPUT)/printk
+	$(TEST_OUTPUT)/printk
+
 .PHONY: qemu
-qemu: rbtree virtqueue
+qemu: printk rbtree virtqueue
 	TEST_OUTPUT="$(TEST_OUTPUT)" JOBS="$(JOBS)" \
 		$(CURDIR)/scripts/run-qemu.sh
 

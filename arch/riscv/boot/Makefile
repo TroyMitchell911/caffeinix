@@ -1,4 +1,5 @@
-EXTRA_CFLAGS := -I ../../../include -I ../include
+EXTRA_CFLAGS := -I ../../../include -I ../../../kernel/include \
+	-I ../include
 CFLAGS_file.o := 
 
 

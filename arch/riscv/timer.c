@@ -20,7 +20,7 @@ struct timer_cpu_state {
 
 static struct timer_cpu_state *timer_cpus;
 
-void timer_init(void)
+void timer_early_init(void)
 {
 	struct device_node *cpus = of_find_node_by_path("/cpus");
 	uint32 frequency;
@@ -34,6 +34,12 @@ void timer_init(void)
 	idle_tick_interval = clock_frequency * IDLE_TICK_INTERVAL / 1000;
 	if (!tick_interval || !idle_tick_interval)
 		PANIC("invalid timer interval");
+}
+
+void timer_init(void)
+{
+	if (!clock_frequency)
+		PANIC("timer clocksource is not initialized");
 	timer_cpus = calloc(cpu_count(), sizeof(*timer_cpus));
 	if (!timer_cpus)
 		PANIC("allocate timer CPU state");

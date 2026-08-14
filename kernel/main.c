@@ -16,6 +16,7 @@
 #include <scheduler.h>
 #include <trap.h>
 #include <printf.h>
+#include <printk.h>
 #include <plic.h>
 #include <process.h>
 #include <block_device.h>
@@ -130,6 +131,9 @@ void main(void)
 		console_early_init();
 		if (of_status < 0)
 			PANIC("invalid boot DTB");
+		timer_early_init();
+		printf_init();
+		printk_init();
 		palloc_init();
 		cpu_topology_init(boot_hart_id);
 		sbi_init(cpu_count());
@@ -141,7 +145,6 @@ void main(void)
 		plic_init_hart();
 		char_device_init();
 		tty_init();
-		printf_init();
 		sbi_report();
 		kvm_create();
 		if (kvm_map_mmio(earlycon_address(), earlycon_size()) < 0)
