@@ -90,7 +90,7 @@ normalize_kernel_log()
 		-e '^(Caffeinix |OF: machine:|SBI: spec=|memory: )' \
 		-e '^(clocksource: |smp: |irq: PLIC|mmu: |console: )' \
 		-e '^(virtio-mmio: |virtio-blk|eth[0-9]+: virtio-net)' \
-		-e '^(CPU: |lwIP: )' \
+		-e '^(CPU: |lwIP: |VFS: |init: )' \
 		"$timestamped"; then
 		echo "kernel message without a timestamp" >&2
 		exit 1
@@ -113,6 +113,7 @@ check_boot_log()
 	local clean=$1
 	local cpus=$2
 	local block_devices=${3:-1}
+	local fat_mounts=0
 	local logical
 	local marker_count
 
@@ -133,7 +134,11 @@ check_boot_log()
 		"^irq: PLIC configured for $cpus CPUs$" \
 		'^mmu: Sv39 enabled$' \
 		'^console: ttyS0 at 0x[0-9a-f]+ irq=[0-9]+$' \
-		"^smp: brought up $cpus CPUs$"; do
+		"^smp: brought up $cpus CPUs$" \
+		'^VFS: mounted root [(]ext4[)] on virtio-blk[0-9]+$' \
+		'^VFS: mounted devfs on /dev$' \
+		'^VFS: mounted tmpfs on /tmp$' \
+		'^init: starting /bin/sh$'; do
 		marker_count=$(awk -v marker="$marker" \
 			'$0 ~ marker { count++ } END { print count + 0 }' \
 			"$clean")
@@ -148,6 +153,15 @@ check_boot_log()
 		} END { print count + 0 }' "$clean")
 	if [ "$marker_count" -ne "$block_devices" ]; then
 		echo "unexpected block device count: $marker_count" >&2
+		exit 1
+	fi
+	if [ "$block_devices" -gt 1 ]; then
+		fat_mounts=1
+	fi
+	marker_count=$(awk '$0 == "VFS: mounted fat on /mnt/fat" { count++ }
+		END { print count + 0 }' "$clean")
+	if [ "$marker_count" -ne "$fat_mounts" ]; then
+		echo "unexpected FAT mount count: $marker_count" >&2
 		exit 1
 	fi
 	for logical in $(seq 0 $((cpus - 1))); do

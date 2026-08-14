@@ -4,6 +4,7 @@
 #include <ktime.h>
 #include <mystring.h>
 #include <palloc.h>
+#include <printk.h>
 #include <process.h>
 #include <scheduler.h>
 #include <spinlock.h>
@@ -390,6 +391,8 @@ int vfs_mount_root(const char *filesystem, struct block_device *device,
 	spinlock_acquire(&vfs.lock);
 	vfs.root = mount;
 	spinlock_release(&vfs.lock);
+	pr_info("VFS: mounted root (%s) on %s", filesystem,
+		device ? device->name : "none");
 	return VFS_OK;
 }
 
@@ -704,6 +707,7 @@ int vfs_mount(const char *filesystem, struct block_device *device,
 	mount->root = root;
 	mount->parent = mountpoint.mount;
 	mount->mountpoint = mountpoint;
+	pr_info("VFS: mounted %s on %s", filesystem, target);
 	return VFS_OK;
 }
 

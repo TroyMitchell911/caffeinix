@@ -17,6 +17,7 @@
 #include <mystring.h>
 #include <file.h>
 #include <block_device.h>
+#include <printk.h>
 #include <vfs.h>
 
 /* From trampoline.S */
@@ -64,13 +65,18 @@ static struct block_device *mount_root_device(void)
 static void mount_fat_device(struct block_device *root)
 {
 	struct block_device *device;
+	int status;
 	uint32 id;
 
 	for (id = 1; id < BLOCK_DEVICE_MAX; id++) {
 		device = block_device_get(id);
-		if (device && device != root &&
-		    vfs_mount("fat", device, "/mnt/fat", 0) == VFS_OK)
+		if (!device || device == root)
+			continue;
+		status = vfs_mount("fat", device, "/mnt/fat", 0);
+		if (status == VFS_OK)
 			return;
+		pr_warn("VFS: cannot mount %s as fat: %d", device->name,
+			status);
 	}
 }
 
@@ -166,24 +172,42 @@ static void proc_first_start(void)
 	process_t process = cur_proc();
 
         /* The function scheduler will acquire the lock */
-        spinlock_release(&cur_thread()->lock);
+	spinlock_release(&cur_thread()->lock);
 	if (!fs_started) {
+		int status;
+
 		fs_started = 1;
 		root_device = mount_root_device();
-		if (!root_device)
+		if (!root_device) {
+			pr_err("VFS: cannot mount root filesystem %s",
+				ROOT_FILESYSTEM);
 			PANIC("mount root");
+		}
 		if (vfs_get_root(&process->root) < 0)
 			PANIC("process root");
 		vfs_path_copy(&process->cwd, &process->root);
-		if (vfs_mount("devfs", 0, "/dev", 0) < 0)
+		status = vfs_mount("devfs", 0, "/dev", 0);
+		if (status < 0) {
+			pr_err("VFS: cannot mount devfs on /dev: %d", status);
 			PANIC("mount devfs");
-		if (vfs_mount("tmpfs", 0, "/tmp", 0) < 0)
+		}
+		status = vfs_mount("tmpfs", 0, "/tmp", 0);
+		if (status < 0) {
+			pr_err("VFS: cannot mount tmpfs on /tmp: %d", status);
 			PANIC("mount tmpfs");
+		}
 		mount_fat_device(root_device);
-		if (setup_stdio() < 0)
+		status = setup_stdio();
+		if (status < 0) {
+			pr_err("init: cannot configure standard I/O: %d", status);
 			PANIC("stdio setup");
-		if (exec_linux(INIT_PATH, argv, envp) < 0)
+		}
+		pr_info("init: starting %s", INIT_PATH);
+		status = exec_linux(INIT_PATH, argv, envp);
+		if (status < 0) {
+			pr_err("init: cannot execute %s: %d", INIT_PATH, status);
 			PANIC("exec init");
+		}
 	}
         extern void user_trap_ret(void);
         user_trap_ret();
