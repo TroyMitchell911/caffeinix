@@ -6,5 +6,6 @@
 
 void printf_init(void);
 void printf(char* fmt, ...);
+void printf_enter_panic(void);
 
 #endif

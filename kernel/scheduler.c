@@ -1,6 +1,5 @@
 #include <cpu.h>
 #include <debug.h>
-#include <kernel_config.h>
 #include <ktime.h>
 #include <mem_layout.h>
 #include <rbtree.h>
@@ -28,7 +27,9 @@ static const uint32 nice_weights[40] = {
 
 extern void switchto(context_t c, context_t p);
 
-struct cpu cpus[NCPU];
+static struct cpu boot_cpu;
+static cpu_t boot_cpu_table[] = { &boot_cpu };
+cpu_t *cpus = boot_cpu_table;
 
 static struct {
 	struct spinlock lock;
@@ -38,14 +39,14 @@ static struct {
 	uint32 count;
 } runqueue;
 
-uint8 cpuid(void)
+int cpuid(void)
 {
-	return tp_r();
+	return (int)tp_r();
 }
 
 cpu_t cur_cpu(void)
 {
-	return &cpus[cpuid()];
+	return cpus[cpuid()];
 }
 
 thread_t cur_thread(void)
@@ -182,8 +183,8 @@ static void update_min_vruntime_locked(thread_t selected, uint64 now)
 			minimum = queued->sched.vruntime;
 	}
 	for (logical = 0; logical < cpu_count(); logical++) {
-		thread_t current = cpus[logical].current;
-		thread_t pending = cpus[logical].selected;
+		thread_t current = cpus[logical]->current;
+		thread_t pending = cpus[logical]->selected;
 		uint64 vruntime;
 
 		if (current && current != selected &&
@@ -210,10 +211,10 @@ static int claim_idle_cpu_locked(void)
 		return -1;
 	}
 	for (logical = 0; logical < cpu_count(); logical++) {
-		if (&cpus[logical] == current || !cpus[logical].online ||
-		    !cpus[logical].idle)
+		if (cpus[logical] == current || !cpus[logical]->online ||
+		    !cpus[logical]->idle)
 			continue;
-		cpus[logical].idle = 0;
+		cpus[logical]->idle = 0;
 		return logical;
 	}
 	return -1;
@@ -226,10 +227,10 @@ static int select_preempt_cpu_locked(thread_t waking, uint64 now)
 	int logical, target = -1;
 
 	for (logical = 0; logical < cpu_count(); logical++) {
-		thread_t current = cpus[logical].current;
+		thread_t current = cpus[logical]->current;
 		uint64 current_vruntime;
 
-		if (!cpus[logical].online || !current ||
+		if (!cpus[logical]->online || !current ||
 		    current->state != THREAD_RUNNING)
 			continue;
 		current_vruntime = entity_vruntime_now(current, now);
@@ -242,7 +243,7 @@ static int select_preempt_cpu_locked(thread_t waking, uint64 now)
 		target = logical;
 	}
 	if (target >= 0)
-		__atomic_store_n(&cpus[target].need_resched, 1,
+		__atomic_store_n(&cpus[target]->need_resched, 1,
 				 __ATOMIC_RELEASE);
 	return target;
 }
@@ -299,8 +300,8 @@ static uint64 calculate_slice_locked(thread_t selected)
 	int logical;
 
 	for (logical = 0; logical < cpu_count(); logical++) {
-		thread_t current = cpus[logical].current;
-		thread_t pending = cpus[logical].selected;
+		thread_t current = cpus[logical]->current;
+		thread_t pending = cpus[logical]->selected;
 
 		if (current && current != selected &&
 		    current->state == THREAD_RUNNING) {
@@ -356,9 +357,9 @@ int scheduler_set_nice(thread_t thread, int nice)
 		enqueue_entity_locked(thread);
 	if (running) {
 		for (logical = 0; logical < cpu_count(); logical++) {
-			if (cpus[logical].current != thread)
+			if (cpus[logical]->current != thread)
 				continue;
-			__atomic_store_n(&cpus[logical].need_resched, 1,
+			__atomic_store_n(&cpus[logical]->need_resched, 1,
 					 __ATOMIC_RELEASE);
 			target = logical;
 			break;

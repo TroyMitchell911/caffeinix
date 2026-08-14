@@ -1,0 +1,46 @@
+#!/usr/bin/expect -f
+
+proc abort_test {message} {
+	puts stderr "Kernel stack guard test failed: $message"
+	catch {close}
+	exit 1
+}
+
+foreach variable {QEMU SBI_FIRMWARE KERNEL QEMU_LOG} {
+	if {![info exists env($variable)] || $env($variable) eq ""} {
+		puts stderr "missing environment variable: $variable"
+		exit 1
+	}
+}
+
+set timeout 30
+log_file -noappend $env(QEMU_LOG)
+set command [list \
+	$env(QEMU) \
+	-machine virt \
+	-bios $env(SBI_FIRMWARE) \
+	-kernel $env(KERNEL) \
+	-m 64M \
+	-smp 1 \
+	-nographic]
+
+spawn -noecho {*}$command
+expect {
+	-re {kernel stack overflow: CPU=0 sp=0x[0-9a-f]+} {}
+	-re {\[PANIC\]} { abort_test "unexpected panic" }
+	timeout { abort_test "overflow diagnostic timeout" }
+	eof { abort_test "QEMU exited before the overflow diagnostic" }
+}
+expect {
+	-re {\[PANIC\]: kernel stack overflow} {}
+	timeout { abort_test "overflow panic timeout" }
+	eof { abort_test "QEMU exited before the overflow panic" }
+}
+
+send -- "\001x"
+expect {
+	eof {}
+	timeout { abort_test "QEMU exit timeout" }
+}
+
+puts "KERNEL_STACK_GUARD_OK"

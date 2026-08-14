@@ -61,7 +61,7 @@ struct net_device {
 	uint32 transmit_active;
 	uint32 state_pending;
 	uint32 transmit_threads[NTHREAD];
-	uint32 transmit_cpus[NCPU];
+	uint32 *transmit_cpus;
 	struct net_device *next_state;
 	uint8 registered;
 	uint8 up;

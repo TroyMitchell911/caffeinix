@@ -15,6 +15,7 @@
 #include <debug.h>
 #include <process.h>
 #include <printf.h>
+#include <cpu.h>
 
 /* Defination in kernel.ld */
 extern char etext[];
@@ -154,6 +155,7 @@ static pagedir_t kernel_pagedir_t_create(void)
 	}
 
         map_kernel_stack(pgdir);
+	cpu_map_kernel_stacks(pgdir);
         return pgdir;
 }
 

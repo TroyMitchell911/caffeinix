@@ -18,6 +18,11 @@
 #define MIN_SIZE                                (1)
 #define USE_BLOCK(x)                            (((x) / MIN_SIZE) + (((x) % MIN_SIZE) ? 1 : 0))
 #define INFO_BLOCK                              USE_BLOCK(sizeof(struct block_info))
+#define MALLOC_ALIGNMENT                        16
+#define MALLOC_ALIGNMENT_BLOCKS                 USE_BLOCK(MALLOC_ALIGNMENT)
+#define ALIGN_BLOCKS(x) \
+	(((x) + MALLOC_ALIGNMENT_BLOCKS - 1) & \
+	 ~(MALLOC_ALIGNMENT_BLOCKS - 1))
 #define PAGE_BLOCK                              512
 #define BITMAP_SIZE                             ((4096 - PAGE_BLOCK) / 8)
 
@@ -70,8 +75,15 @@ static int memory_range_count;
 static int reserved_range_count;
 static uint64 heap_start;
 
+_Static_assert((MALLOC_ALIGNMENT & (MALLOC_ALIGNMENT - 1)) == 0,
+	       "malloc alignment must be a power of two");
+_Static_assert(PAGE_BLOCK % MALLOC_ALIGNMENT == 0,
+	       "heap payload must be aligned");
+
 /* Defination is in kernel.ld */
 extern char end[];
+
+static void palloc_heap_alignment_selftest(void);
 
 static int palloc_range_contains(const struct palloc_range *range,
 				 uint64 start, uint64 finish)
@@ -185,6 +197,7 @@ void palloc_init(void)
 	}
 	if (!pages)
 		PANIC("no usable memory");
+	palloc_heap_alignment_selftest();
 }
 
 /* Free the physical memory */
@@ -237,7 +250,7 @@ void* palloc(void)
 static uint64 malloc_core(page_t page, uint64 blocks)
 {
         int i, j, mask;
-        uint64 count = 0, start = 0, k;
+        uint64 count = 0, start = 0, k, offset;
 
         if(!page)
                 return -1;
@@ -246,8 +259,13 @@ static uint64 malloc_core(page_t page, uint64 blocks)
                 mask = 0x80;
                 for(j = 0; j < 8; j++) {
                         if((page->bitmap[i] & mask) == 0) {
+				offset = i * 8 + j;
                                 if(count == 0) {
-                                        start = i * 8 + j;
+					if (offset % MALLOC_ALIGNMENT_BLOCKS) {
+						mask >>= 1;
+						continue;
+					}
+					start = offset;
                                 }
                                 count++;
                                 if(count == blocks) {
@@ -342,21 +360,26 @@ static page_t malloc_page(void)
  */
 void* malloc(uint64 size)
 {
-        int use_blocks, re_count = 0;
+	uint64 allocation_blocks, use_blocks;
+	int re_count = 0;
         block_info_t info;
         page_t page;
         void* p;
         uint64 ret;
 
-        if(size == 0)
-                return 0;
+	if(size == 0)
+		return 0;
 
-	spinlock_acquire(&heap_lock);
         use_blocks = USE_BLOCK(size);
+	if (use_blocks > (uint64)-1 - INFO_BLOCK -
+	    (MALLOC_ALIGNMENT_BLOCKS - 1))
+		return 0;
+	allocation_blocks = ALIGN_BLOCKS(use_blocks + INFO_BLOCK);
+	spinlock_acquire(&heap_lock);
 
         page = pool.list;
 re:
-        ret = malloc_core(page, use_blocks + INFO_BLOCK);
+	ret = malloc_core(page, allocation_blocks);
         if(ret == -1 && re_count != 1) {
                 re_count++;
                 page = malloc_page();
@@ -376,7 +399,7 @@ re:
         p = (void*)((uint64)info + INFO_BLOCK * MIN_SIZE); 
 
         /* Change information */
-        info->used = use_blocks;
+	info->used = allocation_blocks - INFO_BLOCK;
         info->magic = MAGIC_NUMBER;
         info->addr = p;
         info->parent = page;
@@ -427,4 +450,20 @@ void free(void* p)
 
         free_core(page, (char*)info, INFO_BLOCK + info->used);
 	spinlock_release(&heap_lock);
+}
+
+static void palloc_heap_alignment_selftest(void)
+{
+	static const uint64 sizes[] = { 1, 3, 7, 15, 17, 31, 33, 127 };
+	void *allocations[sizeof(sizes) / sizeof(sizes[0])];
+	size_t index;
+
+	for (index = 0; index < sizeof(sizes) / sizeof(sizes[0]); index++) {
+		allocations[index] = malloc(sizes[index]);
+		if (!allocations[index] ||
+		    (uint64)allocations[index] % MALLOC_ALIGNMENT)
+			PANIC("unaligned heap allocation");
+	}
+	for (; index > 0; index--)
+		free(allocations[index - 1]);
 }

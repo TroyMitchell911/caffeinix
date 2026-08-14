@@ -1,7 +1,9 @@
+#include <cpu.h>
 #include <debug.h>
 #include <kernel_config.h>
 #include <mystring.h>
 #include <netdevice.h>
+#include <palloc.h>
 #include <scheduler.h>
 #include <thread.h>
 #include <wait.h>
@@ -19,7 +21,7 @@ static struct {
 	void *receive_argument;
 	uint32 receive_active;
 	uint32 receive_threads[NTHREAD];
-	uint32 receive_cpus[NCPU];
+	uint32 *receive_cpus;
 	uint8 receive_draining;
 	uint8 receive_dispatching;
 	struct net_packet *receive_head;
@@ -29,7 +31,7 @@ static struct {
 	void *state_argument;
 	uint32 state_active;
 	uint32 state_threads[NTHREAD];
-	uint32 state_cpus[NCPU];
+	uint32 *state_cpus;
 	uint8 state_draining;
 	struct net_device *state_head;
 	struct net_device *state_tail;
@@ -91,13 +93,16 @@ static struct net_callback_slot net_callback_slot(void)
 {
 	struct net_callback_slot slot = { .thread = -1, .cpu = -1 };
 	thread_t current = cur_thread();
+	int logical;
 
 	if (current) {
 		slot.thread = current - thread;
 		if (slot.thread < 0 || slot.thread >= NTHREAD)
 			slot.thread = -1;
-	} else if (cpuid() < NCPU) {
-		slot.cpu = cpuid();
+	} else {
+		logical = cpuid();
+		if (logical >= 0 && logical < cpu_count())
+			slot.cpu = logical;
 	}
 	return slot;
 }
@@ -176,6 +181,12 @@ static int net_device_assign_name_locked(struct net_device *device)
 
 void net_device_init(void)
 {
+	network.receive_cpus = calloc(cpu_count(),
+				      sizeof(*network.receive_cpus));
+	network.state_cpus = calloc(cpu_count(),
+				    sizeof(*network.state_cpus));
+	if (!network.receive_cpus || !network.state_cpus)
+		PANIC("allocate network CPU state");
 	spinlock_init(&network.lock, "network devices");
 	wait_queue_init(&network.receive_wait, "network receive callbacks");
 	wait_queue_init(&network.state_wait, "network state callbacks");
@@ -185,28 +196,29 @@ void net_device_init(void)
 
 int net_device_register(struct net_device *device)
 {
+	uint32 *transmit_cpus;
 	uint32 free_index = 0, index;
 
 	if (!device || !device->operations ||
 	    !device->operations->start_xmit || !device->mtu ||
 	    device->mtu > NET_PACKET_SIZE - NET_ETH_HEADER_LENGTH)
 		return -1;
+	transmit_cpus = calloc(cpu_count(), sizeof(*transmit_cpus));
+	if (!transmit_cpus)
+		return -1;
 	spinlock_acquire(&network.lock);
 	if (device->registered) {
-		spinlock_release(&network.lock);
-		return -1;
+		goto failed;
 	}
 	if (net_device_assign_name_locked(device) < 0) {
-		spinlock_release(&network.lock);
-		return -1;
+		goto failed;
 	}
 	for (index = 1; index < NET_DEVICE_MAX; index++) {
 		if (!network.devices[index] && !free_index)
 			free_index = index;
 	}
 	if (!free_index) {
-		spinlock_release(&network.lock);
-		return -1;
+		goto failed;
 	}
 	index = free_index;
 	device->index = index;
@@ -218,7 +230,7 @@ int net_device_register(struct net_device *device)
 	device->transmit_active = 0;
 	memset(device->transmit_threads, 0,
 	       sizeof(device->transmit_threads));
-	memset(device->transmit_cpus, 0, sizeof(device->transmit_cpus));
+	device->transmit_cpus = transmit_cpus;
 	device->lifecycle_transition = 0;
 	device->stop_pending = 0;
 	device->state_pending = 0;
@@ -230,10 +242,16 @@ int net_device_register(struct net_device *device)
 	network.devices[index] = device;
 	spinlock_release(&network.lock);
 	return 0;
+
+failed:
+	spinlock_release(&network.lock);
+	free(transmit_cpus);
+	return -1;
 }
 
 int net_device_unregister(struct net_device *device)
 {
+	uint32 *transmit_cpus;
 	int was_up;
 
 	if (!device)
@@ -299,9 +317,12 @@ int net_device_unregister(struct net_device *device)
 	spinlock_acquire(&device->lock);
 	device->state_pending++;
 	device->lifecycle_transition = 0;
+	transmit_cpus = device->transmit_cpus;
+	device->transmit_cpus = 0;
 	wait_queue_wake_all(&device->lifecycle_wait);
 	spinlock_release(&device->lock);
 	net_state_notify_pending(device);
+	free(transmit_cpus);
 	return 0;
 }
 

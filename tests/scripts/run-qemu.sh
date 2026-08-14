@@ -160,8 +160,10 @@ run_boot_smoke()
 
 run_boot_smoke 1 64M
 run_boot_smoke 2 192M
+run_boot_smoke 3 96M
 run_boot_smoke 4 128M
 run_boot_smoke 8 256M
+run_boot_smoke 9 256M
 
 export QEMU_CPUS=2
 export QEMU_MEMORY=128M
@@ -304,5 +306,12 @@ fi
 	--root-image "$root_image" \
 	--output "$test_output/scheduler-benchmark.json" \
 	--check
+
+make -C "$topdir" clean
+make -C "$topdir" -j"$jobs" STACK_OVERFLOW_TEST=1
+export QEMU_LOG=$test_output/qemu-stack-overflow.log
+expect "$script_dir/run-stack-overflow.exp"
+make -C "$topdir" clean
+make -C "$topdir" -j"$jobs"
 
 echo QEMU_RUNTIME_OK
