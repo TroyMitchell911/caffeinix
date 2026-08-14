@@ -233,12 +233,11 @@ static int virtio_net_fill_rx(struct virtio_net *network)
 		receive = calloc(1, sizeof(*receive));
 		if (!receive)
 			return -1;
-		receive->page = palloc();
+		receive->page = palloc_zero();
 		if (!receive->page) {
 			free(receive);
 			return -1;
 		}
-		memset(receive->page, 0, PGSIZE);
 		if (virtio_net_post_rx(network, receive) < 0) {
 			virtio_net_free_rx(receive);
 			return -1;

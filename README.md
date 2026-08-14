@@ -79,6 +79,14 @@ This produces `output/kernel`. The kernel build needs neither musl nor
 BusyBox. The optional `make build` target uses `bear` to generate a
 compilation database; normal builds do not require it.
 
+Free-page poisoning is disabled by default so boot does not write every RAM
+page. Enable it when diagnosing use-after-free bugs:
+
+```bash
+make -C "$CAFFEINIX_DIR" clean
+make -C "$CAFFEINIX_DIR" -j"$(nproc)" PAGE_POISONING=1
+```
+
 ## Build a static musl toolchain
 
 Download and unpack upstream musl 1.2.6 anywhere outside the kernel tree,

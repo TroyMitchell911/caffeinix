@@ -5,9 +5,14 @@
 #include <debug.h>
 #include <riscv.h>
 
+#define PALLOC_ZERO 0x1
+
 void palloc_init(void);
+void *alloc_pages(unsigned int order, unsigned int flags);
+void free_pages(void *p, unsigned int order);
 void pfree(void* p);
 void* palloc(void);
+void *palloc_zero(void);
 int palloc_memory_range_count(void);
 int palloc_memory_range_get(int index, uint64 *start, uint64 *end);
 int palloc_page_usable(uint64 address);

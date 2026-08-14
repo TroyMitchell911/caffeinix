@@ -126,12 +126,10 @@ found:
 	t->kernel_argument = 0;
 	t->kernel_thread = 0;
 
-        t->trapframe = (trapframe_t)palloc();
+	t->trapframe = (trapframe_t)palloc_zero();
         if(!t->trapframe) {
                 goto r2;
         }
-
-        memset(t->trapframe, 0, PGSIZE);
 
         t->tid = tid_alloc();
 
