@@ -1,9 +1,19 @@
+#include <mem_layout.h>
+
 .global kernel_trap
+.global kernel_stack_overflow
 .global kernel_vec
 .align 4
 kernel_vec:
-        # make room to save registers.
+	/* Preserve t0 while checking the aligned stack slot. */
+	csrw sscratch, t0
+
+	/* Make room to save registers. */
         addi sp, sp, -256
+	srli t0, sp, KSTACK_SHIFT
+	andi t0, t0, 1
+	bnez t0, .Lkernel_stack_overflow
+	csrr t0, sscratch
 
         # save the registers.
         sd ra, 0(sp)
@@ -79,3 +89,21 @@ kernel_vec:
 
         # return to whatever we were doing in the kernel.
         sret
+
+.Lkernel_stack_overflow:
+	/* Report from the per-CPU emergency stack, not the failed stack. */
+	addi a0, sp, 256
+	la t0, cpu_overflow_stack_tops
+	ld t0, 0(t0)
+	slli t1, tp, 3
+	add t0, t0, t1
+	ld sp, 0(t0)
+	tail kernel_stack_overflow
+
+#ifdef CONFIG_STACK_OVERFLOW_TEST
+.global kernel_stack_overflow_test
+kernel_stack_overflow_test:
+	addi sp, sp, -2048
+	sd zero, 0(sp)
+	j kernel_stack_overflow_test
+#endif

@@ -30,6 +30,9 @@ CFLAGS += -ffreestanding -fno-builtin -fno-common -nostdlib -mno-relax
 CFLAGS += -nostdinc -isystem $(shell $(CC) -print-file-name=include)
 CFLAGS += -fno-stack-protector -fno-pie
 CFLAGS += -I.
+ifeq ($(STACK_OVERFLOW_TEST),1)
+CFLAGS += -DCONFIG_STACK_OVERFLOW_TEST
+endif
 
 LDFLAGS = -z max-page-size=4096
 export CFLAGS LDFLAGS

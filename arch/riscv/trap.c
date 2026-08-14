@@ -91,6 +91,19 @@ void kernel_trap(void)
 }
 
 extern void exit(int cause);
+
+__attribute__((noreturn)) void kernel_stack_overflow(uint64 stack_pointer)
+{
+	printf_enter_panic();
+	printf("kernel stack overflow: CPU=%d sp=%p\n", cpuid(),
+	       stack_pointer);
+	printf("scause=%p sepc=%p stval=%p\n", scause_r(), sepc_r(),
+	       stval_r());
+	PANIC("kernel stack overflow");
+	for (;;)
+		;
+}
+
 void user_trap_entry(void)
 {
         int which_dev = 0;

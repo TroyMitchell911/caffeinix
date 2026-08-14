@@ -307,4 +307,11 @@ fi
 	--output "$test_output/scheduler-benchmark.json" \
 	--check
 
+make -C "$topdir" clean
+make -C "$topdir" -j"$jobs" STACK_OVERFLOW_TEST=1
+export QEMU_LOG=$test_output/qemu-stack-overflow.log
+expect "$script_dir/run-stack-overflow.exp"
+make -C "$topdir" clean
+make -C "$topdir" -j"$jobs"
+
 echo QEMU_RUNTIME_OK

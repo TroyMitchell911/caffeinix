@@ -18,6 +18,7 @@ typedef struct cpu {
 	uint64 hart_id;
 	struct device_node *of_node;
 	void *scheduler_stack;
+	void *secondary_boot_stack;
 	volatile uint8 online;
 	uint8 idle;
 	volatile uint8 need_resched;

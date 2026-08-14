@@ -1,5 +1,7 @@
 #include <cpu.h>
 #include <debug.h>
+#include <kernel_config.h>
+#include <mem_layout.h>
 #include <of.h>
 #include <palloc.h>
 #include <printf.h>
@@ -7,12 +9,16 @@
 #include <sbi.h>
 #include <scheduler.h>
 #include <timer.h>
+#include <vm.h>
 
 #define CPU_START_TIMEOUT_SECONDS 5
 
 extern void secondary_entry(void);
 
 static int logical_cpu_count;
+
+/* Used directly by the trap entry before it can safely use a C stack. */
+uint64 *cpu_overflow_stack_tops;
 
 void cpu_topology_init(uint64 boot_hart_id)
 {
@@ -77,13 +83,103 @@ struct device_node *cpu_of_node(int logical_id)
 	return cpus[logical_id]->of_node;
 }
 
+static void cpu_map_kernel_stack(pagedir_t pgdir, int logical_id)
+{
+	uint64 address = SCHED_STACK(logical_id);
+	uint64 physical;
+	int page;
+
+	if (cpus[logical_id]->scheduler_stack)
+		PANIC("CPU stack already mapped");
+	for (page = 0; page < KSTACK_PAGES; page++) {
+		physical = (uint64)palloc();
+		if (vm_map(pgdir, address + page * PGSIZE, physical,
+		           PGSIZE, PTE_R | PTE_W) < 0)
+			PANIC("map CPU stack");
+	}
+	cpus[logical_id]->scheduler_stack = (void *)address;
+	physical = (uint64)palloc();
+	cpu_overflow_stack_tops[logical_id] = physical + PGSIZE;
+}
+
+void cpu_map_kernel_stacks(pagedir_t pgdir)
+{
+	int logical;
+
+	if (cpu_overflow_stack_tops)
+		PANIC("CPU stacks already initialized");
+	cpu_overflow_stack_tops =
+		calloc(logical_cpu_count, sizeof(*cpu_overflow_stack_tops));
+	if (!cpu_overflow_stack_tops)
+		PANIC("allocate overflow stack table");
+	for (logical = 0; logical < logical_cpu_count; logical++)
+		cpu_map_kernel_stack(pgdir, logical);
+}
+
+static int cpu_stack_slot_valid(uint64 address)
+{
+	int page;
+
+	if (address & (KSTACK_ALIGN - 1))
+		return 0;
+	if (kvm_va2pa(address - PGSIZE) ||
+	    kvm_va2pa(address + KSTACK_SIZE))
+		return 0;
+	for (page = 0; page < KSTACK_PAGES; page++) {
+		if (!kvm_va2pa(address + page * PGSIZE))
+			return 0;
+	}
+	return 1;
+}
+
+int cpu_kernel_stack_selftest(void)
+{
+	uint64 address, overflow_top;
+	int logical, thread_id;
+
+	for (thread_id = 0; thread_id < NTHREAD; thread_id++) {
+		if (!cpu_stack_slot_valid(KSTACK(thread_id)))
+			return -1;
+	}
+	for (logical = 0; logical < logical_cpu_count; logical++) {
+		address = (uint64)cpus[logical]->scheduler_stack;
+		overflow_top = cpu_overflow_stack_tops[logical];
+		if (address != SCHED_STACK(logical) ||
+		    !cpu_stack_slot_valid(address) ||
+		    !overflow_top || !kvm_va2pa(overflow_top - PGSIZE))
+			return -1;
+	}
+	return 0;
+}
+
+uint64 cpu_scheduler_stack_top(void)
+{
+	uint64 stack = (uint64)cur_cpu()->scheduler_stack;
+
+	if (!stack)
+		PANIC("missing CPU stack");
+	return stack + KSTACK_SIZE;
+}
+
 void cpu_secondary_validate(uint64 hart_id, uint64 logical_id,
 			    uint64 stack_address)
 {
 	if (!logical_id || logical_id >= (uint64)logical_cpu_count ||
 	    cpus[logical_id]->hart_id != hart_id ||
-	    cpus[logical_id]->scheduler_stack != (void *)stack_address)
+	    cpus[logical_id]->secondary_boot_stack !=
+		(void *)stack_address)
 		PANIC("invalid secondary hart handoff");
+}
+
+void cpu_secondary_boot_stack_release(void)
+{
+	cpu_t cpu = cur_cpu();
+	void *stack = cpu->secondary_boot_stack;
+
+	if (!stack)
+		PANIC("missing secondary boot stack");
+	cpu->secondary_boot_stack = 0;
+	pfree(stack);
 }
 
 static void cpu_start_failed(int logical_id, int64 error)
@@ -110,10 +206,10 @@ void cpu_start_secondary_harts(void)
 			       cpu_hart_id(logical), (int)status);
 			PANIC("secondary hart is not stopped");
 		}
-		if (cpus[logical]->scheduler_stack)
-			PANIC("secondary hart stack already allocated");
+		if (cpus[logical]->secondary_boot_stack)
+			PANIC("secondary boot stack already allocated");
 		stack = palloc();
-		cpus[logical]->scheduler_stack = stack;
+		cpus[logical]->secondary_boot_stack = stack;
 		/* entry.S reads the logical CPU ID before using the stack. */
 		*(uint64 *)stack = logical;
 		__sync_synchronize();
@@ -121,7 +217,7 @@ void cpu_start_secondary_harts(void)
 		                       (uint64)secondary_entry,
 		                       (uint64)stack);
 		if (error) {
-			cpus[logical]->scheduler_stack = 0;
+			cpus[logical]->secondary_boot_stack = 0;
 			pfree(stack);
 			cpu_start_failed(logical, error);
 		}

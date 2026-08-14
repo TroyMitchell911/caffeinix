@@ -110,10 +110,15 @@ void printf(char* fmt, ...)
 
 void panic(char* s)
 {
-        pf.locking = 0;
+	printf_enter_panic();
         printf("[PANIC]: %s\n", s);
         paniced = 1;
         for(;;);
+}
+
+void printf_enter_panic(void)
+{
+	pf.locking = 0;
 }
 
 void printf_init(void)

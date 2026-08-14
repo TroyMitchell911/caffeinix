@@ -12,9 +12,14 @@ _entry:
 	tail setup
 
 secondary_entry:
-	# The HSM opaque value points at this hart's scheduler stack.
+	# The HSM opaque value points at this hart's temporary boot stack.
 	mv t0, a1
 	ld tp, 0(t0)
 	li t1, PGSIZE
 	add sp, t0, t1
 	tail secondary_setup
+
+.global cpu_enter_stack
+cpu_enter_stack:
+	mv sp, a0
+	jr a1
