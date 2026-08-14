@@ -220,6 +220,40 @@ check_net_device_log()
 	fi
 }
 
+check_boot_memory_latency()
+{
+	local log=$1
+	local maximum_us=$2
+
+	if ! awk -v maximum="$maximum_us" '
+		function timestamp(line, value, seconds, microseconds) {
+			value = line
+			sub(/^\[[[:space:]]*/, "", value)
+			sub(/\].*$/, "", value)
+			split(value, fields, ".")
+			seconds = (fields[1] + 0) * 1000000
+			microseconds = substr(fields[2], 1, 6) + 0
+			return seconds + microseconds
+		}
+		/clocksource: riscv timer/ {
+			start = timestamp($0)
+			found_start = 1
+		}
+		/mmu: Sv39 enabled/ {
+			finish = timestamp($0)
+			found_finish = 1
+		}
+		END {
+			if (!found_start || !found_finish || finish < start ||
+			    finish - start > maximum)
+				exit 1
+		}
+	' "$log"; then
+		echo "large-memory boot setup exceeded $maximum_us us" >&2
+		exit 1
+	fi
+}
+
 run_boot_smoke()
 {
 	local cpus=$1
@@ -263,6 +297,12 @@ run_boot_smoke 3 96M
 run_boot_smoke 4 128M
 run_boot_smoke 8 256M
 run_boot_smoke 9 256M
+
+# A public Ubuntu runner has 16 GiB; keep the guest at one quarter of it.
+large_memory=${QEMU_LARGE_MEMORY:-4G}
+run_boot_smoke 1 "$large_memory"
+check_boot_memory_latency \
+	"$test_output/qemu-smp1-$large_memory.clean.log.timestamped" 10000000
 
 export QEMU_CPUS=2
 export QEMU_MEMORY=128M

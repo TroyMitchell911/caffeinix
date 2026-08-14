@@ -9,16 +9,19 @@ Run the Linux RISC-V UAPI compile-time checks with:
 make -C tests uapi
 ```
 
-Run the host red-black-tree and VirtIO split-ring tests with:
+Run the host memory-management, red-black-tree, and VirtIO split-ring tests
+with:
 
 ```bash
-make -C tests rbtree virtqueue
+make -C tests memrange buddy sv39 rbtree virtqueue
 ```
 
-The tree test performs 20,000 deterministic randomized insert and erase
-operations while checking ordering and red-black invariants. The virtqueue
-test covers scatter/gather chains, descriptor exhaustion, completion
-lengths, notification, and 16-bit ring wraparound.
+The memory tests cover range normalization, buddy splitting and coalescing,
+allocation orders, invalid and duplicate frees, randomized reuse, and Sv39
+leaf selection. The tree test performs 20,000 deterministic randomized insert
+and erase operations while checking ordering and red-black invariants. The
+virtqueue test covers scatter/gather chains, descriptor exhaustion,
+completion lengths, notification, and 16-bit ring wraparound.
 
 Run the complete QEMU test with:
 
@@ -31,10 +34,13 @@ archives, builds both outside the kernel, and creates temporary ext4 and FAT32
 images under `output/tests`. It runs boot checks with one hart and 64 MiB, two
 harts and 192 MiB, three harts and 96 MiB, four harts and 128 MiB, and eight
 harts and 256 MiB, plus a nine-hart boot that exceeds the old static CPU
-limit. A second eight-hart, 256 MiB run waits for BusyBox ash, runs the full
-guest suite, syncs storage, and exits QEMU through its serial monitor.
-Finally, a test-only kernel deliberately crosses an unmapped kernel-stack
-guard and must report the overflow from its per-CPU emergency stack.
+limit. A one-hart, 4 GiB boot requires early memory setup and Sv39 activation
+to finish within ten seconds; the guest stays below one quarter of the
+standard public GitHub runner's RAM. A second eight-hart, 256 MiB run waits
+for BusyBox ash, runs the full guest suite, syncs storage, and exits QEMU
+through its serial monitor. Finally, a test-only kernel deliberately crosses
+an unmapped kernel-stack guard and must report the overflow from its per-CPU
+emergency stack.
 
 Each boot requires one SBI BASE report and exactly one online and timer marker
 per logical CPU. A static check rejects machine-mode CSR operations, direct
