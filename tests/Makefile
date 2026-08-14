@@ -72,8 +72,12 @@ printk:
 		-o $(TEST_OUTPUT)/printk
 	$(TEST_OUTPUT)/printk
 
+.PHONY: qemu-args
+qemu-args:
+	$(CURDIR)/scripts/check-qemu-args.sh
+
 .PHONY: qemu
-qemu: printk memrange buddy sv39 rbtree virtqueue
+qemu: printk memrange buddy sv39 rbtree virtqueue qemu-args
 	TEST_OUTPUT="$(TEST_OUTPUT)" JOBS="$(JOBS)" \
 		$(CURDIR)/scripts/run-qemu.sh
 

@@ -16,7 +16,7 @@ proc expect_prompt {} {
 }
 
 foreach variable {
-	QEMU SBI_FIRMWARE KERNEL ROOT_IMAGE FAT_IMAGE QEMU_LOG
+	MAKE_COMMAND TEST_TOPDIR QEMU SBI_FIRMWARE ROOT_IMAGE FAT_IMAGE QEMU_LOG
 	QEMU_CPUS QEMU_MEMORY
 } {
 	if {![info exists env($variable)] || $env($variable) eq ""} {
@@ -32,20 +32,25 @@ if {[info exists env(QEMU_TIMEOUT)] && $env(QEMU_TIMEOUT) ne ""} {
 
 log_file -noappend $env(QEMU_LOG)
 set command [list \
-	$env(QEMU) \
-	-machine virt \
-	-bios $env(SBI_FIRMWARE) \
-	-kernel $env(KERNEL) \
-	-m $env(QEMU_MEMORY) \
-	-smp $env(QEMU_CPUS) \
-	-nographic \
-	-global virtio-mmio.force-legacy=false \
-	-drive file=$env(ROOT_IMAGE),if=none,format=raw,id=x0 \
-	-device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.1 \
-	-drive file=$env(FAT_IMAGE),if=none,format=raw,id=x1 \
-	-device virtio-blk-device,drive=x1,bus=virtio-mmio-bus.2 \
-	-netdev user,id=n0,hostfwd=tcp:127.0.0.1:18082-:18082 \
-	-device virtio-net-device,netdev=n0,bus=virtio-mmio-bus.0,mac=52:54:00:12:34:56]
+	$env(MAKE_COMMAND) \
+	--silent \
+	--no-print-directory \
+	-C $env(TEST_TOPDIR) \
+	QEMU=$env(QEMU) \
+	SBI_FIRMWARE=$env(SBI_FIRMWARE) \
+	FS_IMG=$env(ROOT_IMAGE) \
+	FAT_IMG=$env(FAT_IMAGE) \
+	CPUS=$env(QEMU_CPUS) \
+	MEMORY=$env(QEMU_MEMORY) \
+	ROOT_BUS=virtio-mmio-bus.1 \
+	FAT_BUS=virtio-mmio-bus.2 \
+	NET_BACKEND=user \
+	NET_OPTIONS=hostfwd=tcp:127.0.0.1:18082-:18082 \
+	NET_BUS=virtio-mmio-bus.0 \
+	QEMU_SNAPSHOT= \
+	QEMU_EXTRA_OPTS= \
+	QEMU_PREBUILT=1 \
+	qemu]
 
 spawn -noecho {*}$command
 

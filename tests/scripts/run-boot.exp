@@ -7,7 +7,8 @@ proc abort_test {message} {
 }
 
 foreach variable {
-	QEMU SBI_FIRMWARE KERNEL ROOT_IMAGE QEMU_LOG QEMU_CPUS QEMU_MEMORY
+	MAKE_COMMAND TEST_TOPDIR QEMU SBI_FIRMWARE ROOT_IMAGE QEMU_LOG
+	QEMU_CPUS QEMU_MEMORY
 } {
 	if {![info exists env($variable)] || $env($variable) eq ""} {
 		puts stderr "missing environment variable: $variable"
@@ -22,17 +23,23 @@ if {[info exists env(QEMU_TIMEOUT)] && $env(QEMU_TIMEOUT) ne ""} {
 
 log_file -noappend $env(QEMU_LOG)
 set command [list \
-	$env(QEMU) \
-	-machine virt \
-	-bios $env(SBI_FIRMWARE) \
-	-kernel $env(KERNEL) \
-	-m $env(QEMU_MEMORY) \
-	-smp $env(QEMU_CPUS) \
-	-nographic \
-	-snapshot \
-	-global virtio-mmio.force-legacy=false \
-	-drive file=$env(ROOT_IMAGE),if=none,format=raw,id=x0 \
-	-device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0]
+	$env(MAKE_COMMAND) \
+	--silent \
+	--no-print-directory \
+	-C $env(TEST_TOPDIR) \
+	QEMU=$env(QEMU) \
+	SBI_FIRMWARE=$env(SBI_FIRMWARE) \
+	FS_IMG=$env(ROOT_IMAGE) \
+	FAT_IMG= \
+	CPUS=$env(QEMU_CPUS) \
+	MEMORY=$env(QEMU_MEMORY) \
+	ROOT_BUS=virtio-mmio-bus.0 \
+	NET_BACKEND= \
+	NET_OPTIONS= \
+	QEMU_SNAPSHOT=1 \
+	QEMU_EXTRA_OPTS= \
+	QEMU_PREBUILT=1 \
+	qemu]
 
 spawn -noecho {*}$command
 expect {

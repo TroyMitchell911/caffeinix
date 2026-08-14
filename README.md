@@ -278,25 +278,35 @@ The kernel Makefile never downloads or builds OpenSBI. See
 [`Documentation/opensbi.md`](Documentation/opensbi.md) for the boot register,
 memory, SBI extension, and multi-hart contracts.
 
-## Attach an optional network device
+## Network device
 
-Set `NET_BACKEND` to a QEMU `-netdev` backend value to add `virtio-net`.
-QEMU user networking needs no host privilege and supplies IPv4 configuration
-through DHCP:
+QEMU attaches a VirtIO network device backed by user networking by default.
+It needs no host privilege and supplies IPv4 configuration through DHCP:
+
+```bash
+make -C "$CAFFEINIX_DIR" qemu \
+  FS_IMG="$FS_IMG"
+```
+
+Set `NET_BACKEND` to an empty value to boot without a network device:
 
 ```bash
 make -C "$CAFFEINIX_DIR" qemu \
   FS_IMG="$FS_IMG" \
-  NET_BACKEND=user
+  NET_BACKEND=
 ```
 
+Set it to another QEMU `-netdev` backend value to select a different host
+backend.
+
+Use `NET_OPTIONS` for backend-specific options such as port forwarding.
 `NET_BUS` defaults to `virtio-mmio-bus.2`, after the root and optional FAT
 disks, and `NET_MAC` defaults to `52:54:00:12:34:56`. Both are configurable:
 
 ```bash
 make -C "$CAFFEINIX_DIR" qemu \
   FS_IMG="$FS_IMG" \
-  NET_BACKEND='user,hostfwd=tcp:127.0.0.1:18080-:18080' \
+  NET_OPTIONS='hostfwd=tcp:127.0.0.1:18080-:18080' \
   NET_BUS=virtio-mmio-bus.2 \
   NET_MAC=52:54:00:12:34:56
 ```

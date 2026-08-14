@@ -92,30 +92,42 @@ QEMU ?= qemu-system-riscv64
 SBI_FIRMWARE ?= default
 FS_IMG ?=
 FAT_IMG ?=
-NET_BACKEND ?=
+ROOT_BUS ?= virtio-mmio-bus.0
+FAT_BUS ?= virtio-mmio-bus.1
+NET_BACKEND ?= user
+NET_OPTIONS ?=
 NET_BUS ?= virtio-mmio-bus.2
 NET_MAC ?= 52:54:00:12:34:56
 MEMORY ?= 256M
-QEMUOPTS = -machine virt -bios $(SBI_FIRMWARE) -kernel $(TARGET)
+QEMU_SNAPSHOT ?=
+QEMU_EXTRA_OPTS ?=
+QEMU_PREBUILT ?=
+comma := ,
+QEMUOPTS = -machine virt -bios "$(SBI_FIRMWARE)" -kernel "$(TARGET)"
 QEMUOPTS += -m $(MEMORY) -smp $(CPUS) -nographic
+ifneq ($(strip $(QEMU_SNAPSHOT)),)
+QEMUOPTS += -snapshot
+endif
 QEMUOPTS += -global virtio-mmio.force-legacy=false
-QEMUOPTS += -drive file=$(FS_IMG),if=none,format=raw,id=x0
-QEMUOPTS += -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
+QEMUOPTS += -drive "file=$(FS_IMG),if=none,format=raw,id=x0"
+QEMUOPTS += -device virtio-blk-device,drive=x0,bus=$(ROOT_BUS)
 ifneq ($(strip $(FAT_IMG)),)
-QEMUOPTS += -drive file=$(FAT_IMG),if=none,format=raw,id=x1
-QEMUOPTS += -device virtio-blk-device,drive=x1,bus=virtio-mmio-bus.1
+QEMUOPTS += -drive "file=$(FAT_IMG),if=none,format=raw,id=x1"
+QEMUOPTS += -device virtio-blk-device,drive=x1,bus=$(FAT_BUS)
 endif
 ifneq ($(strip $(NET_BACKEND)),)
-QEMUOPTS += -netdev $(NET_BACKEND),id=n0
+QEMUOPTS += -netdev "$(NET_BACKEND),id=n0$(if \
+	$(strip $(NET_OPTIONS)),$(comma)$(NET_OPTIONS))"
 QEMUOPTS += -device virtio-net-device,netdev=n0,bus=$(NET_BUS),mac=$(NET_MAC)
 endif
+QEMUOPTS += $(QEMU_EXTRA_OPTS)
 ifndef CPUS
 CPUS := 8
 endif
 # try to generate a unique GDB port
 GDBPORT = $(shell expr `id -u` % 5000 + 25000)
 # QEMU's gdb stub command line changed in 0.11
-QEMUGDB = $(shell if $(QEMU) -help | grep -q '^-gdb'; \
+QEMUGDB = $(shell if "$(QEMU)" -help | grep -q '^-gdb'; \
 	then echo "-gdb tcp::$(GDBPORT)"; \
 	else echo "-s -p $(GDBPORT)"; fi)
 
@@ -131,14 +143,18 @@ check-fs-img:
 		echo "missing FAT image: $(FAT_IMG)"; exit 1; \
 	fi
 
-qemu: all check-fs-img
-	$(QEMU) $(QEMUOPTS)
+.PHONY: qemu
+ifeq ($(strip $(QEMU_PREBUILT)),)
+qemu: all
+endif
+qemu: check-fs-img
+	"$(QEMU)" $(QEMUOPTS)
 
 .gdbinit: .gdbinit.tmpl-riscv
 	@sed "s/:1234/:$(GDBPORT)/" < $^ > $@
 
 qemu-gdb: all .gdbinit check-fs-img
-	$(QEMU) $(QEMUOPTS) -S $(QEMUGDB)
+	"$(QEMU)" $(QEMUOPTS) -S $(QEMUGDB)
 	@echo "*** Now run 'gdb' in another window." 1>&2
 
 clean:
