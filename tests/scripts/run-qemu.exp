@@ -70,6 +70,81 @@ expect {
 }
 expect_prompt
 
+send -- "/bin/ec\t BUSYBOX_TAB_OK\r"
+expect {
+	-re {\r?\nBUSYBOX_TAB_OK} {}
+	-re {not found|applet not found|Bad system call} {
+		abort_test "BusyBox Tab completion failed"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic during Tab completion" }
+	timeout { abort_test "BusyBox Tab completion timeout" }
+	eof { abort_test "QEMU exited during Tab completion" }
+}
+expect_prompt
+
+send -- "echo BUSYBOX_HISTORY_OK\r"
+expect {
+	-re {\r?\nBUSYBOX_HISTORY_OK} {}
+	-re {\[PANIC\]} { abort_test "kernel panic during history setup" }
+	timeout { abort_test "BusyBox history setup timeout" }
+	eof { abort_test "QEMU exited during history setup" }
+}
+expect_prompt
+send -- "\033\[A\r"
+expect {
+	-re {\r?\nBUSYBOX_HISTORY_OK} {}
+	-re {not found|applet not found|Bad system call} {
+		abort_test "BusyBox history recall failed"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic during history recall" }
+	timeout { abort_test "BusyBox history recall timeout" }
+	eof { abort_test "QEMU exited during history recall" }
+}
+expect_prompt
+
+send -- "echo BUSYBOX_ARROW_AC"
+send -- "\033\[D"
+send -- "B"
+send -- "\033\[C"
+send -- "D\r"
+expect {
+	-re {\r?\nBUSYBOX_ARROW_ABCD} {}
+	-re {\[PANIC\]} { abort_test "kernel panic during cursor editing" }
+	timeout { abort_test "BusyBox cursor editing timeout" }
+	eof { abort_test "QEMU exited during cursor editing" }
+}
+expect_prompt
+
+send -- "touch /tmp/busybox-ctrl-c"
+send -- "\003"
+expect {
+	-re {\^C} {}
+	-re {\[PANIC\]} { abort_test "kernel panic during prompt Ctrl-C" }
+	timeout { abort_test "BusyBox prompt Ctrl-C timeout" }
+	eof { abort_test "QEMU exited during prompt Ctrl-C" }
+}
+expect_prompt
+send -- "echo BUSYBOX_CTRL_C_STATUS=\$?\r"
+expect {
+	-re {\r?\nBUSYBOX_CTRL_C_STATUS=130} {}
+	-re {\[PANIC\]} { abort_test "kernel panic after prompt Ctrl-C" }
+	timeout { abort_test "BusyBox prompt Ctrl-C status timeout" }
+	eof { abort_test "QEMU exited after prompt Ctrl-C" }
+}
+expect_prompt
+send -- "if \[ ! -e /tmp/busybox-ctrl-c \]; then "
+send -- "echo BUSYBOX_CTRL_C_OK; else echo BUSYBOX_CTRL_C_BAD; fi\r"
+expect {
+	-re {\r?\nBUSYBOX_CTRL_C_OK} {}
+	-re {\r?\nBUSYBOX_CTRL_C_BAD} {
+		abort_test "BusyBox executed the cancelled command"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic after cancelled command" }
+	timeout { abort_test "BusyBox cancelled command check timeout" }
+	eof { abort_test "QEMU exited after cancelled command" }
+}
+expect_prompt
+
 send -- "/bin/network-runtime\r"
 expect {
 	-re {\r?\nNETWORK_RUNTIME_OK} {}

@@ -349,6 +349,10 @@ check_boot_log "$clean_log" "$QEMU_CPUS" 2
 
 for marker in \
 	BUSYBOX_SHELL_OK \
+	BUSYBOX_TAB_OK \
+	BUSYBOX_ARROW_ABCD \
+	BUSYBOX_CTRL_C_STATUS=130 \
+	BUSYBOX_CTRL_C_OK \
 	BUSYBOX_NC_OK \
 	BUSYBOX_WGET_OK \
 	SCHED_EXEC_OK \
@@ -377,6 +381,13 @@ for marker in \
 		exit 1
 	fi
 done
+
+marker_count=$(awk '$0 == "BUSYBOX_HISTORY_OK" { count++ }
+	END { print count + 0 }' "$clean_log")
+if [ "$marker_count" -ne 2 ]; then
+	echo "unexpected QEMU history marker count: $marker_count" >&2
+	exit 1
+fi
 
 if ! awk '
 	/^U+$/ {
