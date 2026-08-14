@@ -1,7 +1,7 @@
 #include <debug.h>
 #include <linux_uapi.h>
 #include <mystring.h>
-#include <printf.h>
+#include <printk.h>
 #include <scheduler.h>
 #include <syscall.h>
 #include <vm.h>
@@ -205,7 +205,7 @@ void syscall(void)
 		return;
 	}
 
-	printf("Unsupported Linux syscall %d from pid %d (%s)\n",
-	       nr, p->pid, p->name);
+	pr_warn("syscall: unsupported Linux call %lu from pid %d (%s)",
+		nr, p->pid, p->name);
 	current->trapframe->a0 = -LINUX_ENOSYS;
 }

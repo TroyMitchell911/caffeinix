@@ -111,6 +111,21 @@ struct device_node *of_root_node(void)
 	return of_node_count ? &of_nodes[0] : 0;
 }
 
+const char *of_machine_model(void)
+{
+	struct device_node *root = of_root_node();
+	const char *property;
+	int length;
+
+	property = of_get_property(root, "model", &length);
+	if (property && length > 1 && property[length - 1] == 0)
+		return property;
+	property = of_get_property(root, "compatible", &length);
+	if (property && length > 1 && memchr(property, 0, length))
+		return property;
+	return 0;
+}
+
 struct device_node *of_next_node(struct device_node *node)
 {
 	if (!of_node_count)

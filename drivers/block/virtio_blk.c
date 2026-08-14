@@ -2,6 +2,7 @@
 #include <debug.h>
 #include <mystring.h>
 #include <palloc.h>
+#include <printk.h>
 #include <spinlock.h>
 #include <virtio.h>
 #include <virtio_ring.h>
@@ -180,6 +181,9 @@ static int virtio_blk_probe(struct virtio_device *device)
 		goto failed;
 	disk->name[10] = '0' + disk->block.id - 1;
 	dev_set_drvdata(&device->device, disk);
+	pr_info("%s: %lu sectors (%lu MiB)", disk->name,
+		disk->block.sector_count,
+		disk->block.sector_count / 2048);
 	return DRIVER_OK;
 
 failed:

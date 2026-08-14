@@ -2,8 +2,14 @@
 #include <riscv.h>
 #include <timer.h>
 
-#define NSEC_PER_SEC 1000000000ULL
 #define MSEC_PER_SEC 1000ULL
+
+static uint64 boot_ticks;
+
+void ktime_boot_init(uint64 ticks)
+{
+	boot_ticks = ticks;
+}
 
 uint64 ktime_get_ticks(void)
 {
@@ -21,11 +27,13 @@ uint64 ktime_get_ms(void)
 
 uint64 ktime_get_ns(void)
 {
-	uint64 ticks = time_r();
-	uint64 frequency = timer_frequency();
+	return ktime_ticks_to_ns(time_r(), timer_frequency());
+}
 
-	return ticks / frequency * NSEC_PER_SEC +
-	       ticks % frequency * NSEC_PER_SEC / frequency;
+uint64 ktime_get_boot_ns(void)
+{
+	return ktime_ticks_to_ns(time_r() - boot_ticks,
+				 timer_frequency());
 }
 
 uint64 ktime_ms_to_ticks(uint64 milliseconds)

@@ -60,10 +60,60 @@ export QEMU_TIMEOUT=${QEMU_TIMEOUT:-60}
 
 make -C "$topdir" check-opensbi
 
+normalize_kernel_log()
+{
+	local input=$1
+	local output=$2
+	local timestamped=$output.timestamped
+
+	tr -d '\r' < "$input" > "$timestamped"
+	if ! awk '
+		/^\[[[:space:]]*[0-9]+\.[0-9][0-9][0-9][0-9][0-9][0-9]\] / {
+			stamp = $0
+			sub(/^\[[[:space:]]*/, "", stamp)
+			sub(/\].*$/, "", stamp)
+			split(stamp, fields, ".")
+			seconds = fields[1] + 0
+			microseconds = substr(fields[2], 1, 6) + 0
+			now = seconds * 1000000 + microseconds
+			if (seen && now < previous)
+				bad = 1
+			previous = now
+			seen++
+		}
+		END { exit seen < 10 || bad }
+	' "$timestamped"; then
+		echo "kernel timestamps are missing or non-monotonic" >&2
+		exit 1
+	fi
+	if grep -Eq \
+		-e '^(Caffeinix |OF: machine:|SBI: spec=|memory: )' \
+		-e '^(clocksource: |smp: |irq: PLIC|mmu: |console: )' \
+		-e '^(virtio-mmio: |virtio-blk|eth[0-9]+: virtio-net)' \
+		-e '^(CPU: |lwIP: |VFS: |init: )' \
+		"$timestamped"; then
+		echo "kernel message without a timestamp" >&2
+		exit 1
+	fi
+	if grep -Eq \
+		-e '^\[[[:space:]]*[0-9]+\.[0-9]{6}\] OPENSBI_BOOT_OK' \
+		-e '^\[[[:space:]]*[0-9]+\.[0-9]{6}\] (SCHED_|NETWORK_)' \
+		-e '^\[[[:space:]]*[0-9]+\.[0-9]{6}\] (BUSYBOX_|FS_|TTY_)' \
+		"$timestamped"; then
+		echo "userspace output received a kernel timestamp" >&2
+		exit 1
+	fi
+	sed -E \
+		's/^\[[[:space:]]*[0-9]+\.[0-9]{6}\] //' \
+		"$timestamped" > "$output"
+}
+
 check_boot_log()
 {
 	local clean=$1
 	local cpus=$2
+	local block_devices=${3:-1}
+	local fat_mounts=0
 	local logical
 	local marker_count
 
@@ -73,6 +123,45 @@ check_boot_log()
 		} END { print count + 0 }' "$clean")
 	if [ "$marker_count" -ne 1 ]; then
 		echo "missing or duplicate OpenSBI BASE report" >&2
+		exit 1
+	fi
+	for marker in \
+		'^Caffeinix RISC-V 64-bit$' \
+		'^OF: machine: .+$' \
+		'^clocksource: riscv timer at [0-9]+ MHz$' \
+		'^memory: [0-9]+ MiB usable$' \
+		"^smp: detected $cpus CPUs$" \
+		"^irq: PLIC configured for $cpus CPUs$" \
+		'^mmu: Sv39 enabled$' \
+		'^console: ttyS0 at 0x[0-9a-f]+ irq=[0-9]+$' \
+		"^smp: brought up $cpus CPUs$" \
+		'^VFS: mounted root [(]ext4[)] on virtio-blk[0-9]+$' \
+		'^VFS: mounted devfs on /dev$' \
+		'^VFS: mounted tmpfs on /tmp$' \
+		'^init: starting /bin/sh$'; do
+		marker_count=$(awk -v marker="$marker" \
+			'$0 ~ marker { count++ } END { print count + 0 }' \
+			"$clean")
+		if [ "$marker_count" -ne 1 ]; then
+			echo "unexpected boot summary count: $marker=$marker_count" >&2
+			exit 1
+		fi
+	done
+	marker_count=$(awk \
+		'$0 ~ /^virtio-blk[0-9]+: [0-9]+ sectors \([0-9]+ MiB\)$/ {
+			count++
+		} END { print count + 0 }' "$clean")
+	if [ "$marker_count" -ne "$block_devices" ]; then
+		echo "unexpected block device count: $marker_count" >&2
+		exit 1
+	fi
+	if [ "$block_devices" -gt 1 ]; then
+		fat_mounts=1
+	fi
+	marker_count=$(awk '$0 == "VFS: mounted fat on /mnt/fat" { count++ }
+		END { print count + 0 }' "$clean")
+	if [ "$marker_count" -ne "$fat_mounts" ]; then
+		echo "unexpected FAT mount count: $marker_count" >&2
 		exit 1
 	fi
 	for logical in $(seq 0 $((cpus - 1))); do
@@ -112,11 +201,21 @@ check_net_device_log()
 	local clean=$1
 	local expected=$2
 	local count
+	local absent
 
-	count=$(awk '$0 == "virtio-net: registered eth0" { count++ }
+	count=$(awk \
+		'$0 ~ /^eth0: virtio-net MAC ([0-9a-f][0-9a-f]:){5}/ &&
+		 $0 ~ /[0-9a-f][0-9a-f]$/ { count++ }
 		END { print count + 0 }' "$clean")
 	if [ "$count" -ne "$expected" ]; then
 		echo "unexpected VirtIO network device count: $count" >&2
+		exit 1
+	fi
+	absent=$(awk '$0 == "lwIP: no external network device" { count++ }
+		END { print count + 0 }' "$clean")
+	if { [ "$expected" -eq 0 ] && [ "$absent" -ne 1 ]; } ||
+	   { [ "$expected" -ne 0 ] && [ "$absent" -ne 0 ]; }; then
+		echo "unexpected absent network device count: $absent" >&2
 		exit 1
 	fi
 }
@@ -132,7 +231,7 @@ run_boot_smoke()
 	export QEMU_MEMORY=$memory
 	export QEMU_LOG=$log
 	expect "$script_dir/run-boot.exp"
-	tr -d '\r' < "$log" > "$clean"
+	normalize_kernel_log "$log" "$clean"
 	if [ "$(awk '$0 == "OPENSBI_BOOT_OK" { count++ }
 		END { print count + 0 }' "$clean")" -ne 1 ]; then
 		echo "OpenSBI BusyBox smoke marker is missing" >&2
@@ -170,7 +269,7 @@ export QEMU_MEMORY=128M
 export QEMU_LOG=$test_output/qemu-network-offline.log
 expect "$script_dir/run-network-offline.exp"
 offline_clean=$test_output/qemu-network-offline.clean.log
-tr -d '\r' < "$QEMU_LOG" > "$offline_clean"
+normalize_kernel_log "$QEMU_LOG" "$offline_clean"
 if [ "$(awk '$0 == "NETWORK_OFFLINE_BOOT_OK" { count++ }
 	END { print count + 0 }' "$offline_clean")" -ne 1 ]; then
 	echo "offline network boot marker is missing" >&2
@@ -201,9 +300,9 @@ export QEMU_CPUS=8
 export QEMU_MEMORY=256M
 export QEMU_LOG=$qemu_log
 expect "$script_dir/run-qemu.exp"
-tr -d '\r' < "$qemu_log" > "$clean_log"
+normalize_kernel_log "$qemu_log" "$clean_log"
 check_net_device_log "$clean_log" 1
-check_boot_log "$clean_log" "$QEMU_CPUS"
+check_boot_log "$clean_log" "$QEMU_CPUS" 2
 
 for marker in \
 	BUSYBOX_SHELL_OK \
@@ -254,7 +353,7 @@ if ! grep -Fq $'abc\b \bd' "$qemu_log"; then
 fi
 
 if grep -Eq \
-	-e '\[PANIC\]|Unhandled interrupt' \
+	-e '\[PANIC\]|Unhandled interrupt|irq: unhandled interrupt' \
 	-e 'FS_RUNTIME_FAIL=|NETWORK_RUNTIME_FAIL' \
 	-e 'PRESSURE_RUNTIME_FAIL|SCHED_RUNTIME_FAIL=|TTY_RUNTIME_FAIL=' \
 	"$clean_log"; then

@@ -5,6 +5,7 @@
 #include <of.h>
 #include <palloc.h>
 #include <platform_device.h>
+#include <printk.h>
 #include <resource.h>
 #include <virtio.h>
 #include <virtio_ring.h>
@@ -325,6 +326,8 @@ static int virtio_mmio_probe(struct platform_device *platform)
 			     device->name);
 	if (status < 0)
 		goto invalid;
+	pr_info("virtio-mmio: %s id=%u at %p irq=%u", device->name, id,
+		resource->start, device->irq);
 	dev_set_drvdata(&platform->device, device);
 	status = virtio_device_register(&device->virtio);
 	if (status < 0) {

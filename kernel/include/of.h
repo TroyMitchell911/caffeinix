@@ -23,6 +23,7 @@ struct device_node {
 int of_init(const void *fdt);
 const void *of_fdt(void);
 struct device_node *of_root_node(void);
+const char *of_machine_model(void);
 struct device_node *of_next_node(struct device_node *node);
 struct device_node *of_find_node_by_path(const char *path);
 struct device_node *of_stdout_node(void);

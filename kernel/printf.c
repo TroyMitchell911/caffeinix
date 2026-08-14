@@ -3,8 +3,6 @@
 #include <spinlock.h>
 #include <debug.h>
 
-volatile uint8 paniced = 0;
-
 static const char digits[] = "0123456789abcdef";
 static struct {
         struct spinlock lock;
@@ -12,108 +10,134 @@ static struct {
         uint8 locking;
 }pf;
 
-/* Print a integer */
-static void print_int(uint32 number, uint8 base, uint8 sign)
+static void console_emit(int character, void *context)
 {
-        char buf[16];
-        int i, negative;
-        uint32 num;
-
-        negative = sign && (int32)number < 0;
-        num = negative ? -number : number;
-
-        i = 0;
-        /* Get each digit into the buffer 'buf' */
-        do {
-                buf[i++] = digits[num % base];
-        } while((num /= base) != 0);
-        /* We should add a negative symbol at the end if the sign == 1 */
-        if(negative)
-                buf[i++] = '-';
-        /* Inverted output */
-        while(--i >= 0)
-                console_putc(buf[i]);
+	(void)context;
+	console_putc(character);
 }
 
-/* Print a pointer */
-static void print_ptr(uint64 ptr)
+static void emit_number(printf_emit_t emit, void *context, uint64 number,
+			uint8 base, int negative, int width, int zero_pad)
+{
+	char buffer[32];
+	int length = 0;
+	int padding;
+
+        do {
+		buffer[length++] = digits[number % base];
+	} while ((number /= base) != 0);
+	padding = width - length - negative;
+	if (negative && zero_pad)
+		emit('-', context);
+	while (padding-- > 0)
+		emit(zero_pad ? '0' : ' ', context);
+	if (negative && !zero_pad)
+		emit('-', context);
+	while (--length >= 0)
+		emit(buffer[length], context);
+}
+
+static void emit_pointer(printf_emit_t emit, void *context, uint64 pointer)
 {
         int i;
-        console_putc('0');
-        console_putc('x');
-        /* Output every 4 bits as a number */
-        for (i = 0; i < (sizeof(uint64) * 2); i++, ptr <<= 4)
-                console_putc(digits[ptr >> (sizeof(uint64) * 8 - 4)]);
+
+	emit('0', context);
+	emit('x', context);
+	for (i = 0; i < 16; i++, pointer <<= 4)
+		emit(digits[pointer >> (sizeof(uint64) * 8 - 4)], context);
+}
+
+void vprintf_emit(printf_emit_t emit, void *context, const char *fmt,
+		  va_list arguments)
+{
+	int c, i;
+	char *s;
+
+	if (!emit || !fmt)
+		PANIC("printf format");
+	for (i = 0; (c = fmt[i] & 0xff) != 0; i++) {
+		int is_long = 0;
+		int width = 0;
+		int zero_pad = 0;
+
+		if (c != '%') {
+			emit(c, context);
+			continue;
+		}
+		c = fmt[++i] & 0xff;
+		if (c == '0') {
+			zero_pad = 1;
+			c = fmt[++i] & 0xff;
+		}
+		while (c >= '0' && c <= '9') {
+			width = width * 10 + c - '0';
+			c = fmt[++i] & 0xff;
+		}
+		if (c == 'l') {
+			is_long = 1;
+			c = fmt[++i] & 0xff;
+		}
+		switch (c) {
+		case 'd': {
+			int64 value = is_long ? va_arg(arguments, int64) :
+				va_arg(arguments, int);
+			int negative = value < 0;
+			uint64 magnitude = negative ? 0 - (uint64)value :
+				(uint64)value;
+
+			emit_number(emit, context, magnitude, 10, negative,
+				    width, zero_pad);
+			break;
+		}
+		case 'u':
+			emit_number(emit, context,
+				    is_long ? va_arg(arguments, uint64) :
+				    va_arg(arguments, uint32),
+				    10, 0, width, zero_pad);
+			break;
+		case 'x':
+			emit_number(emit, context,
+				    is_long ? va_arg(arguments, uint64) :
+				    va_arg(arguments, uint32),
+				    16, 0, width, zero_pad);
+			break;
+		case 'p':
+			emit_pointer(emit, context, va_arg(arguments, uint64));
+			break;
+		case 's':
+			s = va_arg(arguments, char *);
+			if (!s)
+				s = "(null)";
+			while (*s)
+				emit(*s++, context);
+			break;
+		case '%':
+			emit('%', context);
+			break;
+		case 'c':
+			emit(va_arg(arguments, int), context);
+			break;
+		default:
+			emit('%', context);
+			emit(c, context);
+			break;
+		}
+        }
 }
 
 void printf(char* fmt, ...)
 {
-        va_list ap;
-        int i, c, locking;
-        char *s;
+	va_list arguments;
+	int locking = pf.locking;
 
-        locking = pf.locking;
-        if(locking)
-                spinlock_acquire(&pf.lock);
+	if (locking)
+		spinlock_acquire(&pf.lock);
+	va_start(arguments, fmt);
+	vprintf_emit(console_emit, 0, fmt, arguments);
+	va_end(arguments);
 
-        if(fmt == 0)
-                PANIC("printf");
-
-        va_start(ap, fmt);
-        for(i = 0; (c = fmt[i] & 0xff) != 0; i++) {
-                /* We directly output if no converting symbol */
-                if(c != '%'){
-                        console_putc(c);
-                        continue;
-                }
-                /* Get next character if converting symbol */
-                c = fmt[++i] & 0xff;
-                switch(c) {
-                        /* Dec */
-                        case 'd':
-                                print_int(va_arg(ap, int), 10, 1);
-                                break;
-                        /* Hex */
-                        case 'x':
-                                print_int(va_arg(ap, uint32), 16, 0);
-                                break;
-                        /* Pointer */
-                        case 'p':
-                                print_ptr(va_arg(ap, uint64));
-                                break;
-                        /* String */
-                        case 's':
-                                if((s = va_arg(ap, char*)) == 0)
-                                s = "(null)";
-                                for(; *s; s++)
-                                        console_putc(*s);
-                                break;
-                        /* % */
-                        case '%':
-                                console_putc('%');
-                                break;
-                        case 'c':
-                                console_putc(va_arg(ap, int));
-                                break;
-                        /* Unknown converting symbol */
-                        default:     
-                                console_putc('%');
-                                console_putc(c);
-                                break;   
-                }
-        }
-        va_end(ap);
-
-        if(locking)
-                spinlock_release(&pf.lock);
-}
-
-void panic(char* s)
-{
-	printf_enter_panic();
-        printf("[PANIC]: %s\n", s);
-        paniced = 1;
-        for(;;);
+	if (locking)
+		spinlock_release(&pf.lock);
 }
 
 void printf_enter_panic(void)

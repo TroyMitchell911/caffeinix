@@ -3,6 +3,7 @@
 
 #include <typedefs.h>
 
+void timer_early_init(void);
 void timer_init(void);
 void timer_init_hart(void);
 void timer_wait_for_interrupt(void);

@@ -5,6 +5,7 @@
 #include <scheduler.h>
 #include <printf.h>
 #include <plic.h>
+#include <printk.h>
 #include <timer.h>
 #include <wait.h>
 
@@ -39,9 +40,9 @@ static int dev_intr(uint64 scause)
         else if((scause & 0x8000000000000000L) &&
                 (scause & 0xff) == 9) {
                 /* Get interrupt number from PLIC */
-                irq = plic_claim();
+		irq = plic_claim();
 		if (irq && irq_dispatch(irq) != IRQ_HANDLED)
-			printf("Unhandled interrupt irq=%d\n", irq);
+			pr_err("irq: unhandled interrupt %d", irq);
                 if(irq) {
                         /* Clear the interrupt flag */
                         plic_complete(irq);

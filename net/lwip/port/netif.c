@@ -8,7 +8,7 @@
 #include <mystring.h>
 #include <netdevice.h>
 #include <network_stack.h>
-#include <printf.h>
+#include <printk.h>
 #include <scheduler.h>
 #include <workqueue.h>
 
@@ -220,7 +220,7 @@ static void lwip_detach_device(struct net_device *device)
 			lwip_choose_default_interface();
 		lwip_set_default_interface(lwip_network.default_interface);
 	}
-	printf("lwIP: detached %s\n", device->name);
+	pr_notice("lwIP: detached %s", device->name);
 }
 
 static void lwip_device_state_work(struct work_struct *work)
@@ -275,9 +275,9 @@ static void lwip_status_changed(struct netif *interface)
 	    !netif_is_up(interface) || ip4_addr_isany_val(*address))
 		return;
 	value = lwip_ntohl(ip4_addr_get_u32(address));
-	printf("%s: IPv4 %d.%d.%d.%d\n", adapter->device->name,
-	       (value >> 24) & 0xff, (value >> 16) & 0xff,
-	       (value >> 8) & 0xff, value & 0xff);
+	pr_info("%s: IPv4 %d.%d.%d.%d", adapter->device->name,
+		(value >> 24) & 0xff, (value >> 16) & 0xff,
+		(value >> 8) & 0xff, value & 0xff);
 }
 
 static int lwip_attach_device(struct net_device *device)
@@ -314,7 +314,7 @@ static int lwip_attach_device(struct net_device *device)
 	netif_set_status_callback(interface, lwip_status_changed);
 	netif_set_up(interface);
 	lwip_apply_device_state(adapter);
-	printf("lwIP: attached %s\n", device->name);
+	pr_info("lwIP: attached %s", device->name);
 	if (device->loopback)
 		return 0;
 	if (!lwip_network.default_interface) {
@@ -322,13 +322,14 @@ static int lwip_attach_device(struct net_device *device)
 		netif_set_default(interface);
 	}
 	if (dhcp_start(interface) != ERR_OK)
-		printf("lwIP: DHCP start failed on %s\n", device->name);
+		pr_warn("lwIP: DHCP start failed on %s", device->name);
 	return 0;
 }
 
 static void lwip_tcpip_ready(void *argument)
 {
 	struct net_device *device;
+	int external_devices = 0;
 	uint32 index;
 
 	(void)argument;
@@ -337,24 +338,29 @@ static void lwip_tcpip_ready(void *argument)
 		work_init(&lwip_network.state_work[index],
 			  lwip_device_state_work);
 	if (net_receive_register(lwip_receive, &lwip_network) < 0) {
-		printf("lwIP: cannot register receive path\n");
+		pr_err("lwIP: cannot register receive path");
 		return;
 	}
 	if (net_state_register(lwip_device_state, &lwip_network) < 0) {
 		net_receive_unregister(lwip_receive, &lwip_network);
-		printf("lwIP: cannot register device state\n");
+		pr_err("lwIP: cannot register device state");
 		return;
 	}
 	for (index = 1; index < NET_DEVICE_MAX; index++) {
 		device = net_device_get(index);
 		if (device) {
-			if (lwip_attach_device(device) < 0)
-				printf("lwIP: cannot add %s\n", device->name);
+			if (lwip_attach_device(device) < 0) {
+				pr_warn("lwIP: cannot add %s", device->name);
+			} else if (!device->loopback) {
+				external_devices++;
+			}
 			net_device_put(device);
 		}
 	}
 	if (!lwip_network.count)
-		printf("lwIP: no network device\n");
+		pr_notice("lwIP: no network device");
+	else if (!external_devices)
+		pr_notice("lwIP: no external network device");
 	else if (!lwip_network.default_interface) {
 		lwip_network.default_interface =
 			lwip_choose_default_interface();

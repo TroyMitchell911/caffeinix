@@ -16,6 +16,7 @@
 #include <scheduler.h>
 #include <trap.h>
 #include <printf.h>
+#include <printk.h>
 #include <plic.h>
 #include <process.h>
 #include <block_device.h>
@@ -97,13 +98,13 @@ static void main_boot(void)
 	tmpfs_init();
 	userinit();
 
-	printf("Hello! Caffeinix\n");
 	timer_wait_for_interrupt();
 	cpu_mark_online();
 	cpu_start_secondary_harts();
 	__sync_synchronize();
 	start = 1;
 	cpu_wait_for_secondary_harts();
+	pr_info("smp: brought up %d CPUs", cpu_count());
 	scheduler();
 	for (;;)
 		;
@@ -126,14 +127,30 @@ void main(void)
 {
 	if (cpuid() == 0) {
 		int of_status = of_init((void *)boot_dtb_address);
+		const char *machine;
 
 		console_early_init();
 		if (of_status < 0)
 			PANIC("invalid boot DTB");
+		timer_early_init();
+		printf_init();
+		printk_init();
+		pr_info("Caffeinix RISC-V 64-bit");
+		machine = of_machine_model();
+		if (machine)
+			pr_info("OF: machine: %s", machine);
+		else
+			pr_warn("OF: machine model is unavailable");
+		pr_info("clocksource: riscv timer at %lu MHz",
+			timer_frequency() / 1000000);
 		palloc_init();
 		cpu_topology_init(boot_hart_id);
 		sbi_init(cpu_count());
 		timer_init();
+		sbi_report();
+		pr_info("memory: %lu MiB usable",
+			palloc_usable_bytes() / (1024 * 1024));
+		pr_info("smp: detected %d CPUs", cpu_count());
 		file_init();
 		vfs_init();
 		irq_init();
@@ -141,12 +158,11 @@ void main(void)
 		plic_init_hart();
 		char_device_init();
 		tty_init();
-		printf_init();
-		sbi_report();
 		kvm_create();
 		if (kvm_map_mmio(earlycon_address(), earlycon_size()) < 0)
 			PANIC("map early console");
 		kvm_init();
+		pr_info("mmu: Sv39 enabled");
 		if (cpu_kernel_stack_selftest() < 0)
 			PANIC("kernel stack guards");
 		cpu_enter_stack(cpu_scheduler_stack_top(), main_boot);

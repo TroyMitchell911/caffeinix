@@ -11,6 +11,7 @@
 #include <riscv.h>
 #include <boot.h>
 #include <cpu.h>
+#include <ktime.h>
 
 extern void main(void);
 
@@ -24,6 +25,7 @@ void setup(uint64 hart_id, uint64 dtb_address)
 	/* The standard next-stage contract enters with paging disabled. */
 	satp_w(0);
 	sfence_vma();
+	ktime_boot_init(time_r());
 	boot_hart_id = hart_id;
 	boot_dtb_address = dtb_address;
 	/* Caffeinix uses tp as a dense logical CPU ID. */

@@ -4,6 +4,7 @@
 #include <irq.h>
 #include <of.h>
 #include <palloc.h>
+#include <printk.h>
 #include <scheduler.h>
 
 #define RISCV_IRQ_S_EXT 9
@@ -95,6 +96,7 @@ void plic_init(void)
 
 	for (irq = 1; irq < IRQ_MAX; irq++)
 		*(uint32 *)(PLIC + irq * 4) = 0;
+	pr_info("irq: PLIC configured for %d CPUs", cpu_count());
 }
 
 void plic_init_hart(void)

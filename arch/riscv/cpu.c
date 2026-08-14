@@ -4,7 +4,7 @@
 #include <mem_layout.h>
 #include <of.h>
 #include <palloc.h>
-#include <printf.h>
+#include <printk.h>
 #include <riscv.h>
 #include <sbi.h>
 #include <scheduler.h>
@@ -184,7 +184,7 @@ void cpu_secondary_boot_stack_release(void)
 
 static void cpu_start_failed(int logical_id, int64 error)
 {
-	printf("CPU: logical=%d hart=%p SBI error=%d\n", logical_id,
+	pr_err("CPU: logical=%d hart=%p SBI error=%d", logical_id,
 	       cpu_hart_id(logical_id), (int)error);
 	PANIC("secondary hart start failed");
 }
@@ -202,7 +202,7 @@ void cpu_start_secondary_harts(void)
 		if (error)
 			cpu_start_failed(logical, error);
 		if (status != SBI_HSM_STATE_STOPPED) {
-			printf("CPU: logical=%d hart=%p HSM state=%d\n", logical,
+			pr_err("CPU: logical=%d hart=%p HSM state=%d", logical,
 			       cpu_hart_id(logical), (int)status);
 			PANIC("secondary hart is not stopped");
 		}
@@ -234,8 +234,8 @@ void cpu_mark_online(void)
 	__sync_synchronize();
 	cpus[logical]->online = 1;
 	__sync_synchronize();
-	printf("CPU: logical=%d hart=%p online\n", logical,
-	       cpus[logical]->hart_id);
+	pr_info("CPU: logical=%d hart=%p online", logical,
+		cpus[logical]->hart_id);
 }
 
 void cpu_wait_for_secondary_harts(void)
@@ -253,7 +253,7 @@ void cpu_wait_for_secondary_harts(void)
 			return;
 		if (time_r() - start < timeout)
 			continue;
-		printf("CPU: logical=%d hart=%p online timeout\n", logical,
+		pr_err("CPU: logical=%d hart=%p online timeout", logical,
 		       cpu_hart_id(logical));
 		PANIC("secondary hart online timeout");
 	}

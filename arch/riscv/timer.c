@@ -3,7 +3,7 @@
 #include <kernel_config.h>
 #include <of.h>
 #include <palloc.h>
-#include <printf.h>
+#include <printk.h>
 #include <riscv.h>
 #include <sbi.h>
 #include <scheduler.h>
@@ -20,7 +20,7 @@ struct timer_cpu_state {
 
 static struct timer_cpu_state *timer_cpus;
 
-void timer_init(void)
+void timer_early_init(void)
 {
 	struct device_node *cpus = of_find_node_by_path("/cpus");
 	uint32 frequency;
@@ -34,6 +34,12 @@ void timer_init(void)
 	idle_tick_interval = clock_frequency * IDLE_TICK_INTERVAL / 1000;
 	if (!tick_interval || !idle_tick_interval)
 		PANIC("invalid timer interval");
+}
+
+void timer_init(void)
+{
+	if (!clock_frequency)
+		PANIC("timer clocksource is not initialized");
 	timer_cpus = calloc(cpu_count(), sizeof(*timer_cpus));
 	if (!timer_cpus)
 		PANIC("allocate timer CPU state");
@@ -76,7 +82,7 @@ void timer_interrupt(void)
 		PANIC("SBI timer rearm failed");
 	if (!timer_cpus[logical].seen) {
 		timer_cpus[logical].seen = 1;
-		printf("CPU: logical=%d timer active\n", logical);
+		pr_info("CPU: logical=%d timer active", logical);
 	}
 }
 
