@@ -32,6 +32,35 @@ rbtree:
 		-o $(TEST_OUTPUT)/rbtree
 	$(TEST_OUTPUT)/rbtree
 
+.PHONY: memrange
+memrange:
+	mkdir -p $(TEST_OUTPUT)
+	$(CC) -std=gnu17 -Wall -Wextra -Werror -fno-builtin \
+		-I $(TOPDIR)/kernel/include \
+		-I $(TOPDIR)/arch/riscv/include \
+		$(CURDIR)/memrange.c $(TOPDIR)/kernel/memrange.c \
+		-o $(TEST_OUTPUT)/memrange
+	$(TEST_OUTPUT)/memrange
+
+.PHONY: buddy
+buddy:
+	mkdir -p $(TEST_OUTPUT)
+	$(CC) -std=gnu17 -Wall -Wextra -Werror -fno-builtin \
+		-I $(TOPDIR)/kernel/include \
+		-I $(TOPDIR)/arch/riscv/include \
+		$(CURDIR)/buddy.c $(TOPDIR)/kernel/buddy.c \
+		-o $(TEST_OUTPUT)/buddy
+	$(TEST_OUTPUT)/buddy
+
+.PHONY: sv39
+sv39:
+	mkdir -p $(TEST_OUTPUT)
+	$(CC) -std=gnu17 -Wall -Wextra -Werror -fno-builtin \
+		-I $(TOPDIR)/arch/riscv/include \
+		$(CURDIR)/sv39.c $(TOPDIR)/arch/riscv/vm_layout.c \
+		-o $(TEST_OUTPUT)/sv39
+	$(TEST_OUTPUT)/sv39
+
 .PHONY: printk
 printk:
 	mkdir -p $(TEST_OUTPUT)
@@ -44,7 +73,7 @@ printk:
 	$(TEST_OUTPUT)/printk
 
 .PHONY: qemu
-qemu: printk rbtree virtqueue
+qemu: printk memrange buddy sv39 rbtree virtqueue
 	TEST_OUTPUT="$(TEST_OUTPUT)" JOBS="$(JOBS)" \
 		$(CURDIR)/scripts/run-qemu.sh
 

@@ -163,6 +163,8 @@ void main(void)
 			PANIC("map early console");
 		kvm_init();
 		pr_info("mmu: Sv39 enabled");
+		if (kvm_mapping_selftest() < 0)
+			PANIC("kernel direct map");
 		if (cpu_kernel_stack_selftest() < 0)
 			PANIC("kernel stack guards");
 		cpu_enter_stack(cpu_scheduler_stack_top(), main_boot);

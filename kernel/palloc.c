@@ -8,8 +8,10 @@
  * Words are cheap so I do.
  * Copyright (c) 2024 by TroyMitchell, All Rights Reserved. 
  */
+#include <buddy.h>
 #include <palloc.h>
 #include <mem_layout.h>
+#include <memrange.h>
 #include <mystring.h>
 #include <of.h>
 #include <spinlock.h>
@@ -26,10 +28,6 @@
 #define PAGE_BLOCK                              512
 #define BITMAP_SIZE                             ((4096 - PAGE_BLOCK) / 8)
 
-
-typedef struct pmem_free_list {
-        struct pmem_free_list *next;
-}*pmem_free_list_t;
 
 typedef struct page {
         /* Used blocks number */
@@ -56,23 +54,12 @@ typedef struct pool {
         uint64 blocks;
 }*pool_t;
 
-static pmem_free_list_t head = 0;
+static struct buddy_allocator page_allocator;
 static struct pool pool;
 static struct spinlock page_lock;
 static struct spinlock heap_lock;
 
-#define PALLOC_MEMORY_RANGE_MAX 8
-#define PALLOC_RESERVED_RANGE_MAX 32
-
-struct palloc_range {
-	uint64 start;
-	uint64 end;
-};
-
-static struct palloc_range memory_ranges[PALLOC_MEMORY_RANGE_MAX];
-static struct palloc_range reserved_ranges[PALLOC_RESERVED_RANGE_MAX];
-static int memory_range_count;
-static int reserved_range_count;
+static struct memrange_set managed_ranges;
 static uint64 heap_start;
 static uint64 usable_bytes;
 
@@ -86,52 +73,14 @@ extern char end[];
 
 static void palloc_heap_alignment_selftest(void);
 
-static int palloc_range_contains(const struct palloc_range *range,
-				 uint64 start, uint64 finish)
+int palloc_managed_range_count(void)
 {
-	return start >= range->start && finish <= range->end;
+	return managed_ranges.count;
 }
 
-static int palloc_range_overlaps(const struct palloc_range *range,
-				 uint64 start, uint64 finish)
+int palloc_managed_range_get(int index, uint64 *start, uint64 *finish)
 {
-	return start < range->end && finish > range->start;
-}
-
-int palloc_page_usable(uint64 address)
-{
-	int i;
-
-	if (address % PGSIZE || address < heap_start ||
-	    address + PGSIZE < address)
-		return 0;
-	for (i = 0; i < memory_range_count; i++) {
-		if (palloc_range_contains(&memory_ranges[i], address,
-		                          address + PGSIZE))
-			break;
-	}
-	if (i == memory_range_count)
-		return 0;
-	for (i = 0; i < reserved_range_count; i++) {
-		if (palloc_range_overlaps(&reserved_ranges[i], address,
-		                          address + PGSIZE))
-			return 0;
-	}
-	return 1;
-}
-
-int palloc_memory_range_count(void)
-{
-	return memory_range_count;
-}
-
-int palloc_memory_range_get(int index, uint64 *start, uint64 *finish)
-{
-	if (index < 0 || index >= memory_range_count || !start || !finish)
-		return -1;
-	*start = memory_ranges[index].start;
-	*finish = memory_ranges[index].end;
-	return 0;
+	return memrange_get(&managed_ranges, index, start, finish);
 }
 
 uint64 palloc_heap_start(void)
@@ -149,103 +98,135 @@ static void palloc_discover_memory(void)
 	struct of_memory_range range;
 	uint64 kernel_start = KERNEL_BASE;
 	uint64 kernel_end = PGROUNDUP((uint64)end);
-	int count, i, kernel_range = 0;
+	uint64 finish, start;
+	int count, i;
 
+	memrange_init(&managed_ranges);
 	count = of_memory_range_count();
-	if (count <= 0 || count > PALLOC_MEMORY_RANGE_MAX)
+	if (count <= 0)
 		PANIC("unsupported memory layout");
 	for (i = 0; i < count; i++) {
-		if (of_memory_range_get(i, &range) < 0)
+		if (of_memory_range_get(i, &range) < 0 ||
+		    range.start + range.size < range.start)
 			PANIC("invalid memory range");
-		memory_ranges[i].start = PGROUNDUP(range.start);
-		memory_ranges[i].end = PGROUNDDOWN(range.start + range.size);
-		if (memory_ranges[i].start >= memory_ranges[i].end)
-			PANIC("empty memory range");
-		if (palloc_range_contains(&memory_ranges[i], kernel_start,
-		                          kernel_end))
-			kernel_range++;
+		if (range.start > (uint64)-1 - (PGSIZE - 1))
+			continue;
+		start = PGROUNDUP(range.start);
+		finish = PGROUNDDOWN(range.start + range.size);
+		if (start < finish &&
+		    memrange_add(&managed_ranges, start, finish) < 0)
+			PANIC("unsupported memory layout");
 	}
-	memory_range_count = count;
-	if (kernel_range != 1)
+	if (!memrange_contains(&managed_ranges, kernel_start, kernel_end))
 		PANIC("kernel outside memory");
+	if (memrange_remove(&managed_ranges, 0, kernel_end) < 0)
+		PANIC("reserve kernel memory");
 
 	count = of_reserved_memory_range_count();
-	if (count < 0 || count > PALLOC_RESERVED_RANGE_MAX)
+	if (count < 0)
 		PANIC("unsupported reserved memory");
 	for (i = 0; i < count; i++) {
 		if (of_reserved_memory_range_get(i, &range) < 0 ||
 		    range.start + range.size < range.start)
 			PANIC("invalid reserved memory");
-		reserved_ranges[i].start = PGROUNDDOWN(range.start);
-		reserved_ranges[i].end = PGROUNDUP(range.start + range.size);
+		start = PGROUNDDOWN(range.start);
+		finish = range.start + range.size;
+		if (finish > (uint64)-1 - (PGSIZE - 1))
+			PANIC("invalid reserved memory");
+		finish = PGROUNDUP(finish);
+		if (start < finish &&
+		    memrange_remove(&managed_ranges, start, finish) < 0)
+			PANIC("unsupported reserved memory");
 	}
-	reserved_range_count = count;
+	if (!managed_ranges.count ||
+	    memrange_total(&managed_ranges, &usable_bytes) < 0)
+		PANIC("no usable memory");
+	for (i = 0; i < managed_ranges.count; i++) {
+		if (managed_ranges.ranges[i].end > MAXVA)
+			PANIC("memory exceeds Sv39 direct map");
+	}
 	heap_start = kernel_end;
 }
 
 /* Init the physical memory */
 void palloc_init(void)
 {
-	uint64 address;
-	int i, pages = 0;
+	uint64 finish, metadata_bytes, pages, start;
+	int i;
 
 	spinlock_init(&page_lock, "physical pages");
 	spinlock_init(&heap_lock, "kernel heap");
 	palloc_discover_memory();
-	for (i = 0; i < memory_range_count; i++) {
-		for (address = memory_ranges[i].start;
-		     address < memory_ranges[i].end; address += PGSIZE) {
-			if (!palloc_page_usable(address))
-				continue;
-			pfree((void *)address);
-			pages++;
-		}
+	buddy_init(&page_allocator);
+	usable_bytes = 0;
+	for (i = 0; i < managed_ranges.count; i++) {
+		if (memrange_get(&managed_ranges, i, &start, &finish) < 0)
+			PANIC("managed memory range");
+		pages = (finish - start) / PGSIZE;
+		metadata_bytes = PGROUNDUP(pages);
+		if (metadata_bytes >= finish - start)
+			continue;
+		if (buddy_add_region(&page_allocator, start, finish,
+				     start + metadata_bytes, (uint8 *)start,
+				     pages) < 0)
+			PANIC("initialize page allocator");
+		usable_bytes += finish - start - metadata_bytes;
 	}
-	if (!pages)
+	if (!usable_bytes)
 		PANIC("no usable memory");
-	usable_bytes = (uint64)pages * PGSIZE;
 	palloc_heap_alignment_selftest();
+	if (buddy_free_page_count(&page_allocator) != usable_bytes / PGSIZE)
+		PANIC("page allocator accounting");
 }
 
-/* Free the physical memory */
-void pfree(void* p)
+void free_pages(void *p, unsigned int order)
 {
-        struct pmem_free_list *pmem_node;
-
-	/* Check the legality of the address of 'p'. */
-	if (!palloc_page_usable((uint64)p))
-                PANIC("pfree");
-        
-        /* Clear the memory */
-        memset(p, 1, PGSIZE);
 	spinlock_acquire(&page_lock);
-
-        /* 
-                Convert the 'p' into 'list'Set the byte before <reg width> 
-                that p points to as the pointer to the next free memory
-        */
-        pmem_node = (struct pmem_free_list*)p;
-        pmem_node->next = head;
-        head = pmem_node;
+#ifdef CONFIG_PAGE_POISONING
+	if (!buddy_allocated(&page_allocator, (uint64)p, order)) {
+		spinlock_release(&page_lock);
+		PANIC("free pages");
+	}
+	memset(p, 1, PGSIZE << order);
+#endif
+	if (buddy_free(&page_allocator, p, order) < 0) {
+		spinlock_release(&page_lock);
+		PANIC("free pages");
+	}
 	spinlock_release(&page_lock);
 }
 
-/* Alloc the physical memory */
-void* palloc(void)
+void *alloc_pages(unsigned int order, unsigned int flags)
 {
-        char* p = 0;
+	void *p;
 
+	if (flags & ~PALLOC_ZERO)
+		return 0;
 	spinlock_acquire(&page_lock);
-        /* If the head is not NULL */
-        if(head) {
-                p = (char*)head;
-                head = head->next;
-        } else {
-                PANIC("palloc");
-        }
+	p = buddy_alloc(&page_allocator, order);
 	spinlock_release(&page_lock);
-        
-        return p;
+	if (p && (flags & PALLOC_ZERO))
+		memset(p, 0, PGSIZE << order);
+	return p;
+}
+
+void pfree(void *p)
+{
+	free_pages(p, 0);
+}
+
+void *palloc(void)
+{
+	void *page = alloc_pages(0, 0);
+
+	if (!page)
+		PANIC("out of physical memory");
+	return page;
+}
+
+void *palloc_zero(void)
+{
+	return alloc_pages(0, PALLOC_ZERO);
 }
 
 /**
@@ -346,12 +327,11 @@ static page_t malloc_page(void)
 {
         page_t page;
 
-        page = palloc();
+	page = palloc_zero();
         if(!page)
                 return 0;
 
-        memset(page, 0, PGSIZE);
-        page->used = 0;
+	page->used = 0;
         page->next = pool.list;
         pool.list = page;
 

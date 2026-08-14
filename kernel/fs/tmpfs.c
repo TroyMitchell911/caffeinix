@@ -476,12 +476,11 @@ static struct tmpfs_page *tmpfs_get_page_locked(struct tmpfs_inode *inode,
 	page = malloc(sizeof(*page));
 	if (!page)
 		return 0;
-	page->data = palloc();
+	page->data = palloc_zero();
 	if (!page->data) {
 		free(page);
 		return 0;
 	}
-	memset(page->data, 0, PGSIZE);
 	page->index = index;
 	page->next = inode->pages;
 	inode->pages = page;

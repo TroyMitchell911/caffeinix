@@ -32,7 +32,7 @@ void *dma_alloc_coherent(struct device *device, uint64 size,
 
 	if (!dma_address || !size || size > PGSIZE)
 		return 0;
-	cpu_address = palloc();
+	cpu_address = palloc_zero();
 	if (!cpu_address)
 		return 0;
 	address = kvm_va2pa((uint64)cpu_address);
@@ -40,7 +40,6 @@ void *dma_alloc_coherent(struct device *device, uint64 size,
 		pfree(cpu_address);
 		return 0;
 	}
-	memset(cpu_address, 0, PGSIZE);
 	dma_wmb();
 	*dma_address = address;
 	return cpu_address;

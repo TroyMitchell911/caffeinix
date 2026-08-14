@@ -250,7 +250,7 @@ static process_t process_alloc(void)
         if(!t)
                 goto r0;
 
-        p->tinfo = (trapframe_info_t)palloc();
+	p->tinfo = (trapframe_info_t)palloc_zero();
         if(!p->tinfo) {
                 goto r1;
         }

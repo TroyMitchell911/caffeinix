@@ -775,12 +775,11 @@ static int ext4fs_truncate(struct vfs_inode *inode, uint64 size)
 	if (result != EOK)
 		return ext4fs_result(result);
 	if (size > file.fsize) {
-		zeros = palloc();
+		zeros = palloc_zero();
 		if (!zeros) {
 			ext4_fclose(&file);
 			return VFS_ERR_NOMEM;
 		}
-		memset(zeros, 0, PGSIZE);
 		position = file.fsize;
 		result = ext4_fseek(&file, position, SEEK_SET);
 		while (result == EOK && position < size) {
