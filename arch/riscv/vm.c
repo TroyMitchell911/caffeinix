@@ -11,6 +11,7 @@
 #include <palloc.h>
 #include <mem_layout.h>
 #include <vm.h>
+#include <vm_layout.h>
 #include <mystring.h>
 #include <debug.h>
 #include <process.h>
@@ -24,68 +25,123 @@ extern char trampoline[];
 
 static pagedir_t kernel_pgdir;
 
-pte_t *PTE(pagedir_t pgdir, uint64 va, int flag)
+static pte_t *vm_walk(pagedir_t pgdir, uint64 va, int allocate,
+		      int target_level, int *leaf_level)
 {
-        int i;
-        pte_t *pte;
+	int level;
+	pte_t *pte;
+	pagedir_t next;
+
         /* The value of va can't be more than MAXVA */
-        if(va >= MAXVA)
-                PANIC("PTE");
+	if (va >= MAXVA || target_level < 0 ||
+	    target_level > SV39_LEVEL_MAX)
+		return 0;
         /* 
                 Starting from a high address,
                 retrieve the page table pointed to by the page table entry
         */
-        for(i = 2; i > 0; i--) {
+	for (level = SV39_LEVEL_MAX; level > target_level; level--) {
                 /* Get the page table pointed to by the page table entry */
-                pte = &pgdir[PTEX(i, va)];
+		pte = &pgdir[PTEX(level, va)];
                 /* If the page-table exists */
-                if((*pte) & PTE_V) {
+		if (*pte & PTE_V) {
+			if (*pte & (PTE_R | PTE_W | PTE_X)) {
+				if (leaf_level)
+					*leaf_level = level;
+				return pte;
+			}
                         /* Store the page-table physical address into pgdir. */
-                        pgdir = (pagedir_t)PTE2PA(*pte);
+			pgdir = (pagedir_t)PTE2PA(*pte);
                 } else {
-                        if(flag == 0 || (pgdir = (pte_t*)palloc()) == 0){
+			if (!allocate || (next = palloc_zero()) == 0)
                                 return 0;
-                        }
-                        /* The variable 'pgdir' has been alloced above */
-                        memset(pgdir, 0, PGSIZE);
                         /* Store the pte */
-                        *pte = PA2PTE(pgdir) | PTE_V;
+			*pte = PA2PTE(next) | PTE_V;
+			pgdir = next;
                 }
         }
-        /* Return the lowest level of pte */
-        return (pte_t*)&pgdir[PTEX(0, va)];
+	if (leaf_level)
+		*leaf_level = target_level;
+	return &pgdir[PTEX(target_level, va)];
+}
+
+pte_t *PTE(pagedir_t pgdir, uint64 va, int flag)
+{
+	return vm_walk(pgdir, va, flag, 0, 0);
 }
 
 uint64 va2pa(pagedir_t pgdir, uint64 va)
 {
-        pte_t *pte;
-        uint64 pa;
+	pte_t *pte;
+	uint64 leaf_size;
+	int level;
 
         if(va >= MAXVA)
                 return 0;
 
-        pte = PTE(pgdir, va, 0);
+	pte = vm_walk(pgdir, va, 0, 0, &level);
         if(pte == 0)
                 return 0;
         if((*pte & PTE_V) == 0)
                 return 0;
-        if((*pte & PTE_U) == 0)
-                return 0;
-        pa = PTE2PA(*pte);
-                return pa;
+	if((*pte & PTE_U) == 0)
+		return 0;
+	leaf_size = sv39_level_size(level);
+	return PTE2PA(*pte) +
+	       (va & (leaf_size - 1) & ~(PGSIZE - 1));
 }
 
 uint64 kvm_va2pa(uint64 va)
 {
 	pte_t *pte;
+	uint64 leaf_size;
+	int level;
 
 	if (!kernel_pgdir || va >= MAXVA)
 		return 0;
-	pte = PTE(kernel_pgdir, va, 0);
+	pte = vm_walk(kernel_pgdir, va, 0, 0, &level);
 	if (!pte || !(*pte & PTE_V) ||
 	    !(*pte & (PTE_R | PTE_W | PTE_X)))
 		return 0;
-	return PTE2PA(*pte) + (va & (PGSIZE - 1));
+	leaf_size = sv39_level_size(level);
+	return PTE2PA(*pte) + (va & (leaf_size - 1));
+}
+
+static int vm_map_leaf(pagedir_t pgdir, uint64 va, uint64 pa, int level,
+		       int perm)
+{
+	uint64 leaf_size = sv39_level_size(level);
+	pte_t *pte;
+	int found_level;
+
+	if (!leaf_size || va % leaf_size || pa % leaf_size)
+		return -1;
+	pte = vm_walk(pgdir, va, 1, level, &found_level);
+	if (!pte || found_level != level || (*pte & PTE_V))
+		return -1;
+	*pte = PA2PTE(pa) | PTE_V | perm;
+	return 0;
+}
+
+static int vm_map_largest(pagedir_t pgdir, uint64 va, uint64 pa,
+			  uint64 size, int perm)
+{
+	uint64 leaf_size;
+	int level;
+
+	if (!size || va >= MAXVA || size > MAXVA - va ||
+	    pa + size < pa || va % PGSIZE || pa % PGSIZE || size % PGSIZE)
+		return -1;
+	while (size) {
+		level = sv39_best_map_level(va, pa, size);
+		leaf_size = sv39_level_size(level);
+		if (vm_map_leaf(pgdir, va, pa, level, perm) < 0)
+			return -1;
+		va += leaf_size;
+		pa += leaf_size;
+		size -= leaf_size;
+	}
+	return 0;
 }
 
 int vm_map(pagedir_t pgdir, uint64 va, uint64 pa, uint64 size, int perm)
@@ -123,13 +179,14 @@ int vm_map(pagedir_t pgdir, uint64 va, uint64 pa, uint64 size, int perm)
 
 static pagedir_t kernel_pagedir_t_create(void)
 {
-	uint64 address, finish, start;
+	uint64 finish, start;
 	int i;
 
         /* Alloc the physical memory for page-table */
-        pagedir_t pgdir = (pagedir_t)palloc();
-        
-        memset(pgdir, 0, PGSIZE);
+	pagedir_t pgdir = (pagedir_t)palloc_zero();
+
+	if (!pgdir)
+		PANIC("allocate kernel page table");
 
         /* Map the trampoline */        
         vm_map(pgdir, TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_X | PTE_R);
@@ -143,15 +200,12 @@ static pagedir_t kernel_pagedir_t_create(void)
 	       palloc_heap_start() - (uint64)etext,
 	       PTE_R | PTE_W);
 	/* Map only allocator-owned RAM, leaving reservations inaccessible. */
-	for (i = 0; i < palloc_memory_range_count(); i++) {
-		if (palloc_memory_range_get(i, &start, &finish) < 0)
+	for (i = 0; i < palloc_managed_range_count(); i++) {
+		if (palloc_managed_range_get(i, &start, &finish) < 0)
 			PANIC("memory range");
-		for (address = start; address < finish; address += PGSIZE) {
-			if (!palloc_page_usable(address))
-				continue;
-			vm_map(pgdir, address, address, PGSIZE,
-			       PTE_R | PTE_W);
-		}
+		if (vm_map_largest(pgdir, start, start, finish - start,
+				   PTE_R | PTE_W) < 0)
+			PANIC("map physical memory");
 	}
 
         map_kernel_stack(pgdir);
@@ -162,12 +216,10 @@ static pagedir_t kernel_pagedir_t_create(void)
 pagedir_t pagedir_alloc(void)
 {
         /* Malloc memory for page-talble */
-        pagedir_t pgdir = (pagedir_t)palloc();
+	pagedir_t pgdir = (pagedir_t)palloc_zero();
         if(!pgdir) {
                 return 0;
         }
-        /* Clear the memory */
-        memset(pgdir, 0, PGSIZE);
 
         return pgdir;
 }
@@ -274,12 +326,11 @@ uint64 vm_alloc(pagedir_t pgdir, uint64 oldsz, uint64 newsz, int eperm)
 
         oldsz = PGROUNDUP(oldsz);
 	for(addr = oldsz; addr < newsz;addr += PGSIZE) {
-                mem = palloc();
+		mem = palloc_zero();
                 if(!mem) {
                         vm_dealloc(pgdir, addr, oldsz);
                         return 0;
                 }
-                memset(mem, 0, PGSIZE);
                 if(vm_map(pgdir, (uint64)addr, (uint64)mem, PGSIZE,
                           PTE_R | PTE_U | eperm) != 0) {
                         printf("???\n");
@@ -470,6 +521,29 @@ void kvm_init(void)
 
         /* Refresh the 'satp' register */
         sfence_vma(); 
+}
+
+int kvm_mapping_selftest(void)
+{
+	uint64 candidate, end, start;
+	int i, level;
+	pte_t *pte;
+
+	for (i = 0; i < palloc_managed_range_count(); i++) {
+		if (palloc_managed_range_get(i, &start, &end) < 0 ||
+		    kvm_va2pa(start) != start ||
+		    kvm_va2pa(end - PGSIZE) != end - PGSIZE)
+			return -1;
+		candidate = (start + sv39_level_size(2) - 1) &
+			    ~(sv39_level_size(2) - 1);
+		if (candidate >= start && candidate <= end &&
+		    sv39_level_size(2) <= end - candidate) {
+			pte = vm_walk(kernel_pgdir, candidate, 0, 0, &level);
+			if (!pte || level != 2)
+				return -1;
+		}
+	}
+	return 0;
 }
 
 int kvm_map_mmio(uint64 address, uint64 size)

@@ -16,6 +16,7 @@
 /* For kernel */
 void kvm_create(void);
 void kvm_init(void);
+int kvm_mapping_selftest(void);
 int kvm_map_mmio(uint64 address, uint64 size);
 /* For general */
 int vm_map(pagedir_t pgdir, uint64 va, uint64 pa, uint64 size, int perm);

@@ -73,22 +73,14 @@ extern char end[];
 
 static void palloc_heap_alignment_selftest(void);
 
-int palloc_memory_range_count(void)
+int palloc_managed_range_count(void)
 {
 	return managed_ranges.count;
 }
 
-int palloc_memory_range_get(int index, uint64 *start, uint64 *finish)
+int palloc_managed_range_get(int index, uint64 *start, uint64 *finish)
 {
 	return memrange_get(&managed_ranges, index, start, finish);
-}
-
-int palloc_page_usable(uint64 address)
-{
-	if (address % PGSIZE || address + PGSIZE < address)
-		return 0;
-	return memrange_contains(&managed_ranges, address,
-				 address + PGSIZE);
 }
 
 uint64 palloc_heap_start(void)
