@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/mman.h>
+#include <sys/syscall.h>
+#include <sys/uio.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -201,6 +203,42 @@ static void test_mapping_lifetime(void)
 	}
 }
 
+static void test_kernel_copy_permissions(void)
+{
+	struct iovec *iov;
+	unsigned char *mapping;
+	int fd, null_fd;
+
+	mapping = mmap(0, PAGE_SIZE, PROT_READ | PROT_WRITE,
+		       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	CHECK(mapping != MAP_FAILED, "copy permission mmap");
+	fd = open(FILE_PATH, O_RDONLY);
+	CHECK(fd >= 0, "copy permission file");
+	CHECK(mprotect(mapping, PAGE_SIZE, PROT_READ) == 0,
+	      "copy permission read-only");
+	errno = 0;
+	CHECK(syscall(SYS_fstat, fd, mapping) < 0 && errno == EFAULT,
+	      "copyout write permission");
+	CHECK(mapping[0] == 0, "copyout preserved mapping");
+	CHECK(mprotect(mapping, PAGE_SIZE, PROT_READ | PROT_WRITE) == 0,
+	      "copy permission restore write");
+	iov = (struct iovec *)mapping;
+	iov->iov_base = (void *)"x";
+	iov->iov_len = 1;
+	null_fd = open("/dev/null", O_WRONLY);
+	CHECK(null_fd >= 0, "copy permission null");
+	CHECK(mprotect(mapping, PAGE_SIZE, PROT_EXEC) == 0,
+	      "copy permission execute-only");
+	errno = 0;
+	CHECK(syscall(SYS_writev, null_fd, iov, 1) < 0 && errno == EFAULT,
+	      "copyin read permission");
+	CHECK(mprotect(mapping, PAGE_SIZE, PROT_READ | PROT_WRITE) == 0,
+	      "copy permission restore read");
+	CHECK(close(null_fd) == 0, "copy permission close null");
+	CHECK(close(fd) == 0, "copy permission close file");
+	CHECK(munmap(mapping, PAGE_SIZE) == 0, "copy permission munmap");
+}
+
 int main(void)
 {
 	unsigned char *anonymous, *file_mapping;
@@ -212,6 +250,7 @@ int main(void)
 	test_partial_changes(anonymous);
 	test_fork_isolation(anonymous, file_mapping);
 	test_mapping_lifetime();
+	test_kernel_copy_permissions();
 	CHECK(munmap(anonymous, 3 * PAGE_SIZE) == 0, "unmap anonymous");
 	CHECK(munmap(file_mapping, 2 * PAGE_SIZE) == 0, "unmap file");
 	CHECK(unlink(FILE_PATH) == 0, "unlink fixture");

@@ -68,7 +68,8 @@ The guest selftest covers:
 - execution of an ELF image whose text and data PT_LOAD segments share a
   page;
 - anonymous and private file mappings, address hints, fixed replacement,
-  partial protection and removal, fork isolation, and mapping lifetime;
+  partial protection and removal, fork isolation, and
+  mapping lifetime, including kernel copies honoring mapping permissions;
 - CFS runqueue progress with 24 runnable processes, timer preemption,
   weighted nice values, and more runnable work than CPUs;
 - concurrent CPU, allocator, ext4, VirtIO completion, sleeplock, and process
