@@ -101,7 +101,7 @@ normalize_kernel_log()
 	if grep -Eq \
 		-e '^\[[[:space:]]*[0-9]+\.[0-9]{6}\] OPENSBI_BOOT_OK' \
 		-e '^\[[[:space:]]*[0-9]+\.[0-9]{6}\] (SCHED_|NETWORK_)' \
-		-e '^\[[[:space:]]*[0-9]+\.[0-9]{6}\] (BUSYBOX_|FS_|TTY_)' \
+		-e '^\[[[:space:]]*[0-9]+\.[0-9]{6}\] (BUSYBOX_|FS_|TTY_|VM_)' \
 		"$timestamped"; then
 		echo "userspace output received a kernel timestamp" >&2
 		exit 1

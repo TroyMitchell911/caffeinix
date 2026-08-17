@@ -21,6 +21,14 @@
 #define PTE_W                   (1L << 2)
 #define PTE_X                   (1L << 3)
 #define PTE_U                   (1L << 4) // user can access
+#define PTE_A                   (1L << 6)
+#define PTE_D                   (1L << 7)
+/* RSW bit used to retain ownership while PTE_U is clear for PROT_NONE. */
+#define PTE_SW_USER             (1L << 8)
+
+#define SCAUSE_INSTRUCTION_PAGE_FAULT 12
+#define SCAUSE_LOAD_PAGE_FAULT        13
+#define SCAUSE_STORE_PAGE_FAULT       15
 
 #define SATP_SV39               (8L << 60)
 #define MAKE_SATP(pgdir)        (SATP_SV39 | (((uint64)pgdir) >> 12))

@@ -69,6 +69,7 @@
 #define LINUX_SYS_clone             220
 #define LINUX_SYS_execve            221
 #define LINUX_SYS_mmap              222
+#define LINUX_SYS_mprotect          226
 #define LINUX_SYS_accept4           242
 #define LINUX_SYS_wait4             260
 #define LINUX_SYS_renameat2         276
@@ -275,6 +276,7 @@ struct linux_linger {
 #define LINUX_PROT_READ              0x1
 #define LINUX_PROT_WRITE             0x2
 #define LINUX_PROT_EXEC              0x4
+#define LINUX_MAP_SHARED             0x1
 #define LINUX_MAP_PRIVATE            0x2
 #define LINUX_MAP_FIXED             0x10
 #define LINUX_MAP_ANONYMOUS         0x20

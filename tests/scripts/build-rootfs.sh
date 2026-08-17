@@ -168,6 +168,28 @@ install -d \
 	"$staging/proc" \
 	"$staging/sys"
 
+"${cross_compile}gcc" \
+	-nostdlib -nostartfiles -static -march=rv64gc -mabi=lp64d \
+	-Wl,--build-id=none -Wl,-z,max-page-size=4096 \
+	-Wl,-T,"$tests_dir/elf_shared_page.ld" \
+	"$tests_dir/elf_shared_page.S" \
+	-o "$staging/bin/elf-shared-page"
+
+mapfile -t elf_load_addresses < <(
+	"${cross_compile}readelf" -lW "$staging/bin/elf-shared-page" |
+		awk '$1 == "LOAD" { print $3 }'
+)
+if [ "${#elf_load_addresses[@]}" -ne 2 ] ||
+	(( elf_load_addresses[0] / 4096 != elf_load_addresses[1] / 4096 )); then
+	echo "ELF boundary selftest must share a PT_LOAD page" >&2
+	exit 1
+fi
+if "${cross_compile}readelf" -l "$staging/bin/elf-shared-page" |
+	grep -q INTERP; then
+	echo "ELF boundary selftest must be statically linked" >&2
+	exit 1
+fi
+
 "$musl_cc" \
 	-static -march=rv64gc -mabi=lp64d \
 	-O2 -Wall -Wextra -Werror \
@@ -198,6 +220,12 @@ install -d \
 	"$tests_dir/pressure_runtime.c" \
 	-o "$staging/bin/pressure-runtime"
 
+"$musl_cc" \
+	-static -march=rv64gc -mabi=lp64d \
+	-O2 -Wall -Wextra -Werror \
+	"$tests_dir/vm_runtime.c" \
+	-o "$staging/bin/vm-runtime"
+
 if "${cross_compile}readelf" -l "$staging/bin/fs-runtime" |
 	grep -q INTERP; then
 	echo "guest selftest must be statically linked" >&2
@@ -225,6 +253,12 @@ fi
 if "${cross_compile}readelf" -l "$staging/bin/pressure-runtime" |
 	grep -q INTERP; then
 	echo "pressure selftest must be statically linked" >&2
+	exit 1
+fi
+
+if "${cross_compile}readelf" -l "$staging/bin/vm-runtime" |
+	grep -q INTERP; then
+	echo "VM selftest must be statically linked" >&2
 	exit 1
 fi
 

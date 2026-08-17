@@ -70,7 +70,7 @@ pte_t *PTE(pagedir_t pgdir, uint64 va, int flag)
 	return vm_walk(pgdir, va, flag, 0, 0);
 }
 
-uint64 va2pa(pagedir_t pgdir, uint64 va)
+static uint64 user_va2pa(pagedir_t pgdir, uint64 va, int permissions)
 {
 	pte_t *pte;
 	uint64 leaf_size;
@@ -84,11 +84,17 @@ uint64 va2pa(pagedir_t pgdir, uint64 va)
                 return 0;
         if((*pte & PTE_V) == 0)
                 return 0;
-	if((*pte & PTE_U) == 0)
+	if ((*pte & PTE_U) == 0 ||
+	    (*pte & permissions) != (uint64)permissions)
 		return 0;
 	leaf_size = sv39_level_size(level);
 	return PTE2PA(*pte) +
 	       (va & (leaf_size - 1) & ~(PGSIZE - 1));
+}
+
+uint64 va2pa(pagedir_t pgdir, uint64 va)
+{
+	return user_va2pa(pgdir, va, 0);
 }
 
 uint64 kvm_va2pa(uint64 va)
@@ -319,29 +325,108 @@ uint64 vm_dealloc(pagedir_t pgdir, uint64 oldsz, uint64 newsz)
 
 uint64 vm_alloc(pagedir_t pgdir, uint64 oldsz, uint64 newsz, int eperm)
 {
-        uint64 addr;
-        void* mem;
         if(newsz <= oldsz)
                 return oldsz;
 
-        oldsz = PGROUNDUP(oldsz);
-	for(addr = oldsz; addr < newsz;addr += PGSIZE) {
+        if (vm_alloc_range(pgdir, PGROUNDUP(oldsz), PGROUNDUP(newsz),
+			   eperm) < 0)
+		return 0;
+        return newsz;
+}
+
+int vm_alloc_range(pagedir_t pgdir, uint64 start, uint64 end, int eperm)
+{
+	return vm_alloc_user_range(pgdir, start, end,
+				   PTE_R | PTE_U | eperm);
+}
+
+int vm_alloc_user_range(pagedir_t pgdir, uint64 start, uint64 end,
+			int permissions)
+{
+	uint64 addr;
+	void *mem;
+
+	if (start > end || start % PGSIZE || end % PGSIZE || end > MAXVA)
+		return -1;
+	if (!(permissions & (PTE_R | PTE_W | PTE_X)) ||
+	    ((permissions & PTE_W) && !(permissions & PTE_R)))
+		return -1;
+	for (addr = start; addr < end; addr += PGSIZE) {
+		if (vm_mapped(pgdir, addr))
+			return -1;
+	}
+	for (addr = start; addr < end; addr += PGSIZE) {
 		mem = palloc_zero();
-                if(!mem) {
-                        vm_dealloc(pgdir, addr, oldsz);
-                        return 0;
-                }
-                if(vm_map(pgdir, (uint64)addr, (uint64)mem, PGSIZE,
-                          PTE_R | PTE_U | eperm) != 0) {
-                        printf("???\n");
-                        pfree(mem);
-                        vm_dealloc(pgdir, addr, oldsz);
-                        return 0;
+		if (!mem)
+			goto fail;
+		if (vm_map(pgdir, addr, (uint64)mem, PGSIZE,
+			   permissions | PTE_SW_USER) < 0) {
+			pfree(mem);
+			goto fail;
 		}
 	}
-
 	sfence_vma();
-        return newsz;
+	return 0;
+
+fail:
+	vm_unmap_range(pgdir, start, addr - start);
+	return -1;
+}
+
+int vm_alloc_load_range(pagedir_t pgdir, uint64 start, uint64 end,
+			int eperm)
+{
+	pte_t *pte;
+
+	if (start > end || start % PGSIZE || end % PGSIZE || end > MAXVA)
+		return -1;
+	if (start < end && vm_mapped(pgdir, start)) {
+		pte = PTE(pgdir, start, 0);
+		if (!pte || !(*pte & PTE_U))
+			return -1;
+		*pte |= PTE_R | PTE_U | eperm;
+		start += PGSIZE;
+		sfence_vma();
+	}
+	return vm_alloc_range(pgdir, start, end, eperm);
+}
+
+uint64 vm_user_pa(pagedir_t pgdir, uint64 va)
+{
+	pte_t *pte;
+
+	if (va >= MAXVA)
+		return 0;
+	pte = PTE(pgdir, va, 0);
+	if (!pte || !(*pte & PTE_V) || !(*pte & PTE_SW_USER) ||
+	    !(*pte & (PTE_R | PTE_W | PTE_X)))
+		return 0;
+	return PTE2PA(*pte) + (va & (PGSIZE - 1));
+}
+
+int vm_protect_user_range(pagedir_t pgdir, uint64 start, uint64 end,
+			  int permissions)
+{
+	uint64 addr;
+	pte_t *pte;
+
+	if (start >= end || start % PGSIZE || end % PGSIZE || end > MAXVA ||
+	    !(permissions & (PTE_R | PTE_W | PTE_X)) ||
+	    ((permissions & PTE_W) && !(permissions & PTE_R)))
+		return -1;
+	for (addr = start; addr < end; addr += PGSIZE) {
+		pte = PTE(pgdir, addr, 0);
+		if (!pte || !(*pte & PTE_V) || !(*pte & PTE_SW_USER) ||
+		    !(*pte & (PTE_R | PTE_W | PTE_X)))
+			return -1;
+	}
+	for (addr = start; addr < end; addr += PGSIZE) {
+		pte = PTE(pgdir, addr, 0);
+		*pte = PA2PTE(PTE2PA(*pte)) | PTE_V | PTE_SW_USER |
+		       (*pte & (PTE_A | PTE_D)) | permissions;
+	}
+	sfence_vma();
+	return 0;
 }
 
 void vm_clear(pagedir_t pgdir, uint64 va)
@@ -373,7 +458,7 @@ static int vm_copy_walk(pagedir_t old, pagedir_t new, int level,
 				return -1;
 			continue;
 		}
-		if (!(pte & PTE_U))
+		if (!(pte & (PTE_U | PTE_SW_USER)))
 			continue;
 		pa = PTE2PA(pte);
 		mem = (uint64)palloc();
@@ -412,7 +497,7 @@ static void vm_free_user_walk(pagedir_t pgdir, int level)
 				                  level - 1);
 			continue;
 		}
-		if (pte & PTE_U) {
+		if (pte & (PTE_U | PTE_SW_USER)) {
 			pfree((void *)PTE2PA(pte));
 			pgdir[i] = 0;
 		}
@@ -430,7 +515,7 @@ int copyout(pagedir_t pgdir, uint64 dstva, char* src, uint64 len)
 
         while(len > 0){
                 va0 = PGROUNDDOWN(dstva);
-                pa0 = va2pa(pgdir, va0);
+                pa0 = user_va2pa(pgdir, va0, PTE_W);
                 if(pa0 == 0)
                         return -1;
                 n = PGSIZE - (dstva - va0);
@@ -451,7 +536,7 @@ int copyin(pagedir_t pgdir, char* dst, uint64 srcva, uint64 len)
 
         while(len > 0){
                 va0 = PGROUNDDOWN(srcva);
-                pa0 = va2pa(pgdir, va0);
+                pa0 = user_va2pa(pgdir, va0, PTE_R);
                 if(pa0 == 0)
                         return -1;
                 n = PGSIZE - (srcva - va0);
@@ -473,7 +558,7 @@ int copyinstr(pagedir_t pgdir, char *dst, uint64 srcva, uint64 max)
 
         while(got_null == 0 && max > 0) {
                 va0 = PGROUNDDOWN(srcva);
-                pa0 = va2pa(pgdir, va0);
+                pa0 = user_va2pa(pgdir, va0, PTE_R);
                 if(pa0 == 0)
                         return -1;
                 n = PGSIZE - (srcva - va0);

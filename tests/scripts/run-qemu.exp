@@ -70,6 +70,18 @@ expect {
 }
 expect_prompt
 
+send -- "/bin/elf-shared-page\r"
+expect {
+	-re {\r?\nELF_SHARED_PAGE_OK} {}
+	-re {not found|applet not found|Bad system call} {
+		abort_test "shared PT_LOAD page executable failed"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in ELF boundary selftest" }
+	timeout { abort_test "ELF boundary selftest timeout" }
+	eof { abort_test "QEMU exited during ELF boundary selftest" }
+}
+expect_prompt
+
 send -- "/bin/ec\t BUSYBOX_TAB_OK\r"
 expect {
 	-re {\r?\nBUSYBOX_TAB_OK} {}
@@ -166,6 +178,18 @@ expect {
 	-re {\[PANIC\]} { abort_test "kernel panic in mixed pressure test" }
 	timeout { abort_test "mixed pressure test timeout" }
 	eof { abort_test "QEMU exited during mixed pressure test" }
+}
+expect_prompt
+
+send -- "/bin/vm-runtime\r"
+expect {
+	-re {\r?\nVM_RUNTIME_OK} {}
+	-re {VM_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "virtual memory test reported failure"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in virtual memory test" }
+	timeout { abort_test "virtual memory test timeout" }
+	eof { abort_test "QEMU exited during virtual memory test" }
 }
 expect_prompt
 
