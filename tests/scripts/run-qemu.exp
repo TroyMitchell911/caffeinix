@@ -70,6 +70,18 @@ expect {
 }
 expect_prompt
 
+send -- "/bin/elf-shared-page\r"
+expect {
+	-re {\r?\nELF_SHARED_PAGE_OK} {}
+	-re {not found|applet not found|Bad system call} {
+		abort_test "shared PT_LOAD page executable failed"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in ELF boundary selftest" }
+	timeout { abort_test "ELF boundary selftest timeout" }
+	eof { abort_test "QEMU exited during ELF boundary selftest" }
+}
+expect_prompt
+
 send -- "/bin/ec\t BUSYBOX_TAB_OK\r"
 expect {
 	-re {\r?\nBUSYBOX_TAB_OK} {}
