@@ -9,18 +9,20 @@ Run the Linux RISC-V UAPI compile-time checks with:
 make -C tests uapi
 ```
 
-Run the host memory-management, red-black-tree, and VirtIO split-ring tests
-with:
+Run the host memory-management, VMA, red-black-tree, and VirtIO split-ring
+tests with:
 
 ```bash
-make -C tests memrange buddy sv39 rbtree virtqueue
+make -C tests memrange buddy sv39 rbtree vma virtqueue
 ```
 
 The memory tests cover range normalization, buddy splitting and coalescing,
 allocation orders, invalid and duplicate frees, randomized reuse, and Sv39
-leaf selection. The tree test performs 20,000 deterministic randomized insert
-and erase operations while checking ordering and red-black invariants. The
-virtqueue test covers scatter/gather chains, descriptor exhaustion,
+leaf selection. The VMA test covers ordered insertion, merging, address hints,
+top-down gap selection, protection splits, partial removal, file offsets, and
+clone ownership. The tree test performs 20,000 deterministic randomized
+insert and erase operations while checking ordering and red-black invariants.
+The virtqueue test covers scatter/gather chains, descriptor exhaustion,
 completion lengths, notification, and 16-bit ring wraparound.
 
 Run the complete QEMU test with:

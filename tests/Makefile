@@ -32,6 +32,16 @@ rbtree:
 		-o $(TEST_OUTPUT)/rbtree
 	$(TEST_OUTPUT)/rbtree
 
+.PHONY: vma
+vma:
+	mkdir -p $(TEST_OUTPUT)
+	$(CC) -std=gnu17 -Wall -Wextra -Werror -fno-builtin \
+		-I $(TOPDIR)/kernel/include \
+		-I $(TOPDIR)/arch/riscv/include \
+		$(CURDIR)/vma.c $(TOPDIR)/kernel/vma.c \
+		-o $(TEST_OUTPUT)/vma
+	$(TEST_OUTPUT)/vma
+
 .PHONY: memrange
 memrange:
 	mkdir -p $(TEST_OUTPUT)
@@ -77,7 +87,7 @@ qemu-args:
 	$(CURDIR)/scripts/check-qemu-args.sh
 
 .PHONY: qemu
-qemu: printk memrange buddy sv39 rbtree virtqueue qemu-args
+qemu: printk memrange buddy sv39 rbtree vma virtqueue qemu-args
 	TEST_OUTPUT="$(TEST_OUTPUT)" JOBS="$(JOBS)" \
 		$(CURDIR)/scripts/run-qemu.sh
 
