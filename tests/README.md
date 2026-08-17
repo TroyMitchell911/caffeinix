@@ -67,6 +67,8 @@ The guest selftest covers:
 - repeated fork, exec, exit, and wait cycles;
 - execution of an ELF image whose text and data PT_LOAD segments share a
   page;
+- anonymous and private file mappings, address hints, fixed replacement,
+  partial protection and removal, fork isolation, and mapping lifetime;
 - CFS runqueue progress with 24 runnable processes, timer preemption,
   weighted nice values, and more runnable work than CPUs;
 - concurrent CPU, allocator, ext4, VirtIO completion, sleeplock, and process

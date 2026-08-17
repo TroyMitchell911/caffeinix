@@ -220,6 +220,12 @@ fi
 	"$tests_dir/pressure_runtime.c" \
 	-o "$staging/bin/pressure-runtime"
 
+"$musl_cc" \
+	-static -march=rv64gc -mabi=lp64d \
+	-O2 -Wall -Wextra -Werror \
+	"$tests_dir/vm_runtime.c" \
+	-o "$staging/bin/vm-runtime"
+
 if "${cross_compile}readelf" -l "$staging/bin/fs-runtime" |
 	grep -q INTERP; then
 	echo "guest selftest must be statically linked" >&2
@@ -247,6 +253,12 @@ fi
 if "${cross_compile}readelf" -l "$staging/bin/pressure-runtime" |
 	grep -q INTERP; then
 	echo "pressure selftest must be statically linked" >&2
+	exit 1
+fi
+
+if "${cross_compile}readelf" -l "$staging/bin/vm-runtime" |
+	grep -q INTERP; then
+	echo "VM selftest must be statically linked" >&2
 	exit 1
 fi
 

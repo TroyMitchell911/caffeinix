@@ -181,6 +181,18 @@ expect {
 }
 expect_prompt
 
+send -- "/bin/vm-runtime\r"
+expect {
+	-re {\r?\nVM_RUNTIME_OK} {}
+	-re {VM_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "virtual memory test reported failure"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in virtual memory test" }
+	timeout { abort_test "virtual memory test timeout" }
+	eof { abort_test "QEMU exited during virtual memory test" }
+}
+expect_prompt
+
 send -- "/usr/bin/nc 10.0.2.2 18081\r"
 send -- "tcp-request\r"
 expect {
