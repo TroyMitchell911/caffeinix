@@ -2,7 +2,8 @@ EXTRA_CFLAGS := -I ./include -I ../arch/riscv/include -I ../include
 CFLAGS_file.o := 
 
 
-obj-y += string.o memrange.o buddy.o palloc.o spinlock.o rbtree.o ktime.o \
+obj-y += string.o memrange.o buddy.o palloc.o spinlock.o rbtree.o vma.o \
+ktime.o \
 timeconv.o \
 printk.o thread.o wait.o \
 sleeplock.o switchto.o trampoline.o process.o\
