@@ -29,6 +29,11 @@ int vm_mapped(pagedir_t pgdir, uint64 va);
 int vm_alloc_range(pagedir_t pgdir, uint64 start, uint64 end, int eperm);
 int vm_alloc_load_range(pagedir_t pgdir, uint64 start, uint64 end,
 			int eperm);
+int vm_alloc_user_range(pagedir_t pgdir, uint64 start, uint64 end,
+			int permissions);
+int vm_protect_user_range(pagedir_t pgdir, uint64 start, uint64 end,
+			  int permissions);
+uint64 vm_user_pa(pagedir_t pgdir, uint64 va);
 uint64 vm_alloc(pagedir_t pgdir, uint64 oldsz, uint64 newsz, int eperm);
 uint64 vm_dealloc(pagedir_t pgdir, uint64 oldsz, uint64 newsz);
 void vm_clear(pagedir_t pgdir, uint64 va);

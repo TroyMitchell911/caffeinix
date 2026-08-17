@@ -236,6 +236,8 @@ static process_t process_alloc(void)
 	p->umask = 0022;
 	p->state = PROCESS_LIVE;
         wait_queue_init(&p->child_wait, "child wait");
+	sleeplock_init(&p->mmap_lock, "process mmap");
+	vma_set_init(&p->vmas);
         
         spinlock_init(&p->lock, "process");
         spinlock_acquire(&p->lock);
@@ -294,6 +296,7 @@ static void process_free(process_t p)
         spinlock_acquire(&p->lock);
         if(!wait_queue_empty(&p->child_wait))
                 PANIC("free process with child waiter");
+	vma_set_destroy(&p->vmas);
         if(p->pagetable) {
                 process_freepagedir(p->pagetable, p->sz);
         }
@@ -339,7 +342,6 @@ void userinit(void)
 	p->sz = 0;
 	p->brk = 0;
 	p->brk_start = 0;
-	p->mmap_top = USER_MMAP_TOP;
 
 	safe_strncpy(p->name, "kernel-init", MAXNAME);
         first = p;
@@ -388,7 +390,10 @@ int process_fork(uint64 child_stack)
         newt = newp->thread[0];
 	scheduler_inherit(newt, oldt);
 
-	if(vm_copy(oldp->pagetable, newp->pagetable) != 0) {
+	sleeplock_acquire(&oldp->mmap_lock);
+	if (vm_copy(oldp->pagetable, newp->pagetable) != 0 ||
+	    vma_set_clone(&newp->vmas, &oldp->vmas) < 0) {
+		sleeplock_release(&oldp->mmap_lock);
 		spinlock_release(&newt->lock);
 		spinlock_release(&newp->lock);
 		spinlock_acquire(&wait_lock);
@@ -396,11 +401,11 @@ int process_fork(uint64 child_stack)
 		spinlock_release(&wait_lock);
 		return -1;
 	}
+	sleeplock_release(&oldp->mmap_lock);
 
         newp->sz = oldp->sz;
 	newp->brk = oldp->brk;
 	newp->brk_start = oldp->brk_start;
-	newp->mmap_top = oldp->mmap_top;
 	newp->umask = oldp->umask;
 	*newt->trapframe = *oldt->trapframe;
 	if (child_stack)
@@ -444,6 +449,9 @@ void exit(int cause)
         int fd;
 
         p = cur_proc();
+	sleeplock_acquire(&p->mmap_lock);
+	vma_set_destroy(&p->vmas);
+	sleeplock_release(&p->mmap_lock);
 
         for(fd = 0; fd < NOFILE; fd++) {
                 if((f = p->ofile[fd]) != 0) {
@@ -624,24 +632,4 @@ int killed(process_t p)
         killed = p->killed;
         spinlock_release(&p->lock);
         return killed;
-}
-
-int process_grow(int n)
-{
-        uint64 sz;
-        process_t p;
-        
-        p = cur_proc();
-        sz = p->sz;
-        
-        if(n > 0) {
-                sz = vm_alloc(p->pagetable, sz, sz + n, PTE_W); 
-                if(sz == 0) {
-                        return -1;
-                }
-        } else if(n < 0) {
-                sz = vm_dealloc(p->pagetable, sz, sz + n);
-        }
-        p->sz = sz;
-        return 0;
 }

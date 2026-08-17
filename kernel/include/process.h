@@ -15,6 +15,8 @@
 #include <spinlock.h>
 #include <riscv.h>
 #include <file.h>
+#include <sleeplock.h>
+#include <vma.h>
 #include <wait.h>
 
 typedef enum process_state{
@@ -43,8 +45,9 @@ typedef struct process{
         uint64 sz;
 	uint64 brk;
 	uint64 brk_start;
-	uint64 mmap_top;
         pagedir_t pagetable;
+	struct sleeplock mmap_lock;
+	struct vma_set vmas;
 	struct vfs_path root;
 	struct vfs_path cwd;
 	uint32 umask;
@@ -67,7 +70,6 @@ typedef struct process{
 void process_init(void);
 pagedir_t process_pagedir(process_t p);
 void process_freepagedir(pagedir_t pgdir, uint64 sz);
-int process_grow(int n);
 int process_fork(uint64 child_stack);
 int process_wait(int target, uint64 status_address, int nohang);
 int process_set_nice(int pid, int nice);

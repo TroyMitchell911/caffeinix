@@ -6,6 +6,7 @@
 #include <scheduler.h>
 #include <vfs.h>
 #include <vm.h>
+#include <vma.h>
 
 struct linux_auxv_entry {
 	uint64 type;
@@ -21,6 +22,19 @@ static int flags2perm(int flags)
 	if (flags & ELF_PROG_FLAG_WRITE)
 		perm |= PTE_W;
 	return perm;
+}
+
+static int flags2prot(int flags)
+{
+	int protection = 0;
+
+	if (flags & ELF_PROG_FLAG_READ)
+		protection |= LINUX_PROT_READ;
+	if (flags & ELF_PROG_FLAG_WRITE)
+		protection |= LINUX_PROT_WRITE;
+	if (flags & ELF_PROG_FLAG_EXEC)
+		protection |= LINUX_PROT_EXEC;
+	return protection;
 }
 
 static int loadseg(pagedir_t pgdir, uint64 va, file_t file,
@@ -136,7 +150,11 @@ int exec_linux(char *path, char **argv, char **envp)
 	struct proghdr ph;
 	pagedir_t oldpgdir, pgdir = 0;
 	process_t p = cur_proc();
+	struct vma_set new_vmas, old_vmas;
 	char *name, *path_p;
+
+	vma_set_init(&new_vmas);
+	vma_set_init(&old_vmas);
 
 	if (vfs_open_file(path, VFS_OPEN_READ, 0, &file) < 0)
 		goto fail;
@@ -183,6 +201,10 @@ int exec_linux(char *path, char **argv, char **envp)
 			goto fail;
 		if (map_end > sz)
 			sz = map_end;
+		if (vma_insert_elf(&new_vmas, map_start, map_end,
+				    flags2prot(ph.flags), file,
+				    PGROUNDDOWN(ph.off)) < 0)
+			goto fail;
 		if (loadseg(pgdir, ph.vaddr, file, ph.off, ph.filesz) < 0)
 			goto fail;
 	}
@@ -196,6 +218,11 @@ int exec_linux(char *path, char **argv, char **envp)
 	if (vm_alloc_range(pgdir, USER_STACK_BASE, USER_STACK_TOP,
 			   PTE_W) < 0)
 		goto fail;
+	if (vma_insert(&new_vmas, USER_STACK_BASE, USER_STACK_TOP,
+		       LINUX_PROT_READ | LINUX_PROT_WRITE,
+		       LINUX_MAP_PRIVATE,
+		       VMA_ANONYMOUS, VMA_STACK, 0, 0) < 0)
+		goto fail;
 	sp = USER_STACK_TOP;
 	stackbase = USER_STACK_BASE;
 
@@ -203,13 +230,16 @@ int exec_linux(char *path, char **argv, char **envp)
 	                         &elf, &sp);
 	if (argc < 0)
 		goto fail;
+	sleeplock_acquire(&p->mmap_lock);
 	oldpgdir = p->pagetable;
 	oldsz = p->sz;
+	vma_set_move(&old_vmas, &p->vmas);
+	vma_set_move(&p->vmas, &new_vmas);
 	p->pagetable = pgdir;
 	p->sz = sz;
 	p->brk = sz;
 	p->brk_start = sz;
-	p->mmap_top = USER_MMAP_TOP;
+	sleeplock_release(&p->mmap_lock);
 	cur_thread()->trapframe->a0 = argc;
 	cur_thread()->trapframe->a1 = sp + sizeof(uint64);
 	cur_thread()->trapframe->sp = sp;
@@ -224,11 +254,13 @@ int exec_linux(char *path, char **argv, char **envp)
 	}
 	safe_strncpy(p->name, name, MAXNAME);
 	process_freepagedir(oldpgdir, oldsz);
+	vma_set_destroy(&old_vmas);
 	return argc;
 
 fail:
 	if (pgdir)
 		process_freepagedir(pgdir, sz);
+	vma_set_destroy(&new_vmas);
 	if (file)
 		vfs_file_put(file);
 	return -1;
