@@ -128,7 +128,9 @@ static int build_linux_stack(pagedir_t pgdir, uint64 stack_top,
 int exec_linux(char *path, char **argv, char **envp)
 {
 	int argc, i;
-	uint64 off, oldsz, phdr = 0, sz = 0, sz1, sp, stackbase;
+	uint64 load_end = 0, map_end, map_start, off, oldsz;
+	uint64 phdr = 0, sz = 0;
+	uint64 sp, stackbase;
 	file_t file = 0;
 	struct elfhdr elf;
 	struct proghdr ph;
@@ -159,21 +161,28 @@ int exec_linux(char *path, char **argv, char **envp)
 			goto fail;
 		if (ph.type != ELF_PROG_LOAD)
 			continue;
-		if (ph.vaddr + ph.memsz < ph.vaddr || ph.memsz < ph.filesz)
+		if (ph.vaddr + ph.memsz < ph.vaddr || ph.memsz < ph.filesz ||
+		    ph.vaddr < load_end)
 			goto fail;
 		if ((ph.vaddr & (PGSIZE - 1)) !=
 		    (ph.off & (PGSIZE - 1)))
 			goto fail;
+		if (!ph.memsz)
+			continue;
+		load_end = ph.vaddr + ph.memsz;
 
 		if (elf.phoff >= ph.off &&
 		    elf.phoff + elf.phnum * sizeof(ph) <= ph.off + ph.filesz)
 			phdr = ph.vaddr + (elf.phoff - ph.off);
 
-		sz1 = vm_alloc(pgdir, sz, ph.vaddr + ph.memsz,
-		               flags2perm(ph.flags));
-		if (!sz1)
+		map_start = PGROUNDDOWN(ph.vaddr);
+		map_end = PGROUNDUP(ph.vaddr + ph.memsz);
+		if (map_end < ph.vaddr + ph.memsz ||
+		    vm_alloc_load_range(pgdir, map_start, map_end,
+					flags2perm(ph.flags)) < 0)
 			goto fail;
-		sz = sz1;
+		if (map_end > sz)
+			sz = map_end;
 		if (loadseg(pgdir, ph.vaddr, file, ph.off, ph.filesz) < 0)
 			goto fail;
 	}
@@ -184,8 +193,8 @@ int exec_linux(char *path, char **argv, char **envp)
 	file = 0;
 
 	sz = PGROUNDUP(sz);
-	sz1 = vm_alloc(pgdir, USER_STACK_BASE, USER_STACK_TOP, PTE_W);
-	if (!sz1)
+	if (vm_alloc_range(pgdir, USER_STACK_BASE, USER_STACK_TOP,
+			   PTE_W) < 0)
 		goto fail;
 	sp = USER_STACK_TOP;
 	stackbase = USER_STACK_BASE;
