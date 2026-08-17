@@ -127,6 +127,15 @@ void user_trap_entry(void)
                 cur_thread()->trapframe->epc += 4;
                 intr_on();
                 syscall();
+        } else if (cause == SCAUSE_INSTRUCTION_PAGE_FAULT ||
+		   cause == SCAUSE_LOAD_PAGE_FAULT ||
+		   cause == SCAUSE_STORE_PAGE_FAULT) {
+		intr_on();
+		pr_warn("process: pid=%d (%s) page fault cause=%lu "
+			"address=%p epc=%p", p->pid, p->name, cause,
+			stval_r(), cur_thread()->trapframe->epc);
+		exit(-1);
+		return;
         } else {
                 if((which_dev = dev_intr(cause)) == 0) {
                         printf("scause %p\n", cause);

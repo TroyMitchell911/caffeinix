@@ -26,6 +26,10 @@
 /* RSW bit used to retain ownership while PTE_U is clear for PROT_NONE. */
 #define PTE_SW_USER             (1L << 8)
 
+#define SCAUSE_INSTRUCTION_PAGE_FAULT 12
+#define SCAUSE_LOAD_PAGE_FAULT        13
+#define SCAUSE_STORE_PAGE_FAULT       15
+
 #define SATP_SV39               (8L << 60)
 #define MAKE_SATP(pgdir)        (SATP_SV39 | (((uint64)pgdir) >> 12))
 
