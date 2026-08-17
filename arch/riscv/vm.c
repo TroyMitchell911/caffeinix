@@ -70,7 +70,7 @@ pte_t *PTE(pagedir_t pgdir, uint64 va, int flag)
 	return vm_walk(pgdir, va, flag, 0, 0);
 }
 
-uint64 va2pa(pagedir_t pgdir, uint64 va)
+static uint64 user_va2pa(pagedir_t pgdir, uint64 va, int permissions)
 {
 	pte_t *pte;
 	uint64 leaf_size;
@@ -84,11 +84,17 @@ uint64 va2pa(pagedir_t pgdir, uint64 va)
                 return 0;
         if((*pte & PTE_V) == 0)
                 return 0;
-	if((*pte & PTE_U) == 0)
+	if ((*pte & PTE_U) == 0 ||
+	    (*pte & permissions) != (uint64)permissions)
 		return 0;
 	leaf_size = sv39_level_size(level);
 	return PTE2PA(*pte) +
 	       (va & (leaf_size - 1) & ~(PGSIZE - 1));
+}
+
+uint64 va2pa(pagedir_t pgdir, uint64 va)
+{
+	return user_va2pa(pgdir, va, 0);
 }
 
 uint64 kvm_va2pa(uint64 va)
@@ -509,7 +515,7 @@ int copyout(pagedir_t pgdir, uint64 dstva, char* src, uint64 len)
 
         while(len > 0){
                 va0 = PGROUNDDOWN(dstva);
-                pa0 = va2pa(pgdir, va0);
+                pa0 = user_va2pa(pgdir, va0, PTE_W);
                 if(pa0 == 0)
                         return -1;
                 n = PGSIZE - (dstva - va0);
@@ -530,7 +536,7 @@ int copyin(pagedir_t pgdir, char* dst, uint64 srcva, uint64 len)
 
         while(len > 0){
                 va0 = PGROUNDDOWN(srcva);
-                pa0 = va2pa(pgdir, va0);
+                pa0 = user_va2pa(pgdir, va0, PTE_R);
                 if(pa0 == 0)
                         return -1;
                 n = PGSIZE - (srcva - va0);
@@ -552,7 +558,7 @@ int copyinstr(pagedir_t pgdir, char *dst, uint64 srcva, uint64 max)
 
         while(got_null == 0 && max > 0) {
                 va0 = PGROUNDDOWN(srcva);
-                pa0 = va2pa(pgdir, va0);
+                pa0 = user_va2pa(pgdir, va0, PTE_R);
                 if(pa0 == 0)
                         return -1;
                 n = PGSIZE - (srcva - va0);
