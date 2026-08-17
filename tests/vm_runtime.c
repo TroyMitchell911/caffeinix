@@ -111,6 +111,15 @@ static unsigned char *test_anonymous_mapping(void)
 	return mapping;
 }
 
+static void wait_for_mapping_fault(pid_t child, const char *name)
+{
+	int status;
+
+	CHECK(child > 0, "fork protected mapping");
+	CHECK(waitpid(child, &status, 0) == child, "wait protected mapping");
+	CHECK(!WIFEXITED(status) || WEXITSTATUS(status) != EXIT_SUCCESS, name);
+}
+
 static void test_hint_and_fixed(void)
 {
 	unsigned char *mapping;
@@ -144,14 +153,32 @@ static void test_partial_changes(unsigned char *mapping)
 {
 	unsigned char *middle = mapping + PAGE_SIZE;
 	void *replacement;
+	pid_t child;
 
 	CHECK(mprotect(middle, PAGE_SIZE, PROT_NONE) == 0,
 	      "partial PROT_NONE");
+	child = fork();
+	CHECK(child >= 0, "fork PROT_NONE");
+	if (!child) {
+		volatile unsigned char value =
+			*(volatile unsigned char *)middle;
+
+		(void)value;
+		_exit(EXIT_SUCCESS);
+	}
+	wait_for_mapping_fault(child, "PROT_NONE fault status");
 	CHECK(mprotect(middle, PAGE_SIZE, PROT_READ | PROT_WRITE) == 0,
 	      "restore protection");
 	CHECK(middle[0] == 0x32, "PROT_NONE preserved data");
 	CHECK(mprotect(middle, PAGE_SIZE, PROT_READ) == 0,
 	      "partial read protection");
+	child = fork();
+	CHECK(child >= 0, "fork read-only mapping");
+	if (!child) {
+		*(volatile unsigned char *)middle = 0xff;
+		_exit(EXIT_SUCCESS);
+	}
+	wait_for_mapping_fault(child, "read-only fault status");
 	CHECK(mprotect(middle, PAGE_SIZE, PROT_READ | PROT_WRITE) == 0,
 	      "restore write protection");
 
