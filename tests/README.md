@@ -9,18 +9,21 @@ Run the Linux RISC-V UAPI compile-time checks with:
 make -C tests uapi
 ```
 
-Run the host memory-management, VMA, red-black-tree, and VirtIO split-ring
+Run the host ELF, memory-management, VMA, red-black-tree, and VirtIO split-ring
 tests with:
 
 ```bash
-make -C tests memrange buddy sv39 rbtree vma virtqueue
+make -C tests elf memrange buddy sv39 rbtree vma virtqueue
 ```
 
 The memory tests cover range normalization, buddy splitting and coalescing,
 allocation orders, invalid and duplicate frees, randomized reuse, and Sv39
 leaf selection. The VMA test covers ordered insertion, merging, address hints,
 top-down gap selection, protection splits, partial removal, file offsets, and
-clone ownership. The tree test performs 20,000 deterministic randomized
+clone ownership. The ELF test covers PIE load bias, program-header and entry
+relocation, segment alignment, overlap and permissions, executable-stack
+requests, integer overflow, and interpreter path validation. The tree test
+performs 20,000 deterministic randomized
 insert and erase operations while checking ordering and red-black invariants.
 The virtqueue test covers scatter/gather chains, descriptor exhaustion,
 completion lengths, notification, and 16-bit ring wraparound.
@@ -43,6 +46,12 @@ for BusyBox ash, runs the full guest suite, syncs storage, and exits QEMU
 through its serial monitor. Finally, a test-only kernel deliberately crosses
 an unmapped kernel-stack guard and must report the overflow from its per-CPU
 emergency stack.
+
+The dynamic ELF handoff tests use minimal relocation-free ET_DYN and ET_EXEC
+interpreters. One main image starts at a high virtual address and requires
+2 MiB PT_LOAD alignment. Permission fixtures exercise an executable stack and
+a permissionless guard segment. The tests validate the kernel-to-loader
+contract only; they are not a replacement for an upstream musl runtime linker.
 
 Each boot requires one SBI BASE report and exactly one online and timer marker
 per logical CPU. A static check rejects machine-mode CSR operations, direct
@@ -67,6 +76,10 @@ The guest selftest covers:
 - repeated fork, exec, exit, and wait cycles;
 - execution of an ELF image whose text and data PT_LOAD segments share a
   page;
+- dynamic ELF interpreter entry, relocated auxiliary-vector values, high-base
+  and large-alignment placement, fixed-address interpreter loading,
+  executable stacks, permissionless load segments, transfer to the
+  main-program entry, and repeated atomic rejection of a missing interpreter;
 - anonymous and private file mappings, address hints, fixed replacement,
   partial protection and removal, child fault isolation, fork isolation, and
   mapping lifetime, including kernel copies honoring mapping permissions;

@@ -410,6 +410,7 @@ _Static_assert(sizeof(struct linux_winsize) == 8,
 #define LINUX_AT_PHENT               4
 #define LINUX_AT_PHNUM               5
 #define LINUX_AT_PAGESZ              6
+#define LINUX_AT_BASE                7
 #define LINUX_AT_ENTRY               9
 #define LINUX_AT_UID                11
 #define LINUX_AT_EUID               12

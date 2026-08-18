@@ -285,20 +285,67 @@ int vma_range_mapped(const struct vma_set *set, uint64 start, uint64 end)
 	return 0;
 }
 
-int vma_find_gap(const struct vma_set *set, uint64 low, uint64 high,
-		 uint64 hint, uint64 length, uint64 *address)
+static int align_up_offset(uint64 value, uint64 alignment, uint64 offset,
+			   uint64 *aligned)
 {
-	uint64 cursor = high;
+	uint64 delta, mask = alignment - 1;
+	uint64 residue = offset & mask;
+
+	if (value <= residue) {
+		*aligned = residue;
+		return 0;
+	}
+	delta = value - residue;
+	if (delta > (uint64)-1 - mask)
+		return -1;
+	*aligned = residue + ((delta + mask) & ~mask);
+	return 0;
+}
+
+static int align_down_offset(uint64 value, uint64 alignment, uint64 offset,
+			     uint64 *aligned)
+{
+	uint64 mask = alignment - 1;
+	uint64 residue = offset & mask;
+
+	if (value < residue)
+		return -1;
+	*aligned = residue + ((value - residue) & ~mask);
+	return 0;
+}
+
+static int gap_aligned_address(uint64 start, uint64 end, uint64 length,
+			       uint64 alignment, uint64 align_offset,
+			       uint64 *address)
+{
+	uint64 candidate;
+
+	if (start >= end || length > end - start ||
+	    align_down_offset(end - length, alignment, align_offset,
+			      &candidate) < 0 || candidate < start)
+		return -1;
+	*address = candidate;
+	return 0;
+}
+
+int vma_find_gap_aligned(const struct vma_set *set, uint64 low, uint64 high,
+			 uint64 hint, uint64 length, uint64 alignment,
+			 uint64 align_offset, uint64 *address)
+{
+	uint64 candidate, cursor = high, gap_start;
 	list_t node;
 
 	if (!set || !address || low >= high || !length ||
 	    low % PGSIZE || high % PGSIZE || length % PGSIZE ||
-	    (hint && hint % PGSIZE) ||
+	    (hint && hint % PGSIZE) || alignment < PGSIZE ||
+	    (alignment & (alignment - 1)) || align_offset % PGSIZE ||
 	    length > high - low)
 		return -1;
 	if (hint >= low && hint <= high - length &&
-	    vma_range_free(set, hint, hint + length)) {
-		*address = hint;
+	    align_up_offset(hint, alignment, align_offset, &candidate) == 0 &&
+	    candidate <= high - length &&
+	    vma_range_free(set, candidate, candidate + length)) {
+		*address = candidate;
 		return 0;
 	}
 	for (node = set->areas.prev; node != &set->areas;
@@ -310,20 +357,25 @@ int vma_find_gap(const struct vma_set *set, uint64 low, uint64 high,
 			continue;
 		if (area->end <= low)
 			break;
-		if (area->end < cursor && cursor - area->end >= length) {
-			*address = cursor - length;
+		gap_start = area->end > low ? area->end : low;
+		if (area->end < cursor &&
+		    gap_aligned_address(gap_start, cursor, length, alignment,
+					align_offset, address) == 0)
 			return 0;
-		}
 		if (area->start < cursor)
 			cursor = area->start;
 		if (cursor <= low)
 			return -1;
 	}
-	if (cursor >= low + length) {
-		*address = cursor - length;
-		return 0;
-	}
-	return -1;
+	return gap_aligned_address(low, cursor, length, alignment,
+				   align_offset, address);
+}
+
+int vma_find_gap(const struct vma_set *set, uint64 low, uint64 high,
+		 uint64 hint, uint64 length, uint64 *address)
+{
+	return vma_find_gap_aligned(set, low, high, hint, length, PGSIZE, 0,
+				    address);
 }
 
 int vma_unmap(struct vma_set *set, uint64 start, uint64 end)
