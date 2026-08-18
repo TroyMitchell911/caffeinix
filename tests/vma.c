@@ -93,6 +93,35 @@ static void test_gap_selection(void)
 	vma_set_destroy(&set);
 }
 
+static void test_aligned_gap_selection(void)
+{
+	struct vma_set set;
+	uint64 address;
+
+	vma_set_init(&set);
+	CHECK(vma_find_gap_aligned(&set, 0x1000, 0x800000, 0x3000,
+				   0x3000, 0x200000, 0x1000,
+				   &address) == 0);
+	CHECK(address == 0x201000);
+	CHECK(vma_insert(&set, 0x201000, 0x205000, LINUX_PROT_READ,
+			 LINUX_MAP_PRIVATE, VMA_ANONYMOUS, VMA_MMAP,
+			 0, 0) == 0);
+	CHECK(vma_find_gap_aligned(&set, 0x1000, 0x800000, 0x3000,
+				   0x3000, 0x200000, 0x1000,
+				   &address) == 0);
+	CHECK(address == 0x601000);
+	vma_set_destroy(&set);
+
+	vma_set_init(&set);
+	CHECK(vma_find_gap_aligned(&set, 0x20000000, 0x40000000,
+				   0x20000000, 0x2000, 0x200000,
+				   0x20000000, &address) == 0);
+	CHECK(address == 0x20000000);
+	CHECK(vma_find_gap_aligned(&set, 0x1000, 0x800000, 0,
+				   0x1000, 0x3000, 0, &address) < 0);
+	vma_set_destroy(&set);
+}
+
 static void test_elf_overlap(void)
 {
 	struct vma_set set;
@@ -193,6 +222,7 @@ int main(void)
 {
 	test_order_and_merge();
 	test_gap_selection();
+	test_aligned_gap_selection();
 	test_elf_overlap();
 	test_split_and_protect();
 	test_clone_and_move();

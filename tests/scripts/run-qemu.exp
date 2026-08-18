@@ -70,6 +70,95 @@ expect {
 }
 expect_prompt
 
+send -- "/bin/elf-interp\r"
+expect {
+	-re {\r?\nELF_INTERP_OK} {}
+	-re {ELF_INTERP_FAIL|not found|applet not found|Bad system call} {
+		abort_test "ELF interpreter handoff failed"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in ELF interpreter test" }
+	timeout { abort_test "ELF interpreter test timeout" }
+	eof { abort_test "QEMU exited during ELF interpreter test" }
+}
+expect {
+	-re {\r?\nELF_MAIN_ENTRY_OK} {}
+	-re {ELF_INTERP_FAIL|not found|applet not found|Bad system call} {
+		abort_test "ELF main entry handoff failed"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic after ELF interpreter" }
+	timeout { abort_test "ELF main entry test timeout" }
+	eof { abort_test "QEMU exited before ELF main entry" }
+}
+expect_prompt
+
+send -- "/bin/elf-high-base >/dev/null && echo ELF_HIGH_BASE_OK\r"
+expect {
+	-re {\r?\nELF_HIGH_BASE_OK} {}
+	-re {ELF_INTERP_FAIL|not found|applet not found|Bad system call} {
+		abort_test "high-base ELF interpreter handoff failed"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in high-base ELF test" }
+	timeout { abort_test "high-base ELF interpreter test timeout" }
+	eof { abort_test "QEMU exited during high-base ELF test" }
+}
+expect_prompt
+
+send -- "/bin/elf-fixed-interp\r"
+expect {
+	-re {\r?\nELF_FIXED_INTERP_OK} {}
+	-re {ELF_INTERP_FAIL|not found|applet not found|Bad system call} {
+		abort_test "fixed ELF interpreter handoff failed"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in fixed ELF test" }
+	timeout { abort_test "fixed ELF interpreter test timeout" }
+	eof { abort_test "QEMU exited during fixed ELF interpreter test" }
+}
+expect {
+	-re {\r?\nELF_FIXED_MAIN_ENTRY_OK} {}
+	-re {ELF_INTERP_FAIL|not found|applet not found|Bad system call} {
+		abort_test "fixed ELF main entry handoff failed"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic after fixed ELF test" }
+	timeout { abort_test "fixed ELF main entry test timeout" }
+	eof { abort_test "QEMU exited before fixed ELF main entry" }
+}
+expect_prompt
+
+send -- "/bin/elf-permissions; echo ELF_GUARD_OK\r"
+expect {
+	-re {\r?\nELF_EXEC_STACK_OK} {}
+	-re {ELF_EXEC_STACK_FAIL|ELF_GUARD_ACCESSIBLE} {
+		abort_test "ELF segment permission test failed"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in ELF permission test" }
+	timeout { abort_test "executable ELF stack test timeout" }
+	eof { abort_test "QEMU exited during ELF permission test" }
+}
+expect {
+	-re {\r?\nELF_GUARD_OK} {}
+	-re {ELF_EXEC_STACK_FAIL|ELF_GUARD_ACCESSIBLE} {
+		abort_test "permissionless PT_LOAD remained accessible"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic after ELF guard fault" }
+	timeout { abort_test "permissionless ELF segment test timeout" }
+	eof { abort_test "QEMU exited during ELF guard test" }
+}
+expect_prompt
+
+send -- "for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do "
+send -- "/bin/elf-missing-interp 2>/dev/null; "
+send -- "done; echo ELF_INTERP_REJECT_OK\r"
+expect {
+	-re {\r?\nELF_INTERP_REJECT_OK} {}
+	-re {ELF_MISSING_INTERP_STARTED} {
+		abort_test "missing ELF interpreter was ignored"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic after rejected interpreters" }
+	timeout { abort_test "rejected ELF interpreter test timeout" }
+	eof { abort_test "QEMU exited after rejected interpreters" }
+}
+expect_prompt
+
 send -- "/bin/elf-shared-page\r"
 expect {
 	-re {\r?\nELF_SHARED_PAGE_OK} {}

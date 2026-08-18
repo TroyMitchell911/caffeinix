@@ -163,6 +163,7 @@ fi
 
 install -d \
 	"$staging/dev" \
+	"$staging/lib" \
 	"$staging/tmp" \
 	"$staging/mnt/fat" \
 	"$staging/proc" \
@@ -174,6 +175,113 @@ install -d \
 	-Wl,-T,"$tests_dir/elf_shared_page.ld" \
 	"$tests_dir/elf_shared_page.S" \
 	-o "$staging/bin/elf-shared-page"
+
+"${cross_compile}gcc" \
+	-nostdlib -nostartfiles -shared -march=rv64gc -mabi=lp64d \
+	-Wl,--build-id=none -Wl,-z,max-page-size=4096 \
+	-Wl,-T,"$tests_dir/elf_interp_loader.ld" \
+	"$tests_dir/elf_interp_loader.S" \
+	-o "$staging/lib/ld-musl-riscv64.so.1"
+
+"${cross_compile}gcc" \
+	-nostdlib -nostartfiles -shared -march=rv64gc -mabi=lp64d \
+	-Wl,--build-id=none -Wl,-z,max-page-size=4096 \
+	-Wl,-T,"$tests_dir/elf_interp_main.ld" \
+	"$tests_dir/elf_interp_main.S" \
+	-o "$staging/bin/elf-interp"
+
+"${cross_compile}gcc" \
+	-nostdlib -nostartfiles -shared -march=rv64gc -mabi=lp64d \
+	-Wl,--build-id=none -Wl,-z,max-page-size=2097152 \
+	-Wl,-T,"$tests_dir/elf_interp_high.ld" \
+	"$tests_dir/elf_interp_main.S" \
+	-o "$staging/bin/elf-high-base"
+
+"${cross_compile}gcc" \
+	-nostdlib -nostartfiles -shared -march=rv64gc -mabi=lp64d \
+	-Wl,--build-id=none -Wl,-z,max-page-size=4096 \
+	-Wl,-T,"$tests_dir/elf_interp_main.ld" \
+	"$tests_dir/elf_missing_interp.S" \
+	-o "$staging/bin/elf-missing-interp"
+
+"${cross_compile}gcc" \
+	-nostdlib -nostartfiles -static -march=rv64gc -mabi=lp64d \
+	-DELF_FIXED_INTERPRETER \
+	-Wl,--build-id=none -Wl,-z,max-page-size=4096 \
+	-Wl,-T,"$tests_dir/elf_interp_fixed_loader.ld" \
+	"$tests_dir/elf_interp_loader.S" \
+	-o "$staging/lib/ld-caffeinix-riscv64.so.1"
+
+"${cross_compile}gcc" \
+	-nostdlib -nostartfiles -shared -march=rv64gc -mabi=lp64d \
+	-DELF_FIXED_INTERPRETER \
+	-Wl,--build-id=none -Wl,-z,max-page-size=4096 \
+	-Wl,-T,"$tests_dir/elf_interp_main.ld" \
+	"$tests_dir/elf_interp_main.S" \
+	-o "$staging/bin/elf-fixed-interp"
+
+"${cross_compile}gcc" \
+	-nostdlib -nostartfiles -static -march=rv64gc -mabi=lp64d \
+	-Wl,--build-id=none -Wl,-z,max-page-size=4096 \
+	-Wl,-T,"$tests_dir/elf_permissions.ld" \
+	"$tests_dir/elf_permissions.S" \
+	-o "$staging/bin/elf-permissions"
+
+if [ "$("${cross_compile}readelf" -h "$staging/bin/elf-interp" |
+	awk '$1 == "Type:" { print $2 }')" != DYN ]; then
+	echo "ELF interpreter selftest must be ET_DYN" >&2
+	exit 1
+fi
+if [ "$("${cross_compile}readelf" -h \
+	"$staging/lib/ld-musl-riscv64.so.1" |
+	awk '$1 == "Type:" { print $2 }')" != DYN ]; then
+	echo "ELF interpreter fixture must be ET_DYN" >&2
+	exit 1
+fi
+if ! "${cross_compile}readelf" -l "$staging/bin/elf-interp" |
+	grep -q '/lib/ld-musl-riscv64.so.1'; then
+	echo "ELF interpreter selftest has the wrong PT_INTERP" >&2
+	exit 1
+fi
+if "${cross_compile}readelf" -l \
+	"$staging/lib/ld-musl-riscv64.so.1" | grep -q INTERP; then
+	echo "ELF interpreter fixture must not contain PT_INTERP" >&2
+	exit 1
+fi
+if [ "$("${cross_compile}readelf" -h "$staging/bin/elf-interp" |
+	awk '$1 == "Number" && $2 == "of" && $3 == "program" &&
+	     $4 == "headers:" { print $5 }')" != 3 ]; then
+	echo "ELF interpreter selftest must contain three program headers" >&2
+	exit 1
+fi
+if [ "$("${cross_compile}readelf" -h \
+	"$staging/lib/ld-caffeinix-riscv64.so.1" |
+	awk '$1 == "Type:" { print $2 }')" != EXEC ]; then
+	echo "fixed ELF interpreter fixture must be ET_EXEC" >&2
+	exit 1
+fi
+if ! "${cross_compile}readelf" -l "$staging/bin/elf-fixed-interp" |
+	grep -q '/lib/ld-caffeinix-riscv64.so.1'; then
+	echo "fixed ELF interpreter selftest has the wrong PT_INTERP" >&2
+	exit 1
+fi
+if "${cross_compile}readelf" -l \
+	"$staging/lib/ld-caffeinix-riscv64.so.1" | grep -q INTERP; then
+	echo "fixed ELF interpreter fixture must not contain PT_INTERP" >&2
+	exit 1
+fi
+
+high_load_address=$("${cross_compile}readelf" -lW \
+	"$staging/bin/elf-high-base" |
+	awk '$1 == "LOAD" { print $3; exit }')
+high_load_alignment=$("${cross_compile}readelf" -lW \
+	"$staging/bin/elf-high-base" |
+	awk '$1 == "LOAD" { print $NF; exit }')
+if (( high_load_address != 0x20000000 ||
+      high_load_alignment != 0x200000 )); then
+	echo "ELF high-base selftest has the wrong PT_LOAD layout" >&2
+	exit 1
+fi
 
 mapfile -t elf_load_addresses < <(
 	"${cross_compile}readelf" -lW "$staging/bin/elf-shared-page" |
