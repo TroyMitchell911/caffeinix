@@ -59,6 +59,9 @@ int vma_range_free(const struct vma_set *set, uint64 start, uint64 end);
 int vma_range_mapped(const struct vma_set *set, uint64 start, uint64 end);
 int vma_find_gap(const struct vma_set *set, uint64 low, uint64 high,
 		 uint64 hint, uint64 length, uint64 *address);
+int vma_find_gap_aligned(const struct vma_set *set, uint64 low, uint64 high,
+			 uint64 hint, uint64 length, uint64 alignment,
+			 uint64 align_offset, uint64 *address);
 int vma_unmap(struct vma_set *set, uint64 start, uint64 end);
 int vma_protect(struct vma_set *set, uint64 start, uint64 end,
 		uint32 protection);

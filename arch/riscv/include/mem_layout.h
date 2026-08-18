@@ -28,6 +28,9 @@
 #define USER_STACK_SIZE  (64 * PGSIZE)
 #define USER_STACK_BASE  (USER_STACK_TOP - USER_STACK_SIZE)
 #define USER_MMAP_TOP    (USER_STACK_BASE - PGSIZE)
+/* Deterministic hints; VMA placement falls back when either range is busy. */
+#define USER_PIE_BASE     0x10000000L
+#define USER_INTERP_BASE  0x30000000L
 /*
  * Put each runtime kernel stack in the lower half of an aligned slot.
  * The unused upper half and the preceding slot's upper half guard both

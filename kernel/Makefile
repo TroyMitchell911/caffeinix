@@ -3,6 +3,7 @@ CFLAGS_file.o :=
 
 
 obj-y += string.o memrange.o buddy.o palloc.o spinlock.o rbtree.o vma.o \
+elf.o \
 ktime.o \
 timeconv.o \
 printk.o thread.o wait.o \

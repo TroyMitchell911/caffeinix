@@ -374,21 +374,27 @@ fail:
 }
 
 int vm_alloc_load_range(pagedir_t pgdir, uint64 start, uint64 end,
-			int eperm)
+			int permissions)
 {
 	pte_t *pte;
 
-	if (start > end || start % PGSIZE || end % PGSIZE || end > MAXVA)
+	if (start > end || start % PGSIZE || end % PGSIZE || end > MAXVA ||
+	    !(permissions & (PTE_R | PTE_W | PTE_X)) ||
+	    ((permissions & PTE_W) && !(permissions & PTE_R)))
 		return -1;
 	if (start < end && vm_mapped(pgdir, start)) {
 		pte = PTE(pgdir, start, 0);
-		if (!pte || !(*pte & PTE_U))
+		if (!pte || !(*pte & PTE_SW_USER))
 			return -1;
-		*pte |= PTE_R | PTE_U | eperm;
+		if (permissions & PTE_U) {
+			if (!(*pte & PTE_U))
+				*pte &= ~(PTE_R | PTE_W | PTE_X);
+			*pte |= permissions;
+		}
 		start += PGSIZE;
 		sfence_vma();
 	}
-	return vm_alloc_range(pgdir, start, end, eperm);
+	return vm_alloc_user_range(pgdir, start, end, permissions);
 }
 
 uint64 vm_user_pa(pagedir_t pgdir, uint64 va)
