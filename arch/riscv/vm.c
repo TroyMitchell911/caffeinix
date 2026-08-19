@@ -457,6 +457,8 @@ static int vm_copy_walk(pagedir_t old, pagedir_t new, int level,
 		if (!(pte & PTE_V))
 			continue;
 		va = base | ((uint64)i << (PGSHIFT + 9 * level));
+		if (va == USER_SIGRETURN)
+			continue;
 		if (!(pte & (PTE_R | PTE_W | PTE_X))) {
 			if (level == 0 ||
 			    vm_copy_walk((pagedir_t)PTE2PA(pte), new,

@@ -994,7 +994,10 @@ int vfs_poll(struct vfs_pollfd *fds, uint32 count, int timeout_ms)
 				break;
 			remaining = timeout_ms - elapsed;
 		}
-		vfs_poll_wait(generation, remaining);
+		if (vfs_poll_wait(generation, remaining) == VFS_ERR_INTR) {
+			ready = VFS_ERR_INTR;
+			break;
+		}
 	}
 	for (index = 0; index < count; index++) {
 		if (files[index])
@@ -1025,10 +1028,13 @@ int vfs_poll_wait(uint64 generation, int timeout_ms)
 		goto out;
 	}
 	if (timeout_ms < 0)
-		wait_queue_sleep(&poll_state.wait, &poll_state.lock);
+		result = wait_queue_sleep_interruptible(
+			&poll_state.wait, &poll_state.lock);
 	else
-		result = wait_queue_sleep_timeout(
+		result = wait_queue_sleep_interruptible_timeout(
 			&poll_state.wait, &poll_state.lock, timeout_ms);
+	if (result == WAIT_QUEUE_INTERRUPTED)
+		result = VFS_ERR_INTR;
 out:
 	spinlock_release(&poll_state.lock);
 	return result;

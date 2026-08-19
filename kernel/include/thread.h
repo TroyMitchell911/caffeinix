@@ -17,6 +17,7 @@
 #include <spinlock.h>
 #include <kernel_config.h>
 #include <riscv.h>
+#include <signal.h>
 
 typedef struct process *process_t;
 struct wait_queue;
@@ -126,6 +127,26 @@ typedef struct thread {
 	uint64 robust_list;
 	uint64 robust_list_len;
 	uint64 signal_mask;
+	struct signal_pending signal_pending;
+	uint64 signal_altstack_sp;
+	uint64 signal_altstack_size;
+	uint32 signal_altstack_flags;
+	uint64 signal_saved_mask;
+	uint64 syscall_a0;
+	uint8 syscall_restart;
+	uint8 futex_restart_active;
+	uint8 futex_restart_armed;
+	uint8 futex_restart_resume;
+	uint8 futex_restart_private;
+	uint64 futex_restart_epc;
+	uint64 futex_restart_address;
+	uint64 futex_restart_timeout_address;
+	uint64 futex_restart_deadline;
+	uint32 futex_restart_expected;
+	uint32 futex_restart_bitset;
+	uint64 signal_sequence;
+	uint64 process_signal_target;
+	uint8 signal_restore_mask;
 	uint8 process_reaper;
 	uint8 exit_requested;
 	int exit_status;
@@ -141,6 +162,7 @@ typedef struct thread {
 	uint64 wait_deadline;
 	int wait_result;
 	uint8 on_timeout_queue;
+	uint8 wait_interruptible;
 	void *wait_private;
 	uint32 wait_bitset;
 }*thread_t;

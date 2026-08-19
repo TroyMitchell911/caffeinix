@@ -22,8 +22,13 @@
 #include <linux_uapi.h>
 #include <futex.h>
 
+#define PROCESS_CHILD_EVENT_NONE       0
+#define PROCESS_CHILD_EVENT_STOPPED    1
+#define PROCESS_CHILD_EVENT_CONTINUED  2
+
 /* From trampoline.S */
 extern char trampoline[];
+extern char sigtrampoline[], sigtrampoline_end[];
 extern int exec_linux(char *path, char **argv, char **envp);
 extern void user_trap_ret(void);
 
@@ -31,6 +36,31 @@ static struct spinlock wait_lock;
 // struct process proc[NPROC];
 struct list proc;
 static process_t first;
+
+static void process_notify_parent_locked(process_t child, int code,
+					 int status);
+
+static int process_parent_auto_reaps_locked(process_t child)
+{
+	struct process_signal_action *action;
+	process_t parent;
+	int result;
+
+	if (!spinlock_holding(&wait_lock))
+		PANIC("auto reap without wait lock");
+	parent = child->parent;
+	if (!parent)
+		return 0;
+	spinlock_acquire(&parent->lock);
+	action = &parent->signal_actions[LINUX_SIGCHLD - 1];
+	result = action->handler == LINUX_SIG_IGN ||
+	         (action->flags & LINUX_SA_NOCLDWAIT);
+	spinlock_release(&parent->lock);
+	return result;
+}
+
+_Static_assert(sizeof(struct signal_pending) <= PGSIZE,
+	       "process signal state must fit in one page");
 
 static int setup_stdio(void)
 {
@@ -126,12 +156,20 @@ pagedir_t process_pagedir(process_t p, thread_t thread)
 		pagedir_free(pgdir);
 		return 0;
         }
+	if (sigtrampoline_end - sigtrampoline > PGSIZE ||
+	    vm_map(pgdir, USER_SIGRETURN, (uint64)sigtrampoline, PGSIZE,
+	           PTE_U | PTE_R | PTE_X) < 0) {
+		vm_unmap(pgdir, TRAMPOLINE, 1, 0);
+		pagedir_free(pgdir);
+		return 0;
+	}
         /* Map address of under trampoline to trapframe */
 	ret = vm_map(pgdir, TRAPFRAME(thread->id_p),
 	             (uint64)thread->trapframe,
                      PGSIZE, PTE_W | PTE_R);
 	if(ret){
                 /* We don't need free the address that PTE points because it is a code seg */
+		vm_unmap(pgdir, USER_SIGRETURN, 1, 0);
 		vm_unmap(pgdir, TRAMPOLINE, 1, 0);
 		pagedir_free(pgdir);
 		return 0;
@@ -148,6 +186,8 @@ void process_freepagedir(pagedir_t pgdir, uint64 sz)
 		if (vm_mapped(pgdir, TRAPFRAME(i)))
 			vm_unmap(pgdir, TRAPFRAME(i), 1, 0);
 	}
+	if (vm_mapped(pgdir, USER_SIGRETURN))
+		vm_unmap(pgdir, USER_SIGRETURN, 1, 0);
 	if (vm_mapped(pgdir, TRAMPOLINE))
 		vm_unmap(pgdir, TRAMPOLINE, 1, 0);
 	vm_free_user(pgdir);
@@ -222,14 +262,21 @@ static process_t process_alloc(void)
         thread_t t;
         int i;
         
-        p = malloc(sizeof(struct process));
-        if(!p)
-                return 0;
+	p = malloc(sizeof(struct process));
+	if(!p)
+		return 0;
 	memset(p, 0, sizeof(*p));
+	p->signal_pending = palloc_zero();
+	if (!p->signal_pending) {
+		free(p);
+		return 0;
+	}
+	signal_process_init(p);
 	p->umask = 0022;
 	p->state = PROCESS_LIVE;
 	wait_queue_init(&p->child_wait, "child wait");
 	wait_queue_init(&p->thread_reap_wait, "thread reap");
+	wait_queue_init(&p->signal_wait, "signal wait");
 	sleeplock_init(&p->mmap_lock, "process mmap");
 	spinlock_init(&p->files_lock, "process files");
 	vma_set_init(&p->vmas);
@@ -270,6 +317,8 @@ r1:
 	spinlock_release(&t->lock);
 r0:
 	spinlock_release(&p->lock);
+	signal_process_destroy(p);
+	pfree(p->signal_pending);
 	free(p);
 	return 0;
 }
@@ -284,7 +333,12 @@ static void process_free(process_t p)
                 PANIC("free process with child waiter");
 	if (!wait_queue_empty(&p->thread_reap_wait))
 		PANIC("free process with thread reaper");
+	if (!wait_queue_empty(&p->signal_wait))
+		PANIC("free process with signal waiter");
 	vma_set_destroy(&p->vmas);
+	signal_process_destroy(p);
+	pfree(p->signal_pending);
+	p->signal_pending = 0;
         if(p->pagetable) {
                 process_freepagedir(p->pagetable, p->sz);
         }
@@ -413,9 +467,10 @@ int process_fork(uint64 child_stack)
 	vfs_path_copy(&newp->cwd, &oldp->cwd);
         /* Copy the process name into newp */
 	safe_strncpy(newp->name, oldp->name, MAXNAME);
-	newt->signal_mask = oldt->signal_mask;
-	memmove(newp->signal_actions, oldp->signal_actions,
-	        sizeof(newp->signal_actions));
+	spinlock_acquire(&oldp->lock);
+	signal_thread_fork(newt, oldt);
+	signal_process_fork(newp, oldp);
+	spinlock_release(&oldp->lock);
 
         spinlock_release(&newp->lock);
         spinlock_release(&newt->lock);
@@ -461,7 +516,7 @@ int process_clone_thread(uint64 flags, uint64 child_stack,
 	child->trapframe->sp = child_stack;
 	if (flags & LINUX_CLONE_SETTLS)
 		child->trapframe->tp = tls;
-	child->signal_mask = current->signal_mask;
+	signal_thread_clone(child, current);
 	if (flags & LINUX_CLONE_CHILD_CLEARTID)
 		child->clear_child_tid = child_tid;
 	child->context.ra = (uint64)user_thread_start;
@@ -609,7 +664,7 @@ void process_thread_exit(int cause, int group)
 {
 	process_t p = cur_proc();
 	thread_t current = cur_thread();
-	int last;
+	int auto_reap, last;
 	int i;
 
 	futex_thread_exit(current);
@@ -618,6 +673,8 @@ void process_thread_exit(int cause, int group)
 	if (group && !p->group_exiting) {
 		p->group_exiting = 1;
 		p->group_exit_state = cause;
+		p->group_exit_signal = 0;
+		p->group_exit_core = 0;
 	}
 	if (p->group_exiting)
 		cause = p->group_exit_state;
@@ -625,8 +682,10 @@ void process_thread_exit(int cause, int group)
 	if (current->state != THREAD_RUNNING || p->live_threads <= 0)
 		PANIC("invalid user thread exit");
 	p->live_threads--;
+	signal_thread_detach_locked(p, current);
 	last = p->live_threads == 0;
 	if (p->group_exiting) {
+		wait_queue_wake_all(&p->signal_wait);
 		for (i = 0; i < PROC_MAXTHREAD; i++) {
 			thread_t thread = p->thread[i];
 
@@ -647,6 +706,7 @@ void process_thread_exit(int cause, int group)
 	process_release_resources(p);
 	spinlock_acquire(&wait_lock);
 	reparent(p);
+	auto_reap = process_parent_auto_reaps_locked(p);
 	spinlock_acquire(&p->lock);
 	spinlock_acquire(&current->lock);
 	if (p->tnums != 1 || p->thread[current->id_p] != current ||
@@ -654,15 +714,21 @@ void process_thread_exit(int cause, int group)
 		PANIC("invalid final user thread");
 	p->exit_state = cause;
 	p->state = PROCESS_ZOMBIE;
-	current->process_reaper = 1;
+	p->auto_reap = auto_reap;
+	current->process_reaper = auto_reap ? 2 : 1;
 	spinlock_release(&p->lock);
-	if (p->parent)
-		wait_queue_wake_all(&p->parent->child_wait);
+	if (p->group_exit_signal)
+		process_notify_parent_locked(
+			p, p->group_exit_core ? LINUX_CLD_DUMPED :
+			LINUX_CLD_KILLED, p->group_exit_signal);
+	else
+		process_notify_parent_locked(p, LINUX_CLD_EXITED,
+		                             p->exit_state & 0xff);
 	spinlock_release(&wait_lock);
 	scheduler_exit_locked();
 }
 
-int process_wait(int target, uint64 status_address, int nohang)
+int process_wait(int target, uint64 status_address, int options)
 {
         process_t p, pp;
 	int exit_status, kids, pid;
@@ -681,19 +747,28 @@ int process_wait(int target, uint64 status_address, int nohang)
 			if(pp->parent == p &&
 			   (target == -1 || target == pp->pid)) {
                                 spinlock_acquire(&pp->lock);
+				if (pp->auto_reap) {
+					spinlock_release(&pp->lock);
+					continue;
+				}
                                 kids = 1;
 				if(pp->state == PROCESS_ZOMBIE) {
                                         pid = pp->pid;
 
-					exit_status =
-						(pp->exit_state & 0xff) << 8;
+					if (pp->group_exit_signal)
+						exit_status =
+							(pp->group_exit_signal & 0x7f) |
+							(pp->group_exit_core ? 0x80 : 0);
+					else
+						exit_status =
+							(pp->exit_state & 0xff) << 8;
 					if(status_address &&
 					   either_copyout(1, status_address,
 					                  &exit_status,
 					                  sizeof(exit_status)) < 0) {
 						spinlock_release(&pp->lock);
 						spinlock_release(&wait_lock);
-						return -2;
+						return PROCESS_WAIT_FAULT;
 					}
 
 					spinlock_release(&pp->lock);
@@ -702,21 +777,232 @@ int process_wait(int target, uint64 status_address, int nohang)
 
                                         return pid;
                                 }
+				if ((pp->child_event ==
+				     PROCESS_CHILD_EVENT_STOPPED &&
+				     (options & LINUX_WUNTRACED)) ||
+				    (pp->child_event ==
+				     PROCESS_CHILD_EVENT_CONTINUED &&
+				     (options & LINUX_WCONTINUED))) {
+					pid = pp->pid;
+					if (pp->child_event ==
+					    PROCESS_CHILD_EVENT_STOPPED)
+						exit_status =
+							(pp->child_event_signal << 8) |
+							0x7f;
+					else
+						exit_status = 0xffff;
+					if (status_address &&
+					    either_copyout(1, status_address,
+					                   &exit_status,
+					                   sizeof(exit_status)) < 0) {
+						spinlock_release(&pp->lock);
+						spinlock_release(&wait_lock);
+						return PROCESS_WAIT_FAULT;
+					}
+					pp->child_event =
+						PROCESS_CHILD_EVENT_NONE;
+					spinlock_release(&pp->lock);
+					spinlock_release(&wait_lock);
+					return pid;
+				}
                                 spinlock_release(&pp->lock);
                         }
                 }
 
-		if(!kids || killed(p)) {
+		if(!kids) {
                         spinlock_release(&wait_lock);
                         return -1;
 		}
-		if (nohang) {
+		if (options & LINUX_WNOHANG) {
 			spinlock_release(&wait_lock);
 			return 0;
 		}
+		if (signal_pending_unblocked(cur_thread())) {
+			spinlock_release(&wait_lock);
+			return PROCESS_WAIT_INTR;
+		}
 
-                wait_queue_sleep(&p->child_wait, &wait_lock);
+		if (wait_queue_sleep_interruptible(&p->child_wait,
+		                                   &wait_lock) ==
+		    WAIT_QUEUE_INTERRUPTED)
+			continue;
         }
+}
+
+void process_auto_reap(process_t process)
+{
+	if (!process)
+		PANIC("auto reap null process");
+	spinlock_acquire(&wait_lock);
+	spinlock_acquire(&process->lock);
+	if (process->state != PROCESS_ZOMBIE || !process->auto_reap ||
+	    process->tnums != 1) {
+		spinlock_release(&process->lock);
+		spinlock_release(&wait_lock);
+		PANIC("invalid auto reap process");
+	}
+	spinlock_release(&process->lock);
+	process_free(process);
+	spinlock_release(&wait_lock);
+}
+
+static process_t process_find_locked(int pid)
+{
+	process_t process;
+	list_t entry;
+
+	if (!spinlock_holding(&wait_lock))
+		PANIC("process lookup unlocked");
+	for (entry = proc.next; entry != &proc; entry = entry->next) {
+		process = list_entry(entry, struct process, all_tag);
+		if (process->pid == pid && process->state == PROCESS_LIVE)
+			return process;
+	}
+	return 0;
+}
+
+static void process_notify_parent_locked(process_t child, int code,
+					 int status)
+{
+	process_t parent = child->parent;
+	struct signal_info information = {
+		.signal = LINUX_SIGCHLD,
+		.code = code,
+		.sender_pid = child->pid,
+		.sender_uid = 0,
+		.status = status,
+	};
+	int suppress;
+
+	if (!spinlock_holding(&wait_lock) || !parent)
+		return;
+	spinlock_acquire(&parent->lock);
+	suppress = (code == LINUX_CLD_STOPPED ||
+	            code == LINUX_CLD_CONTINUED) &&
+		(parent->signal_actions[LINUX_SIGCHLD - 1].flags &
+		 LINUX_SA_NOCLDSTOP);
+	if (!suppress)
+		(void)signal_queue_process_locked(parent, LINUX_SIGCHLD,
+		                                  &information);
+	spinlock_release(&parent->lock);
+	wait_queue_wake_all(&parent->child_wait);
+}
+
+static void process_continue_event_locked(process_t process, int resumed)
+{
+	if (!resumed)
+		return;
+	spinlock_acquire(&process->lock);
+	process->child_event = PROCESS_CHILD_EVENT_CONTINUED;
+	process->child_event_signal = LINUX_SIGCONT;
+	spinlock_release(&process->lock);
+	process_notify_parent_locked(process, LINUX_CLD_CONTINUED,
+	                             LINUX_SIGCONT);
+}
+
+int signal_send_process(int pid, int signal,
+			const struct signal_info *information)
+{
+	process_t process;
+	int result = -1, resumed = 0;
+
+	spinlock_acquire(&wait_lock);
+	process = process_find_locked(pid);
+	if (process) {
+		spinlock_acquire(&process->lock);
+		if (!signal)
+			result = 0;
+		else
+			result = resumed = signal_queue_process_locked(
+				process, signal, information);
+		spinlock_release(&process->lock);
+		if (result >= 0)
+			process_continue_event_locked(process, resumed);
+	}
+	spinlock_release(&wait_lock);
+	return result < 0 ? result : 0;
+}
+
+int signal_send_thread(int thread_group, int tid, int signal,
+		       const struct signal_info *information)
+{
+	process_t process;
+	thread_t target = 0;
+	list_t entry;
+	int index, result = -1, resumed = 0;
+
+	spinlock_acquire(&wait_lock);
+	for (entry = proc.next; entry != &proc; entry = entry->next) {
+		process = list_entry(entry, struct process, all_tag);
+		if (process->state != PROCESS_LIVE ||
+		    (thread_group && process->pid != thread_group))
+			continue;
+		spinlock_acquire(&process->lock);
+		for (index = 0; index < PROC_MAXTHREAD; index++) {
+			target = process->thread[index];
+			if (target && target->tid == tid &&
+			    target->state != THREAD_EXITED)
+				break;
+			target = 0;
+		}
+		if (!target) {
+			spinlock_release(&process->lock);
+			continue;
+		}
+		if (!signal)
+			result = 0;
+		else
+			result = resumed = signal_queue_thread_locked(
+				process, target, signal, information);
+		spinlock_release(&process->lock);
+		if (result >= 0)
+			process_continue_event_locked(process, resumed);
+		break;
+	}
+	spinlock_release(&wait_lock);
+	return result < 0 ? result : 0;
+}
+
+void process_signal_exit(int signal, int core_dumped)
+{
+	process_t process = cur_proc();
+
+	spinlock_acquire(&process->lock);
+	if (!process->group_exiting) {
+		process->group_exiting = 1;
+		process->group_exit_state = 0;
+		process->group_exit_signal = signal;
+		process->group_exit_core = !!core_dumped;
+	}
+	process->stopped = 0;
+	wait_queue_wake_all(&process->signal_wait);
+	spinlock_release(&process->lock);
+	process_thread_exit(0, 0);
+}
+
+void process_signal_stop(int signal)
+{
+	process_t process = cur_proc();
+	int notify = 0;
+
+	spinlock_acquire(&wait_lock);
+	spinlock_acquire(&process->lock);
+	if (!process->stopped && !process->group_exiting) {
+		process->stopped = 1;
+		process->child_event = PROCESS_CHILD_EVENT_STOPPED;
+		process->child_event_signal = signal;
+		notify = 1;
+	}
+	spinlock_release(&process->lock);
+	if (notify)
+		process_notify_parent_locked(process, LINUX_CLD_STOPPED,
+		                             signal);
+	spinlock_release(&wait_lock);
+
+	spinlock_acquire(&process->lock);
+	while (process->stopped && !process->group_exiting)
+		wait_queue_sleep(&process->signal_wait, &process->lock);
+	spinlock_release(&process->lock);
 }
 
 static thread_t process_find_thread_locked(int tid, process_t *owner)
@@ -798,37 +1084,3 @@ int process_get_nice(int tid, int *nice)
  * @return {*} 0: kill successfully     1:kill failed
  * @note This process will be killed actually by user_trap_entry in trap.c
  */
-int kill(int pid)
-{
-        process_t p;
-        list_t l;
-
-        spinlock_acquire(&wait_lock);
-        for(l = proc.next; l != &proc; l = l->next) {
-                p = list_entry(l, struct process, all_tag);
-                if(!p)
-                        continue;
-                spinlock_acquire(&p->lock);
-                if(p->pid == pid) {
-                        p->killed = 1;
-				for(int i = 0; i < PROC_MAXTHREAD; i++)
-                                if(p->thread[i])
-                                        wait_queue_wake_thread(p->thread[i]);
-                        spinlock_release(&p->lock);
-                        spinlock_release(&wait_lock);
-                        return 0;
-                }
-                spinlock_release(&p->lock);
-        }
-        spinlock_release(&wait_lock);
-        return -1;
-}
-
-int killed(process_t p)
-{
-        int killed;
-        spinlock_acquire(&p->lock);
-        killed = p->killed;
-        spinlock_release(&p->lock);
-        return killed;
-}

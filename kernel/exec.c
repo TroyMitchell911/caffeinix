@@ -376,6 +376,7 @@ int exec_linux(char *path, char **argv, char **envp)
 	current->trapframe->fcsr = 0;
 	__atomic_store_n(&process->membarrier_private_expedited, 0,
 	                 __ATOMIC_RELEASE);
+	signal_process_exec(process, current);
 
 	for (name = path_p = path; *path_p; path_p++) {
 		if (*path_p == '/')

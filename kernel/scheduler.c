@@ -2,6 +2,7 @@
 #include <debug.h>
 #include <ktime.h>
 #include <mem_layout.h>
+#include <process.h>
 #include <rbtree.h>
 #include <riscv.h>
 #include <sbi.h>
@@ -483,7 +484,13 @@ void scheduler(void)
 		if (next->state == THREAD_EXITED) {
 			if (next->kernel_thread)
 				kernel_thread_reap(next);
-			else if (!next->process_reaper)
+			else if (next->process_reaper == 2) {
+				process_t process = next->home;
+
+				spinlock_release(&next->lock);
+				process_auto_reap(process);
+				continue;
+			} else if (!next->process_reaper)
 				user_thread_reap(next);
 		}
 		spinlock_release(&next->lock);

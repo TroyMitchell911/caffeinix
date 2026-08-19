@@ -4,6 +4,8 @@
 #include <cpu.h>
 #include <irq.h>
 #include <scheduler.h>
+#include <signal.h>
+#include <linux_uapi.h>
 #include <printf.h>
 #include <plic.h>
 #include <printk.h>
@@ -109,8 +111,11 @@ void user_trap_entry(void)
 {
         int which_dev = 0;
 	int exit_status;
+	int from_syscall = 0;
         process_t p = cur_proc();
+	thread_t current = cur_thread();
         uint64 cause = scause_r();
+	uint64 trap_value = stval_r();
 
         if((sstatus_r() & SSTATUS_SPP)) {
                 PANIC("Not from user mode");
@@ -118,39 +123,54 @@ void user_trap_entry(void)
 
         stvec_w((uint64)kernel_vec);
 
-        cur_thread()->trapframe->epc = sepc_r();
+        current->trapframe->epc = sepc_r();
 
         if(cause == 8) {
-		if (killed(p) || process_group_exiting(p, &exit_status))
-			process_thread_exit(killed(p) ? -1 : exit_status, 0);
-		if (process_thread_exit_requested(cur_thread(), &exit_status))
+		if (process_group_exiting(p, &exit_status))
+			process_thread_exit(exit_status, 0);
+		if (process_thread_exit_requested(current, &exit_status))
 			process_thread_exit(exit_status, 0);
 
                 /* System call */
-                cur_thread()->trapframe->epc += 4;
+		current->syscall_a0 = current->trapframe->a0;
+		current->trapframe->epc += 4;
+		from_syscall = 1;
                 intr_on();
                 syscall();
         } else if (cause == SCAUSE_INSTRUCTION_PAGE_FAULT ||
 		   cause == SCAUSE_LOAD_PAGE_FAULT ||
 		   cause == SCAUSE_STORE_PAGE_FAULT) {
 		intr_on();
-		pr_warn("process: pid=%d (%s) page fault cause=%lu "
-			"address=%p epc=%p", p->pid, p->name, cause,
-			stval_r(), cur_thread()->trapframe->epc);
-		process_thread_exit(-1, 1);
-		return;
+		signal_force_fault(LINUX_SIGSEGV, LINUX_SEGV_MAPERR,
+		                   trap_value);
         } else {
                 if((which_dev = dev_intr(cause)) == 0) {
-                        printf("scause %p\n", cause);
-                        printf("sepc=%p stval=%p\n",
-                               cur_thread()->trapframe->epc, stval_r());
-                        PANIC("user_trap_entry");
+			if ((int64)cause < 0)
+				PANIC("unhandled user interrupt");
+			intr_on();
+			if (cause == 0 || cause == 4 || cause == 6)
+				signal_force_fault(LINUX_SIGBUS,
+				                   LINUX_BUS_ADRALN, trap_value);
+			else if (cause == 2)
+				signal_force_fault(LINUX_SIGILL,
+				                   LINUX_ILL_ILLOPC,
+				                   current->trapframe->epc);
+			else if (cause == 3)
+				signal_force_fault(LINUX_SIGTRAP,
+				                   LINUX_TRAP_BRKPT,
+				                   current->trapframe->epc);
+			else if (cause == 1 || cause == 5 || cause == 7)
+				signal_force_fault(LINUX_SIGSEGV,
+				                   LINUX_SEGV_ACCERR, trap_value);
+			else
+				signal_force_fault(LINUX_SIGSEGV,
+				                   LINUX_SEGV_MAPERR, trap_value);
                 }
         }
 
-	if (killed(p) || process_group_exiting(p, &exit_status))
-		process_thread_exit(killed(p) ? -1 : exit_status, 0);
-	if (process_thread_exit_requested(cur_thread(), &exit_status))
+	if (process_group_exiting(p, &exit_status))
+		process_thread_exit(exit_status, 0);
+	if (process_thread_exit_requested(current, &exit_status))
 		process_thread_exit(exit_status, 0);
 
 	if (which_dev == 2)
@@ -161,6 +181,7 @@ void user_trap_entry(void)
         if(scheduler_should_resched())
                 yield();
 
+	signal_user_return(from_syscall);
         user_trap_ret();
 }
 

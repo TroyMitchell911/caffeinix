@@ -150,75 +150,6 @@ uint64 sys_linux_umask(void)
 	return old_mask;
 }
 
-uint64 sys_linux_rt_sigaction(void)
-{
-	struct linux_sigaction action;
-	process_t process = cur_proc();
-	uint64 action_address, old_action_address, sigset_size;
-	int signal;
-
-	_Static_assert(sizeof(action) ==
-	               sizeof(struct process_signal_action),
-	               "signal action layout mismatch");
-	argint(0, &signal);
-	argaddr(1, &action_address);
-	argaddr(2, &old_action_address);
-	argaddr(3, &sigset_size);
-	if (signal < 1 || signal > 64 ||
-	    sigset_size != LINUX_SIGSET_SIZE)
-		return -LINUX_EINVAL;
-	if (old_action_address &&
-	    copyout(process->pagetable, old_action_address,
-	            (char *)&process->signal_actions[signal - 1],
-	            sizeof(action)) < 0)
-		return -LINUX_EFAULT;
-	if (!action_address)
-		return 0;
-	if (signal == LINUX_SIGKILL || signal == LINUX_SIGSTOP)
-		return -LINUX_EINVAL;
-	if (copyin(process->pagetable, (char *)&action, action_address,
-	           sizeof(action)) < 0)
-		return -LINUX_EFAULT;
-	memmove(&process->signal_actions[signal - 1], &action,
-	        sizeof(action));
-	return 0;
-}
-
-uint64 sys_linux_rt_sigprocmask(void)
-{
-	process_t process = cur_proc();
-	thread_t current = cur_thread();
-	uint64 mask, mask_address, old_mask_address, sigset_size;
-	int how;
-
-	argint(0, &how);
-	argaddr(1, &mask_address);
-	argaddr(2, &old_mask_address);
-	argaddr(3, &sigset_size);
-	if (sigset_size != LINUX_SIGSET_SIZE)
-		return -LINUX_EINVAL;
-	if (old_mask_address &&
-	    copyout(process->pagetable, old_mask_address,
-	            (char *)&current->signal_mask, sizeof(uint64)) < 0)
-		return -LINUX_EFAULT;
-	if (!mask_address)
-		return 0;
-	if (copyin(process->pagetable, (char *)&mask, mask_address,
-	           sizeof(mask)) < 0)
-		return -LINUX_EFAULT;
-	mask &= ~(1ULL << (LINUX_SIGKILL - 1));
-	mask &= ~(1ULL << (LINUX_SIGSTOP - 1));
-	if (how == LINUX_SIG_BLOCK)
-		current->signal_mask |= mask;
-	else if (how == LINUX_SIG_UNBLOCK)
-		current->signal_mask &= ~mask;
-	else if (how == LINUX_SIG_SETMASK)
-		current->signal_mask = mask;
-	else
-		return -LINUX_EINVAL;
-	return 0;
-}
-
 uint64 sys_linux_clone(void)
 {
 	const uint64 thread_required =
@@ -260,12 +191,15 @@ uint64 sys_linux_wait4(void)
 	argint(0, &target);
 	argaddr(1, &status_address);
 	argint(2, &options);
-	if ((target < -1) || target == 0 || options & ~LINUX_WNOHANG)
+	if ((target < -1) || target == 0 ||
+	    options & ~(LINUX_WNOHANG | LINUX_WUNTRACED |
+	                LINUX_WCONTINUED))
 		return -LINUX_EINVAL;
-	result = process_wait(target, status_address,
-	                      options & LINUX_WNOHANG);
-	if (result == -2)
+	result = process_wait(target, status_address, options);
+	if (result == PROCESS_WAIT_FAULT)
 		return -LINUX_EFAULT;
+	if (result == PROCESS_WAIT_INTR)
+		return -SIGNAL_RESTART_SYS;
 	if (result < 0)
 		return -LINUX_ECHILD;
 	return result;

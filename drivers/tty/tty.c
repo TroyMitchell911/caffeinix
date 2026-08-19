@@ -80,7 +80,12 @@ static int64 tty_read(struct tty *tty, int user_destination,
 				spinlock_release(&tty->lock);
 				return total;
 			}
-			wait_queue_sleep(&tty->read_wait, &tty->lock);
+			if (wait_queue_sleep_interruptible(&tty->read_wait,
+			                                   &tty->lock) ==
+			    WAIT_QUEUE_INTERRUPTED) {
+				spinlock_release(&tty->lock);
+				return total ? total : VFS_ERR_INTR;
+			}
 		}
 		if (tty->read_position == tty->commit_position &&
 		    tty->eof_pending) {

@@ -82,6 +82,7 @@ enum vfs_result {
 	VFS_ERR_ALREADY = -46,
 	VFS_ERR_INPROGRESS = -47,
 	VFS_ERR_PIPE = -48,
+	VFS_ERR_INTR = -49,
 };
 
 #define VFS_RENAME_NOREPLACE (1U << 0)

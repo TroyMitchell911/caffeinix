@@ -94,12 +94,14 @@ void thread_setup(void)
                 t->kstack = KSTACK((int)(t - thread));;
                 t->state = THREAD_UNUSED;
 		thread_sched_init(t);
+	signal_thread_init(t);
                 t->waiting_on = 0;
                 t->on_waitqueue = 0;
 		t->wait_private = 0;
 		t->wait_bitset = ~(uint32)0;
                 list_init(&t->wait_node);
 		t->on_timeout_queue = 0;
+		t->wait_interruptible = 0;
 		list_init(&t->timeout_node);
                 strncpy(t->name, "thread", 7);
         }
@@ -144,7 +146,7 @@ found:
 	t->clear_child_tid = 0;
 	t->robust_list = 0;
 	t->robust_list_len = 0;
-	t->signal_mask = 0;
+	signal_thread_init(t);
 	t->process_reaper = 0;
 	t->exit_requested = 0;
 	t->exit_status = 0;
@@ -155,6 +157,7 @@ found:
 	t->wait_bitset = ~(uint32)0;
         list_init(&t->wait_node);
 	t->on_timeout_queue = 0;
+	t->wait_interruptible = 0;
 	list_init(&t->timeout_node);
 	t->kernel_function = 0;
 	t->kernel_argument = 0;
@@ -212,7 +215,7 @@ found:
 	t->clear_child_tid = 0;
 	t->robust_list = 0;
 	t->robust_list_len = 0;
-	t->signal_mask = 0;
+		signal_thread_init(t);
 	t->process_reaper = 0;
 	t->exit_requested = 0;
 	t->exit_status = 0;
@@ -223,6 +226,7 @@ found:
 	t->wait_bitset = ~(uint32)0;
 	list_init(&t->wait_node);
 	t->on_timeout_queue = 0;
+	t->wait_interruptible = 0;
 	list_init(&t->timeout_node);
 	memset(&t->context, 0, sizeof(t->context));
 	t->context.ra = (uint64)kernel_thread_entry;
@@ -248,12 +252,13 @@ void kernel_thread_reap(thread_t t)
 	t->clear_child_tid = 0;
 	t->robust_list = 0;
 	t->robust_list_len = 0;
-	t->signal_mask = 0;
+	signal_thread_destroy(t);
 	t->process_reaper = 0;
 	t->exit_requested = 0;
 	t->exit_status = 0;
 	t->wait_private = 0;
 	t->wait_bitset = ~(uint32)0;
+	t->wait_interruptible = 0;
 	thread_sched_init(t);
 	list_init(&t->wait_node);
 	list_init(&t->timeout_node);
@@ -278,7 +283,8 @@ void thread_free(thread_t t)
         if(p->tnums == 0)
                 PANIC("thread_free");
 
-        for(i = 0; i < PROC_MAXTHREAD; i++) {
+	signal_thread_detach_locked(p, t);
+	for(i = 0; i < PROC_MAXTHREAD; i++) {
                 if(p->thread[i] == t) {
                         p->thread[i] = 0;
 			found = 1;
@@ -304,12 +310,13 @@ void thread_free(thread_t t)
 	t->clear_child_tid = 0;
 	t->robust_list = 0;
 	t->robust_list_len = 0;
-	t->signal_mask = 0;
+	signal_thread_destroy(t);
 	t->process_reaper = 0;
 	t->exit_requested = 0;
 	t->exit_status = 0;
 	t->wait_private = 0;
 	t->wait_bitset = ~(uint32)0;
+	t->wait_interruptible = 0;
 	thread_sched_init(t);
         list_init(&t->wait_node);
 	list_init(&t->timeout_node);

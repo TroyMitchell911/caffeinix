@@ -3,6 +3,7 @@
 #include <mystring.h>
 #include <printk.h>
 #include <scheduler.h>
+#include <signal.h>
 #include <syscall.h>
 #include <vm.h>
 
@@ -96,8 +97,16 @@ extern uint64 sys_linux_renameat2(void);
 extern uint64 sys_linux_set_tid_address(void);
 extern uint64 sys_linux_clone(void);
 extern uint64 sys_linux_clock_gettime(void);
+extern uint64 sys_linux_kill(void);
+extern uint64 sys_linux_tkill(void);
+extern uint64 sys_linux_tgkill(void);
+extern uint64 sys_linux_sigaltstack(void);
+extern uint64 sys_linux_rt_sigsuspend(void);
 extern uint64 sys_linux_rt_sigaction(void);
 extern uint64 sys_linux_rt_sigprocmask(void);
+extern uint64 sys_linux_rt_sigpending(void);
+extern uint64 sys_linux_rt_sigtimedwait(void);
+extern uint64 sys_linux_rt_sigreturn(void);
 extern uint64 sys_linux_setpriority(void);
 extern uint64 sys_linux_getpriority(void);
 extern uint64 sys_linux_symlinkat(void);
@@ -165,8 +174,16 @@ static syscall_t linux_syscalls[LINUX_SYS_membarrier + 1] = {
 	[LINUX_SYS_get_robust_list] = sys_linux_get_robust_list,
 	[LINUX_SYS_set_tid_address] = sys_linux_set_tid_address,
 	[LINUX_SYS_clock_gettime] = sys_linux_clock_gettime,
+	[LINUX_SYS_kill] = sys_linux_kill,
+	[LINUX_SYS_tkill] = sys_linux_tkill,
+	[LINUX_SYS_tgkill] = sys_linux_tgkill,
+	[LINUX_SYS_sigaltstack] = sys_linux_sigaltstack,
+	[LINUX_SYS_rt_sigsuspend] = sys_linux_rt_sigsuspend,
 	[LINUX_SYS_rt_sigaction] = sys_linux_rt_sigaction,
 	[LINUX_SYS_rt_sigprocmask] = sys_linux_rt_sigprocmask,
+	[LINUX_SYS_rt_sigpending] = sys_linux_rt_sigpending,
+	[LINUX_SYS_rt_sigtimedwait] = sys_linux_rt_sigtimedwait,
+	[LINUX_SYS_rt_sigreturn] = sys_linux_rt_sigreturn,
 	[LINUX_SYS_setpriority] = sys_linux_setpriority,
 	[LINUX_SYS_getpriority] = sys_linux_getpriority,
 	[LINUX_SYS_umask] = sys_linux_umask,
@@ -207,13 +224,19 @@ static syscall_t linux_syscalls[LINUX_SYS_membarrier + 1] = {
 
 void syscall(void)
 {
+	uint64 result;
 	uint64 nr;
 	process_t p = cur_proc();
 	thread_t current = cur_thread();
 
 	nr = current->trapframe->a7;
+	current->syscall_restart = 0;
 	if (nr < NELEM(linux_syscalls) && linux_syscalls[nr]) {
-		current->trapframe->a0 = linux_syscalls[nr]();
+		result = linux_syscalls[nr]();
+		if (nr != LINUX_SYS_rt_sigreturn &&
+		    (int64)result == -SIGNAL_RESTART_SYS)
+			current->syscall_restart = 1;
+		current->trapframe->a0 = result;
 		return;
 	}
 

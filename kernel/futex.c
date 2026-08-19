@@ -4,6 +4,7 @@
 #include <linux_uapi.h>
 #include <process.h>
 #include <scheduler.h>
+#include <signal.h>
 #include <syscall.h>
 #include <vm.h>
 #include <wait.h>
@@ -38,6 +39,82 @@ static struct {
 	struct spinlock lock;
 	struct futex_slot slots[FUTEX_SLOT_COUNT];
 } futex_table;
+
+void futex_restart_cancel(thread_t thread)
+{
+	if (!thread)
+		return;
+	thread->futex_restart_active = 0;
+	thread->futex_restart_armed = 0;
+	thread->futex_restart_resume = 0;
+	thread->futex_restart_private = 0;
+	thread->futex_restart_epc = 0;
+	thread->futex_restart_address = 0;
+	thread->futex_restart_timeout_address = 0;
+	thread->futex_restart_deadline = 0;
+	thread->futex_restart_expected = 0;
+	thread->futex_restart_bitset = 0;
+}
+
+void futex_restart_signal(thread_t thread, int through_handler)
+{
+	if (!thread || !thread->futex_restart_active)
+		return;
+	thread->futex_restart_armed = !!through_handler;
+	thread->futex_restart_resume = !through_handler;
+}
+
+void futex_restart_sigreturn(thread_t thread)
+{
+	if (!thread || !thread->futex_restart_active ||
+	    !thread->futex_restart_armed)
+		return;
+	if (thread->trapframe->epc != thread->futex_restart_epc ||
+	    thread->trapframe->a7 != LINUX_SYS_futex ||
+	    thread->trapframe->a0 != thread->futex_restart_address) {
+		futex_restart_cancel(thread);
+		return;
+	}
+	thread->futex_restart_armed = 0;
+	thread->futex_restart_resume = 1;
+}
+
+static int futex_restart_take(thread_t thread, uint64 address, int private,
+			      uint32 expected, uint64 timeout_address,
+			      uint32 bitset, uint64 *deadline)
+{
+	uint64 epc = thread->trapframe->epc - 4;
+
+	if (thread->futex_restart_active && thread->futex_restart_resume &&
+	    thread->futex_restart_epc == epc &&
+	    thread->futex_restart_address == address &&
+	    thread->futex_restart_private == !!private &&
+	    thread->futex_restart_expected == expected &&
+	    thread->futex_restart_timeout_address == timeout_address &&
+	    thread->futex_restart_bitset == bitset) {
+		*deadline = thread->futex_restart_deadline;
+		thread->futex_restart_resume = 0;
+		return 1;
+	}
+	futex_restart_cancel(thread);
+	return 0;
+}
+
+static void futex_restart_set(thread_t thread, uint64 address, int private,
+			      uint32 expected, uint64 timeout_address,
+			      uint32 bitset, uint64 deadline)
+{
+	thread->futex_restart_active = 1;
+	thread->futex_restart_armed = 0;
+	thread->futex_restart_resume = 0;
+	thread->futex_restart_private = !!private;
+	thread->futex_restart_epc = thread->trapframe->epc - 4;
+	thread->futex_restart_address = address;
+	thread->futex_restart_timeout_address = timeout_address;
+	thread->futex_restart_deadline = deadline;
+	thread->futex_restart_expected = expected;
+	thread->futex_restart_bitset = bitset;
+}
 
 static int futex_key_equal(const struct futex_key *left,
 			   const struct futex_key *right)
@@ -185,16 +262,20 @@ static int futex_wait(uint64 address, int private, uint32 expected,
 	struct futex_slot *slot;
 	process_t process = cur_proc();
 	thread_t current = cur_thread();
-	uint64 milliseconds = 0;
+	uint64 deadline = 0, milliseconds = 0;
 	uint32 value;
-	int result, timed;
+	int result, restarted = 0, timed;
 
 	if (!bitset)
 		return -LINUX_EINVAL;
 	result = futex_key_get(process, address, private, &key);
 	if (result < 0)
 		return result;
-	timed = absolute ?
+	if (!absolute && timeout_address)
+		restarted = futex_restart_take(
+			current, address, private, expected, timeout_address,
+			bitset, &deadline);
+	timed = restarted ? 1 : absolute ?
 		futex_absolute_timeout(process, timeout_address,
 		                       &milliseconds) :
 		futex_relative_timeout(process, timeout_address,
@@ -210,6 +291,7 @@ static int futex_wait(uint64 address, int private, uint32 expected,
 	}
 	if (value != expected) {
 		spinlock_release(&futex_table.lock);
+		futex_restart_cancel(current);
 		return -LINUX_EAGAIN;
 	}
 	slot = futex_slot_get_locked(&key);
@@ -220,12 +302,24 @@ static int futex_wait(uint64 address, int private, uint32 expected,
 	slot->waiters++;
 	current->wait_private = slot;
 	current->wait_bitset = bitset;
-	if (timed)
-		result = wait_queue_sleep_timeout(&slot->wait,
-			&futex_table.lock, milliseconds);
-	else {
-		wait_queue_sleep(&slot->wait, &futex_table.lock);
-		result = 0;
+	if (timed && !absolute) {
+		if (!restarted) {
+			uint64 delta = ktime_ms_to_ticks(milliseconds);
+			uint64 now = ktime_get_ticks();
+
+			deadline = now > ~(uint64)0 - delta ?
+				~(uint64)0 : now + delta;
+			futex_restart_set(current, address, private, expected,
+			                  timeout_address, bitset, deadline);
+		}
+		result = wait_queue_sleep_interruptible_until(
+			&slot->wait, &futex_table.lock, deadline);
+	} else if (timed) {
+		result = wait_queue_sleep_interruptible_timeout(
+			&slot->wait, &futex_table.lock, milliseconds);
+	} else {
+		result = wait_queue_sleep_interruptible(
+			&slot->wait, &futex_table.lock);
 	}
 	slot = current->wait_private;
 	if (!slot)
@@ -234,7 +328,10 @@ static int futex_wait(uint64 address, int private, uint32 expected,
 	current->wait_private = 0;
 	current->wait_bitset = ~(uint32)0;
 	spinlock_release(&futex_table.lock);
-	return result < 0 ? -LINUX_ETIMEDOUT : 0;
+	if (result == WAIT_QUEUE_INTERRUPTED)
+		return -SIGNAL_RESTART_SYS;
+	futex_restart_cancel(current);
+	return result == WAIT_QUEUE_TIMEOUT ? -LINUX_ETIMEDOUT : 0;
 }
 
 static int futex_wake_key_locked(const struct futex_key *key, int count,
