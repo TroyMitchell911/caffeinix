@@ -382,6 +382,7 @@ void userinit(void)
 	p->sz = 0;
 	p->brk = 0;
 	p->brk_start = 0;
+	p->mmap_top = USER_MMAP_TOP;
 
 	safe_strncpy(p->name, "kernel-init", MAXNAME);
         first = p;

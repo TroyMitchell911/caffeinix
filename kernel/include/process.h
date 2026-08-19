@@ -45,6 +45,7 @@ typedef struct process{
         uint64 sz;
 	uint64 brk;
 	uint64 brk_start;
+	uint64 mmap_top;
         pagedir_t pagetable;
 	struct sleeplock mmap_lock;
 	struct vma_set vmas;

@@ -62,6 +62,7 @@ int mmap_process_fork(process_t parent, process_t child)
 	child->sz = parent->sz;
 	child->brk = parent->brk;
 	child->brk_start = parent->brk_start;
+	child->mmap_top = parent->mmap_top;
 	list_insert_after(&mmap_registry.processes, &child->mmap_tag);
 	child->mmap_registered = 1;
 	result = 0;
@@ -358,7 +359,7 @@ uint64 sys_linux_brk(void)
 		return process->brk;
 	sleeplock_acquire(&process->mmap_lock);
 	result = process->brk;
-	if (requested < process->brk_start || requested > USER_MMAP_TOP ||
+	if (requested < process->brk_start || requested > process->mmap_top ||
 	    requested > (uint64)-1 - (PGSIZE - 1))
 		goto out;
 	old_end = PGROUNDUP(process->brk);
@@ -451,12 +452,17 @@ uint64 sys_linux_mmap(void)
 
 		if (low < PGSIZE)
 			low = PGSIZE;
-		hint = address ? PGROUNDDOWN(address) : 0;
-		if (hint < low || hint > USER_MMAP_TOP - length)
-			hint = 0;
-		if (vma_find_gap(&process->vmas, low, USER_MMAP_TOP,
-				 hint, length, &start) < 0)
+		if (low >= USER_MMAP_TOP || length > USER_MMAP_TOP - low)
 			goto out_unlock;
+		hint = address ? PGROUNDDOWN(address) : 0;
+		if (hint >= low && hint <= USER_MMAP_TOP - length &&
+		    vma_range_free(&process->vmas, hint, hint + length)) {
+			start = hint;
+		} else if (vma_find_gap(&process->vmas, low,
+					process->mmap_top, 0, length,
+					&start) < 0) {
+			goto out_unlock;
+		}
 		end = start + length;
 	}
 	if (backing ?

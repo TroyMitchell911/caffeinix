@@ -26,6 +26,47 @@ struct linux_exec_layout {
 	uint16 phnum;
 };
 
+struct exec_aslr_layout {
+	uint64 pie_hint;
+	uint64 interpreter_hint;
+	uint64 stack_top;
+	uint64 mmap_top;
+	uint64 brk_gap;
+};
+
+static int random_page_offset(uint64 size, uint64 *offset)
+{
+	uint64 pages, value;
+
+	if (!offset || size < PGSIZE || size % PGSIZE ||
+	    get_random_u64(&value) < 0)
+		return -1;
+	pages = size / PGSIZE;
+	*offset = value % pages * PGSIZE;
+	return 0;
+}
+
+static int exec_aslr_layout_init(struct exec_aslr_layout *layout)
+{
+	uint64 brk_offset, interpreter_offset, mmap_offset;
+	uint64 pie_offset, stack_offset;
+
+	if (!layout ||
+	    random_page_offset(USER_PIE_RND_SIZE, &pie_offset) < 0 ||
+	    random_page_offset(USER_INTERP_RND_SIZE,
+			       &interpreter_offset) < 0 ||
+	    random_page_offset(USER_STACK_RND_SIZE, &stack_offset) < 0 ||
+	    random_page_offset(USER_MMAP_RND_SIZE, &mmap_offset) < 0 ||
+	    random_page_offset(USER_BRK_RND_SIZE, &brk_offset) < 0)
+		return -1;
+	layout->pie_hint = USER_PIE_BASE + pie_offset;
+	layout->interpreter_hint = USER_INTERP_BASE + interpreter_offset;
+	layout->stack_top = USER_STACK_TOP - stack_offset;
+	layout->mmap_top = USER_MMAP_TOP - mmap_offset;
+	layout->brk_gap = brk_offset;
+	return 0;
+}
+
 static int flags2prot(int flags)
 {
 	int protection = 0;
@@ -310,13 +351,14 @@ static int build_linux_stack(pagedir_t pgdir, uint64 stack_top,
 int exec_linux(char *path, char **argv, char **envp)
 {
 	struct elf_image executable = {0}, interpreter = {0};
+	struct exec_aslr_layout aslr;
 	struct linux_exec_layout exec;
 	struct vma_set new_vmas, old_vmas;
 	char interpreter_path[MAXPATH];
 	pagedir_t oldpgdir, pgdir = 0;
 	process_t process = cur_proc();
 	thread_t current = cur_thread();
-	uint64 entry, oldsz, sp, sz = 0;
+	uint64 brk_start, entry, oldsz, sp, stack_base, sz = 0;
 	char *name, *path_p;
 	int argc, stack_permissions = PTE_W;
 	uint32 stack_protection = LINUX_PROT_READ | LINUX_PROT_WRITE;
@@ -325,7 +367,8 @@ int exec_linux(char *path, char **argv, char **envp)
 		return -1;
 	vma_set_init(&new_vmas);
 	vma_set_init(&old_vmas);
-	if (elf_image_open(path, &executable) < 0)
+	if (exec_aslr_layout_init(&aslr) < 0 ||
+	    elf_image_open(path, &executable) < 0)
 		goto fail;
 	if (executable.layout.has_interp &&
 	    elf_image_interpreter(&executable, interpreter_path) < 0)
@@ -333,7 +376,7 @@ int exec_linux(char *path, char **argv, char **envp)
 
 	pgdir = process_pagedir(process, current);
 	if (!pgdir ||
-	    elf_image_place(&executable, &new_vmas, USER_PIE_BASE) < 0 ||
+	    elf_image_place(&executable, &new_vmas, aslr.pie_hint) < 0 ||
 	    elf_image_map(&executable, pgdir, &new_vmas) < 0)
 		goto fail;
 	sz = executable.runtime.map_end;
@@ -344,7 +387,7 @@ int exec_linux(char *path, char **argv, char **envp)
 		if (elf_image_open(interpreter_path, &interpreter) < 0 ||
 		    interpreter.layout.has_interp ||
 		    elf_image_place(&interpreter, &new_vmas,
-				    USER_INTERP_BASE) < 0 ||
+				    aslr.interpreter_hint) < 0 ||
 		    elf_image_map(&interpreter, pgdir, &new_vmas) < 0)
 			goto fail;
 		entry = interpreter.runtime.entry;
@@ -360,17 +403,24 @@ int exec_linux(char *path, char **argv, char **envp)
 	elf_image_close(&interpreter);
 	elf_image_close(&executable);
 
-	if (vm_alloc_range(pgdir, USER_STACK_BASE, USER_STACK_TOP,
+	stack_base = aslr.stack_top - USER_STACK_SIZE;
+	if (vm_alloc_range(pgdir, stack_base, aslr.stack_top,
 			   stack_permissions) < 0 ||
-	    vma_insert(&new_vmas, USER_STACK_BASE, USER_STACK_TOP,
+	    vma_insert(&new_vmas, stack_base, aslr.stack_top,
 		       stack_protection,
 		       LINUX_MAP_PRIVATE, VMA_ANONYMOUS, VMA_STACK,
 		       0, 0) < 0)
 		goto fail;
-	sp = USER_STACK_TOP;
-	argc = build_linux_stack(pgdir, USER_STACK_TOP, USER_STACK_BASE,
+	sp = aslr.stack_top;
+	argc = build_linux_stack(pgdir, aslr.stack_top, stack_base,
 				 argv, envp, &exec, &sp);
 	if (argc < 0)
+		goto fail;
+	if (sz > (uint64)-1 - aslr.brk_gap)
+		goto fail;
+	brk_start = PGROUNDUP(sz) + aslr.brk_gap;
+	if (brk_start < sz || brk_start >= aslr.mmap_top ||
+	    !vma_range_free(&new_vmas, PGROUNDUP(sz), brk_start + PGSIZE))
 		goto fail;
 	if (process_exec_quiesce(process, current) < 0)
 		goto fail;
@@ -381,9 +431,10 @@ int exec_linux(char *path, char **argv, char **envp)
 	vma_set_move(&old_vmas, &process->vmas);
 	vma_set_move(&process->vmas, &new_vmas);
 	process->pagetable = pgdir;
-	process->sz = sz;
-	process->brk = sz;
-	process->brk_start = sz;
+	process->sz = brk_start;
+	process->brk = brk_start;
+	process->brk_start = brk_start;
+	process->mmap_top = aslr.mmap_top;
 	sleeplock_release(&process->mmap_lock);
 	current->trapframe->a0 = argc;
 	current->trapframe->a1 = sp + sizeof(uint64);
