@@ -14,6 +14,7 @@
 #include <linux/in.h>
 #include <linux/futex.h>
 #include <linux/mman.h>
+#include <linux/membarrier.h>
 #include <linux/sched.h>
 #include <linux/tcp.h>
 #include <linux/time_types.h>
@@ -50,6 +51,8 @@ _Static_assert(LINUX_SYS_set_robust_list == __NR_set_robust_list,
 	       "set_robust_list number");
 _Static_assert(LINUX_SYS_get_robust_list == __NR_get_robust_list,
 	       "get_robust_list number");
+_Static_assert(LINUX_SYS_membarrier == __NR_membarrier,
+	       "membarrier number");
 _Static_assert(LINUX_SYS_execve == __NR_execve, "execve number");
 _Static_assert(LINUX_SYS_mprotect == __NR_mprotect, "mprotect number");
 _Static_assert(LINUX_SYS_wait4 == __NR_wait4, "wait4 number");
@@ -113,3 +116,6 @@ _Static_assert(LINUX_FUTEX_WAIT == FUTEX_WAIT, "FUTEX_WAIT value");
 _Static_assert(LINUX_FUTEX_WAKE == FUTEX_WAKE, "FUTEX_WAKE value");
 _Static_assert(LINUX_FUTEX_PRIVATE_FLAG == FUTEX_PRIVATE_FLAG,
 	       "FUTEX_PRIVATE_FLAG value");
+_Static_assert(LINUX_MEMBARRIER_CMD_PRIVATE_EXPEDITED ==
+	       MEMBARRIER_CMD_PRIVATE_EXPEDITED,
+	       "MEMBARRIER_CMD_PRIVATE_EXPEDITED value");

@@ -148,6 +148,27 @@ expect {
 	eof { abort_test "QEMU exited after Linux futex test" }
 }
 
+send -- "/bin/membarrier-runtime\r"
+expect {
+	-re {\r?\nMEMBARRIER_RUNTIME_OK} {}
+	-re {MEMBARRIER_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "Linux membarrier test reported failure"
+	}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic in Linux membarrier test"
+	}
+	timeout { abort_with_dump "Linux membarrier test timeout" }
+	eof { abort_test "QEMU exited during Linux membarrier test" }
+}
+expect {
+	-re {\r?\n# $} {}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic after Linux membarrier test"
+	}
+	timeout { abort_test "shell prompt timeout" }
+	eof { abort_test "QEMU exited after Linux membarrier test" }
+}
+
 send -- "/bin/dynamic-runtime pressure $pressure_iterations\r"
 expect {
 	-re {\r?\nDYNAMIC_EXEC_PRESSURE_OK} {}

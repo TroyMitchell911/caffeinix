@@ -296,6 +296,11 @@ run_boot_smoke()
 		echo "Linux futex marker is missing" >&2
 		exit 1
 	fi
+	if [ "$(awk '$0 == "MEMBARRIER_RUNTIME_OK" { count++ }
+		END { print count + 0 }' "$clean")" -ne 1 ]; then
+		echo "Linux membarrier marker is missing" >&2
+		exit 1
+	fi
 	if [ "$(awk '$0 == "DYNAMIC_EXEC_PRESSURE_OK" { count++ }
 		END { print count + 0 }' "$clean")" -ne 1 ]; then
 		echo "dynamic exec pressure marker is missing" >&2
