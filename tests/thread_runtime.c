@@ -3,11 +3,13 @@
 #include <sched.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <sys/mman.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 
 #define THREADS 16
 #define STACK_SIZE (64 * 1024)
+#define PAGE_SIZE 4096
 
 struct worker {
 	volatile int child_tid;
@@ -18,8 +20,10 @@ struct worker {
 
 static unsigned char stacks[THREADS][STACK_SIZE]
 	__attribute__((aligned(16)));
+static unsigned char fault_stack[STACK_SIZE] __attribute__((aligned(16)));
 static struct worker workers[THREADS];
 static volatile int gate;
+static volatile int fault_clone_done;
 static volatile int started;
 
 extern int test_clone(int (*function)(void *), void *stack, int flags,
@@ -47,6 +51,13 @@ static int worker_main(void *argument)
 	return 0;
 }
 
+static int fault_worker_main(void *argument)
+{
+	(void)argument;
+	__atomic_store_n(&fault_clone_done, 1, __ATOMIC_RELEASE);
+	return 0;
+}
+
 static int fail(const char *reason)
 {
 	printf("THREAD_RUNTIME_FAIL %s\n", reason);
@@ -61,11 +72,28 @@ int main(void)
 		CLONE_CHILD_CLEARTID;
 	int leader_pid = getpid();
 	int leader_tid = syscall(SYS_gettid);
+	int *fault_ids;
 	unsigned long spins;
 	int i, j, tid;
 
 	if (leader_pid != leader_tid)
 		return fail("leader pid/tid");
+	fault_ids = mmap(0, 2 * PAGE_SIZE, PROT_READ | PROT_WRITE,
+			 MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	if (fault_ids == MAP_FAILED)
+		return fail("clone fault mmap");
+	tid = test_clone(fault_worker_main, fault_stack + STACK_SIZE,
+			 flags & ~CLONE_CHILD_CLEARTID, 0, fault_ids, 0,
+			 fault_ids + PAGE_SIZE / sizeof(*fault_ids));
+	if (tid <= 0 || fault_ids[0] != tid ||
+	    fault_ids[PAGE_SIZE / sizeof(*fault_ids)] != tid)
+		return fail("clone fault tid");
+	for (spins = 0; spins < 100000000UL; spins++) {
+		if (__atomic_load_n(&fault_clone_done, __ATOMIC_ACQUIRE))
+			break;
+	}
+	if (!fault_clone_done || munmap(fault_ids, 2 * PAGE_SIZE) < 0)
+		return fail("clone fault completion");
 	for (i = 0; i < THREADS; i++) {
 		workers[i].child_tid = -1;
 		workers[i].parent_tid = -1;

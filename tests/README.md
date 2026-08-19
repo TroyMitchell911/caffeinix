@@ -97,6 +97,9 @@ The guest selftest covers:
 - anonymous and private file mappings, address hints, fixed replacement,
   partial protection and removal, child fault isolation, fork isolation, and
   mapping lifetime, including kernel copies honoring mapping permissions;
+- demand faults for anonymous, ELF, interpreter, and private file mappings,
+  sharing of clean executable pages, page-cache accounting, and `SIGBUS` for
+  pages wholly beyond the mapped file's end;
 - read and positional-read copy faults through ext4, tmpfs, FAT, and
   character devices, plus concurrent reads through one ext4 file handle;
 - CFS runqueue progress with 24 runnable processes, timer preemption,

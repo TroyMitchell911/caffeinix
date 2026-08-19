@@ -38,6 +38,8 @@ static volatile int detached_done;
 
 static pthread_barrier_t fd_barrier;
 static int fd_results[FD_WORKERS];
+static pthread_barrier_t fault_barrier;
+static unsigned char *fault_mapping;
 static volatile int copy_stop;
 static volatile int copy_failure;
 static unsigned char *copy_mapping;
@@ -221,6 +223,45 @@ static int test_concurrent_break_fork(void)
 	if (waitpid(child, &status, 0) != child || !WIFEXITED(status) ||
 	    WEXITSTATUS(status) != EXIT_SUCCESS)
 		return fail("break fork snapshot", status);
+	return 0;
+}
+
+static void *fault_worker(void *argument)
+{
+	volatile unsigned char value;
+
+	(void)argument;
+	pthread_barrier_wait(&fault_barrier);
+	value = fault_mapping[0];
+	return (void *)(uintptr_t)value;
+}
+
+static int test_concurrent_fault(void)
+{
+	pthread_t threads[WORKERS];
+	void *result;
+	int error, index;
+
+	fault_mapping = mmap(0, COW_PAGE_SIZE, PROT_READ | PROT_WRITE,
+			     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	if (fault_mapping == MAP_FAILED)
+		return fail("fault mmap", errno);
+	if (pthread_barrier_init(&fault_barrier, 0, WORKERS + 1))
+		return fail("fault barrier init", errno);
+	for (index = 0; index < WORKERS; index++) {
+		error = pthread_create(&threads[index], 0, fault_worker, 0);
+		if (error)
+			return fail("fault create", error);
+	}
+	pthread_barrier_wait(&fault_barrier);
+	for (index = 0; index < WORKERS; index++) {
+		error = pthread_join(threads[index], &result);
+		if (error || result)
+			return fail("fault join", error);
+	}
+	pthread_barrier_destroy(&fault_barrier);
+	if (munmap(fault_mapping, COW_PAGE_SIZE))
+		return fail("fault munmap", errno);
 	return 0;
 }
 
@@ -430,6 +471,8 @@ int main(void)
 	if (test_shared_fd_table() || test_thread_nice())
 		return 1;
 	if (test_concurrent_break_fork())
+		return 1;
+	if (test_concurrent_fault())
 		return 1;
 	if (test_copy_unmap_race())
 		return 1;

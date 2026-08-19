@@ -146,9 +146,15 @@ static void test_exec_pressure(void)
 		}
 	}
 	for (size_t i = 0; i < sizeof(children) / sizeof(children[0]); i++) {
-		if (waitpid(children[i], &status, 0) != children[i] ||
-		    !WIFEXITED(status) || WEXITSTATUS(status))
+		pid_t waited = waitpid(children[i], &status, 0);
+
+		if (waited != children[i] || !WIFEXITED(status) ||
+		    WEXITSTATUS(status)) {
+			printf("DYNAMIC_PRESSURE_CHILD index=%zu pid=%d "
+			       "waited=%d status=%#x\n", i, children[i],
+			       waited, status);
 			fail("pressure wait");
+		}
 	}
 }
 

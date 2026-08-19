@@ -2,6 +2,7 @@
 #include <cpu.h>
 #include <debug.h>
 #include <ext4fs.h>
+#include <page_cache.h>
 #include <printf.h>
 #include <scheduler.h>
 #include <thread.h>
@@ -46,6 +47,7 @@ static const char *thread_state_name(thread_state_t state)
 
 void debug_dump_state(void)
 {
+	struct page_cache_stats page_cache_stats;
 	thread_t current, selected;
 	int index;
 
@@ -74,6 +76,11 @@ void debug_dump_state(void)
 				 (uint64)thread[index].waiting_on,
 				 thread[index].on_timeout_queue);
 	}
+	page_cache_get_stats(&page_cache_stats);
+	printf_emergency("page-cache pages=%lu hits=%lu misses=%lu "
+			 "reclaimed=%lu\n", page_cache_stats.pages,
+			 page_cache_stats.hits, page_cache_stats.misses,
+			 page_cache_stats.reclaimed);
 	ext4fs_debug_dump();
 	virtio_blk_debug_dump();
 	printf_emergency("DEBUG_STATE_END\n");

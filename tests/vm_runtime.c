@@ -1,6 +1,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdint.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -449,6 +450,8 @@ static void test_file_mapping(unsigned char **mapping_out)
 {
 	unsigned char buffer[PAGE_SIZE];
 	unsigned char *mapping;
+	int status;
+	pid_t child;
 	int fd = open(FILE_PATH, O_RDONLY);
 
 	CHECK(fd >= 0, "open mapped file");
@@ -457,8 +460,17 @@ static void test_file_mapping(unsigned char **mapping_out)
 	CHECK(mapping != MAP_FAILED, "file mmap");
 	CHECK(close(fd) == 0, "close mapped fd");
 	check_page(mapping, 1);
-	for (size_t index = PAGE_SIZE; index < 2 * PAGE_SIZE; index++)
-		CHECK(mapping[index] == 0, "file zero tail");
+	child = fork();
+	CHECK(child >= 0, "fork beyond EOF fault");
+	if (!child) {
+		volatile unsigned char value = mapping[PAGE_SIZE];
+
+		(void)value;
+		_exit(EXIT_SUCCESS);
+	}
+	CHECK(waitpid(child, &status, 0) == child, "wait beyond EOF fault");
+	CHECK(WIFSIGNALED(status) && WTERMSIG(status) == SIGBUS,
+	      "mapping beyond EOF SIGBUS");
 	mapping[0] ^= 0xff;
 	fd = open(FILE_PATH, O_RDONLY);
 	CHECK(fd >= 0, "reopen mapped file");

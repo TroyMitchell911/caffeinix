@@ -325,8 +325,9 @@ mapfile -t elf_load_addresses < <(
 	"${cross_compile}readelf" -lW "$staging/bin/elf-shared-page" |
 		awk '$1 == "LOAD" { print $3 }'
 )
-if [ "${#elf_load_addresses[@]}" -ne 2 ] ||
-	(( elf_load_addresses[0] / 4096 != elf_load_addresses[1] / 4096 )); then
+if [ "${#elf_load_addresses[@]}" -ne 3 ] ||
+	(( elf_load_addresses[0] / 4096 != elf_load_addresses[1] / 4096 ||
+	   elf_load_addresses[0] / 4096 != elf_load_addresses[2] / 4096 )); then
 	echo "ELF boundary selftest must share a PT_LOAD page" >&2
 	exit 1
 fi

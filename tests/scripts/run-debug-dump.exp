@@ -50,6 +50,19 @@ expect {
 	eof { abort_test "QEMU exited before shell startup" }
 }
 
+send -- "/bin/dynamic-hello\r"
+expect {
+	-re {DYNAMIC_HELLO_OK} {}
+	-re {\[PANIC\]} { abort_test "kernel panic during dynamic hello" }
+	timeout { abort_test "dynamic hello timeout" }
+	eof { abort_test "QEMU exited during dynamic hello" }
+}
+expect {
+	-re {\r?\n# $} {}
+	timeout { abort_test "shell prompt after dynamic hello timeout" }
+	eof { abort_test "QEMU exited after dynamic hello" }
+}
+
 send -- "\001b"
 expect {
 	-re {DEBUG_STATE_BEGIN cpu=[0-9]+ tp=0x[0-9a-f]+} {}
@@ -65,6 +78,11 @@ expect {
 	-re {thread=[0-9]+ tid=[0-9]+ name=.* wait=0x[0-9a-f]+ timeout=[01]} {}
 	timeout { abort_test "thread state timeout" }
 	eof { abort_test "QEMU exited during thread state" }
+}
+expect {
+	-re {page-cache pages=[1-9][0-9]* hits=[1-9][0-9]* misses=[1-9][0-9]* reclaimed=[0-9]+} {}
+	timeout { abort_test "page cache state timeout" }
+	eof { abort_test "QEMU exited during page cache state" }
 }
 expect {
 	-re {ext4 locked=[01] owner=0x[0-9a-f]+ owner_tid=-?[0-9]+} {}

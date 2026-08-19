@@ -12,6 +12,7 @@
 #include <asm/unistd.h>
 #include <asm/ucontext.h>
 #include <asm-generic/poll.h>
+#include <asm-generic/siginfo.h>
 #include <asm-generic/socket.h>
 #include <asm-generic/termios.h>
 #include <linux/in.h>
@@ -113,6 +114,7 @@ _Static_assert(LINUX_SA_RESTART == SA_RESTART, "SA_RESTART value");
 _Static_assert(LINUX_SA_NODEFER == SA_NODEFER, "SA_NODEFER value");
 _Static_assert(LINUX_SA_RESETHAND == SA_RESETHAND,
 	       "SA_RESETHAND value");
+_Static_assert(LINUX_BUS_ADRERR == BUS_ADRERR, "BUS_ADRERR value");
 _Static_assert(sizeof(struct linux_termios) == sizeof(struct termios),
 	       "termios size");
 _Static_assert(sizeof(struct linux_winsize) == sizeof(struct winsize),
