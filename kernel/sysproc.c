@@ -7,24 +7,194 @@
 #include <random.h>
 #include <scheduler.h>
 #include <syscall.h>
+#include <timer.h>
 #include <vm.h>
+#include <wait.h>
+
+static int linux_timespec_to_ns(const struct linux_timespec *time,
+				uint64 *nanoseconds)
+{
+	if (time->seconds < 0 || time->nanoseconds < 0 ||
+	    time->nanoseconds >= (int64)NSEC_PER_SEC)
+		return -LINUX_EINVAL;
+	if ((uint64)time->seconds >
+	    (~(uint64)0 - (uint64)time->nanoseconds) / NSEC_PER_SEC)
+		return -LINUX_EINVAL;
+	*nanoseconds = (uint64)time->seconds * NSEC_PER_SEC +
+		       (uint64)time->nanoseconds;
+	return 0;
+}
+
+static int linux_clock_now(int clock, uint64 *nanoseconds)
+{
+	switch (clock) {
+	case LINUX_CLOCK_REALTIME:
+		return ktime_get_realtime_ns(nanoseconds) < 0 ?
+			-LINUX_ENODEV : 0;
+	case LINUX_CLOCK_MONOTONIC:
+		*nanoseconds = ktime_get_ns();
+		return 0;
+	case LINUX_CLOCK_BOOTTIME:
+		*nanoseconds = ktime_get_boot_ns();
+		return 0;
+	default:
+		return -LINUX_EINVAL;
+	}
+}
+
+static int linux_copy_timespec(uint64 address, uint64 nanoseconds)
+{
+	struct linux_timespec time = {
+		.seconds = nanoseconds / NSEC_PER_SEC,
+		.nanoseconds = nanoseconds % NSEC_PER_SEC,
+	};
+
+	return copyout(cur_proc()->pagetable, address, (char *)&time,
+		       sizeof(time)) < 0 ? -LINUX_EFAULT : 0;
+}
 
 uint64 sys_linux_clock_gettime(void)
 {
-	struct linux_timespec time;
-	process_t process = cur_proc();
 	uint64 address, nanoseconds;
+	int clock, result;
+
+	argint(0, &clock);
+	argaddr(1, &address);
+	result = linux_clock_now(clock, &nanoseconds);
+	return result < 0 ? result : linux_copy_timespec(address, nanoseconds);
+}
+
+uint64 sys_linux_clock_getres(void)
+{
+	uint64 address, resolution;
 	int clock;
 
 	argint(0, &clock);
 	argaddr(1, &address);
-	if (clock != LINUX_CLOCK_MONOTONIC)
+	if (clock != LINUX_CLOCK_REALTIME &&
+	    clock != LINUX_CLOCK_MONOTONIC &&
+	    clock != LINUX_CLOCK_BOOTTIME)
 		return -LINUX_EINVAL;
-	nanoseconds = ktime_get_ns();
-	time.seconds = nanoseconds / 1000000000ULL;
-	time.nanoseconds = nanoseconds % 1000000000ULL;
-	if (copyout(process->pagetable, address, (char *)&time,
-		    sizeof(time)) < 0)
+	if (!address)
+		return 0;
+	resolution = (NSEC_PER_SEC + timer_frequency() - 1) /
+		     timer_frequency();
+	return linux_copy_timespec(address, resolution);
+}
+
+static int linux_sleep_until(uint64 deadline, uint64 remaining_address,
+			     int report_remaining)
+{
+	process_t process = cur_proc();
+	uint64 now, remaining;
+	int result;
+
+	spinlock_acquire(&process->sleep_lock);
+	result = wait_queue_sleep_interruptible_until(
+		&process->sleep_wait, &process->sleep_lock, deadline);
+	spinlock_release(&process->sleep_lock);
+	if (result != WAIT_QUEUE_INTERRUPTED)
+		return 0;
+	if (report_remaining && remaining_address) {
+		now = ktime_get_ticks();
+		remaining = deadline > now ?
+			ktime_ticks_to_ns(deadline - now, timer_frequency()) : 0;
+		result = linux_copy_timespec(remaining_address, remaining);
+		if (result < 0)
+			return result;
+	}
+	return -LINUX_EINTR;
+}
+
+uint64 sys_linux_nanosleep(void)
+{
+	struct linux_timespec requested;
+	process_t process = cur_proc();
+	uint64 request_address, remaining_address;
+	uint64 duration, delta, deadline, now;
+	int result;
+
+	argaddr(0, &request_address);
+	argaddr(1, &remaining_address);
+	if (!request_address ||
+	    copyin(process->pagetable, (char *)&requested,
+	           request_address, sizeof(requested)) < 0)
+		return -LINUX_EFAULT;
+	result = linux_timespec_to_ns(&requested, &duration);
+	if (result < 0)
+		return result;
+	if (!duration)
+		return 0;
+	now = ktime_get_ticks();
+	delta = ktime_ns_to_ticks(duration);
+	deadline = now + delta;
+	if (deadline < now)
+		deadline = ~(uint64)0;
+	return linux_sleep_until(deadline, remaining_address, 1);
+}
+
+uint64 sys_linux_clock_nanosleep(void)
+{
+	struct linux_timespec requested;
+	process_t process = cur_proc();
+	uint64 request_address, remaining_address;
+	uint64 requested_ns, current_ns, delta, deadline, now;
+	int clock, flags, result;
+
+	argint(0, &clock);
+	argint(1, &flags);
+	argaddr(2, &request_address);
+	argaddr(3, &remaining_address);
+	if (flags & ~LINUX_TIMER_ABSTIME)
+		return -LINUX_EINVAL;
+	if (!request_address ||
+	    copyin(process->pagetable, (char *)&requested,
+	           request_address, sizeof(requested)) < 0)
+		return -LINUX_EFAULT;
+	result = linux_timespec_to_ns(&requested, &requested_ns);
+	if (result < 0)
+		return result;
+	result = linux_clock_now(clock, &current_ns);
+	if (result < 0)
+		return result;
+	if (flags & LINUX_TIMER_ABSTIME) {
+		if (requested_ns <= current_ns)
+			return 0;
+		delta = ktime_ns_to_ticks(requested_ns - current_ns);
+	} else {
+		if (!requested_ns)
+			return 0;
+		delta = ktime_ns_to_ticks(requested_ns);
+	}
+	now = ktime_get_ticks();
+	deadline = now + delta;
+	if (deadline < now)
+		deadline = ~(uint64)0;
+	return linux_sleep_until(deadline, remaining_address,
+				 !(flags & LINUX_TIMER_ABSTIME));
+}
+
+uint64 sys_linux_gettimeofday(void)
+{
+	struct linux_timezone timezone = { 0 };
+	struct linux_timeval time;
+	process_t process = cur_proc();
+	uint64 time_address, timezone_address, nanoseconds;
+
+	argaddr(0, &time_address);
+	argaddr(1, &timezone_address);
+	if (ktime_get_realtime_ns(&nanoseconds) < 0)
+		return -LINUX_ENODEV;
+	if (time_address) {
+		time.seconds = nanoseconds / NSEC_PER_SEC;
+		time.microseconds = nanoseconds % NSEC_PER_SEC / 1000;
+		if (copyout(process->pagetable, time_address, (char *)&time,
+		            sizeof(time)) < 0)
+			return -LINUX_EFAULT;
+	}
+	if (timezone_address &&
+	    copyout(process->pagetable, timezone_address,
+	            (char *)&timezone, sizeof(timezone)) < 0)
 		return -LINUX_EFAULT;
 	return 0;
 }

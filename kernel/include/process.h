@@ -77,6 +77,8 @@ typedef struct process{
 	struct signal_pending *signal_pending;
 	struct process_signal_action signal_actions[64];
 	struct wait_queue signal_wait;
+	struct spinlock sleep_lock;
+	struct wait_queue sleep_wait;
 	struct tty *controlling_tty;
         struct process *parent;
 	uint8 adopted_by_init;

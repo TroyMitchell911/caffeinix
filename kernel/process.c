@@ -301,6 +301,8 @@ static process_t process_alloc(void)
 	wait_queue_init(&p->child_wait, "child wait");
 	wait_queue_init(&p->thread_reap_wait, "thread reap");
 	wait_queue_init(&p->signal_wait, "signal wait");
+	spinlock_init(&p->sleep_lock, "process sleep");
+	wait_queue_init(&p->sleep_wait, "process sleep");
 	sleeplock_init(&p->mmap_lock, "process mmap");
 	spinlock_init(&p->files_lock, "process files");
 	vma_set_init(&p->vmas);
@@ -362,6 +364,8 @@ static void process_free(process_t p)
 		PANIC("free process with thread reaper");
 	if (!wait_queue_empty(&p->signal_wait))
 		PANIC("free process with signal waiter");
+	if (!wait_queue_empty(&p->sleep_wait))
+		PANIC("free process with sleep waiter");
 	vma_set_destroy(&p->vmas);
 	signal_process_destroy(p);
 	pfree(p->signal_pending);

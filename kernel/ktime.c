@@ -12,6 +12,9 @@ static uint8 realtime_ready;
 void ktime_boot_init(uint64 ticks)
 {
 	boot_ticks = ticks;
+	realtime_base_ns = 0;
+	realtime_base_ticks = ticks;
+	__atomic_store_n(&realtime_ready, 1, __ATOMIC_RELEASE);
 }
 
 void ktime_set_realtime_ns(uint64 nanoseconds)

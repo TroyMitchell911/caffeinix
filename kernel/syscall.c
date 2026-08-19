@@ -256,6 +256,10 @@ extern uint64 sys_linux_sendfile(void);
 extern uint64 sys_linux_set_tid_address(void);
 extern uint64 sys_linux_clone(void);
 extern uint64 sys_linux_clock_gettime(void);
+extern uint64 sys_linux_clock_getres(void);
+extern uint64 sys_linux_clock_nanosleep(void);
+extern uint64 sys_linux_nanosleep(void);
+extern uint64 sys_linux_gettimeofday(void);
 extern uint64 sys_linux_kill(void);
 extern uint64 sys_linux_tkill(void);
 extern uint64 sys_linux_tgkill(void);
@@ -343,8 +347,11 @@ static syscall_t linux_syscalls[LINUX_SYS_pwritev2 + 1] = {
 	[LINUX_SYS_futex] = sys_linux_futex,
 	[LINUX_SYS_set_robust_list] = sys_linux_set_robust_list,
 	[LINUX_SYS_get_robust_list] = sys_linux_get_robust_list,
+	[LINUX_SYS_nanosleep] = sys_linux_nanosleep,
 	[LINUX_SYS_set_tid_address] = sys_linux_set_tid_address,
 	[LINUX_SYS_clock_gettime] = sys_linux_clock_gettime,
+	[LINUX_SYS_clock_getres] = sys_linux_clock_getres,
+	[LINUX_SYS_clock_nanosleep] = sys_linux_clock_nanosleep,
 	[LINUX_SYS_kill] = sys_linux_kill,
 	[LINUX_SYS_tkill] = sys_linux_tkill,
 	[LINUX_SYS_tgkill] = sys_linux_tgkill,
@@ -363,6 +370,7 @@ static syscall_t linux_syscalls[LINUX_SYS_pwritev2 + 1] = {
 	[LINUX_SYS_setsid] = sys_linux_setsid,
 	[LINUX_SYS_umask] = sys_linux_umask,
 	[LINUX_SYS_prctl] = sys_linux_prctl,
+	[LINUX_SYS_gettimeofday] = sys_linux_gettimeofday,
 	[LINUX_SYS_getpid] = sys_linux_getpid,
 	[LINUX_SYS_getppid] = sys_linux_getppid,
 	[LINUX_SYS_getuid] = sys_linux_getuid,

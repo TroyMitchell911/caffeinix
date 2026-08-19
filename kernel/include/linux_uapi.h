@@ -44,7 +44,10 @@
 #define LINUX_SYS_futex              98
 #define LINUX_SYS_set_robust_list    99
 #define LINUX_SYS_get_robust_list   100
+#define LINUX_SYS_nanosleep         101
 #define LINUX_SYS_clock_gettime     113
+#define LINUX_SYS_clock_getres      114
+#define LINUX_SYS_clock_nanosleep   115
 #define LINUX_SYS_kill              129
 #define LINUX_SYS_tkill             130
 #define LINUX_SYS_tgkill            131
@@ -63,6 +66,7 @@
 #define LINUX_SYS_setsid            157
 #define LINUX_SYS_umask             166
 #define LINUX_SYS_prctl             167
+#define LINUX_SYS_gettimeofday     169
 #define LINUX_SYS_getpid            172
 #define LINUX_SYS_getppid           173
 #define LINUX_SYS_getuid            174
@@ -183,6 +187,11 @@ struct linux_timespec {
 struct linux_timeval {
 	int64 seconds;
 	int64 microseconds;
+};
+
+struct linux_timezone {
+	int32 minutes_west;
+	int32 dst_time;
 };
 
 struct linux_pollfd {
@@ -463,6 +472,8 @@ struct linux_linger {
 
 #define LINUX_CLOCK_REALTIME             0
 #define LINUX_CLOCK_MONOTONIC            1
+#define LINUX_CLOCK_BOOTTIME             7
+#define LINUX_TIMER_ABSTIME            0x1
 
 #define LINUX_PRIO_PROCESS               0
 
