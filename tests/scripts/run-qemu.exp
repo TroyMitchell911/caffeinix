@@ -272,6 +272,15 @@ expect_prompt
 
 send -- "/bin/vm-runtime\r"
 expect {
+	-re {\r?\nVM_READ_FAULT_OK} {}
+	-re {VM_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "read copy-fault test reported failure"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in read copy-fault test" }
+	timeout { abort_test "read copy-fault test timeout" }
+	eof { abort_test "QEMU exited during read copy-fault test" }
+}
+expect {
 	-re {\r?\nVM_RUNTIME_OK} {}
 	-re {VM_RUNTIME_FAIL[^\r\n]*} {
 		abort_test "virtual memory test reported failure"

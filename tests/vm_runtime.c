@@ -71,6 +71,50 @@ static void create_fixture(void)
 	CHECK(close(fd) == 0, "close fixture");
 }
 
+static void expect_read_fault(int fd, void *destination,
+			      const char *name)
+{
+	errno = 0;
+	CHECK(read(fd, destination, 1) == -1 && errno == EFAULT, name);
+}
+
+static void test_read_copy_faults(void)
+{
+	static const char value = 'x';
+	void *destination;
+	int fd;
+
+	destination = mmap(0, PAGE_SIZE, PROT_READ,
+			   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	CHECK(destination != MAP_FAILED, "read fault mmap");
+
+	fd = open(FILE_PATH, O_RDONLY);
+	CHECK(fd >= 0, "read fault tmpfs open");
+	expect_read_fault(fd, destination, "read fault tmpfs");
+	CHECK(close(fd) == 0, "read fault tmpfs close");
+
+	fd = open("/bin/sh", O_RDONLY);
+	CHECK(fd >= 0, "read fault ext4 open");
+	expect_read_fault(fd, destination, "read fault ext4");
+	CHECK(close(fd) == 0, "read fault ext4 close");
+
+	fd = open("/mnt/fat/read-fault", O_CREAT | O_TRUNC | O_RDWR, 0600);
+	CHECK(fd >= 0, "read fault FAT open");
+	write_all(fd, &value, sizeof(value));
+	CHECK(lseek(fd, 0, SEEK_SET) == 0, "read fault FAT seek");
+	expect_read_fault(fd, destination, "read fault FAT");
+	CHECK(close(fd) == 0, "read fault FAT close");
+	CHECK(unlink("/mnt/fat/read-fault") == 0, "read fault FAT unlink");
+
+	fd = open("/dev/zero", O_RDONLY);
+	CHECK(fd >= 0, "read fault zero open");
+	expect_read_fault(fd, destination, "read fault zero");
+	CHECK(close(fd) == 0, "read fault zero close");
+
+	CHECK(munmap(destination, PAGE_SIZE) == 0, "read fault munmap");
+	puts("VM_READ_FAULT_OK");
+}
+
 static void test_file_mapping(unsigned char **mapping_out)
 {
 	unsigned char buffer[PAGE_SIZE];
@@ -271,6 +315,7 @@ int main(void)
 	unsigned char *anonymous, *file_mapping;
 
 	create_fixture();
+	test_read_copy_faults();
 	test_file_mapping(&file_mapping);
 	anonymous = test_anonymous_mapping();
 	test_hint_and_fixed();
