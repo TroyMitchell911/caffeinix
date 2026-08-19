@@ -6,6 +6,7 @@
 #include <palloc.h>
 #include <random.h>
 #include <scheduler.h>
+#include <syscall.h>
 #include <vfs.h>
 #include <vm.h>
 #include <vma.h>
@@ -121,47 +122,83 @@ static int elf_program_order(uint64 size, unsigned int *order)
 
 static int elf_image_open(const char *path, struct elf_image *image)
 {
+	int64 result;
 	int i;
 
 	*image = (struct elf_image){0};
-	if (vfs_open_file(path, VFS_OPEN_READ, 0, &image->file) < 0)
-		return -1;
-	if (vfs_file_pread(image->file, 0, (uint64)&image->header,
-			   sizeof(image->header), 0) != sizeof(image->header) ||
-	    elf_image_layout_init(&image->layout, &image->header) < 0)
+	result = vfs_open_file(path, VFS_OPEN_READ, 0, &image->file);
+	if (result < 0)
+		return linux_error(result);
+	if (!image->file->path.dentry ||
+	    !image->file->path.dentry->inode ||
+	    image->file->path.dentry->inode->type == VFS_INODE_DIRECTORY ||
+	    !(image->file->path.dentry->inode->mode & 0111)) {
+		elf_image_close(image);
+		return -LINUX_EACCES;
+	}
+	result = vfs_file_pread(image->file, 0, (uint64)&image->header,
+				sizeof(image->header), 0);
+	if (result < 0) {
+		result = linux_error(result);
 		goto fail;
+	}
+	if (result != sizeof(image->header) ||
+	    elf_image_layout_init(&image->layout, &image->header) < 0) {
+		result = -LINUX_ENOEXEC;
+		goto fail;
+	}
 	if (elf_program_order(image->layout.phdr_size,
-			      &image->program_order) < 0)
+			      &image->program_order) < 0) {
+		result = -LINUX_ENOEXEC;
 		goto fail;
+	}
 	image->programs = alloc_pages(image->program_order, 0);
-	if (!image->programs ||
-	    vfs_file_pread(image->file, 0, (uint64)image->programs,
-			   image->layout.phdr_size, image->header.phoff) !=
-	    image->layout.phdr_size)
+	if (!image->programs) {
+		result = -LINUX_ENOMEM;
 		goto fail;
+	}
+	result = vfs_file_pread(image->file, 0, (uint64)image->programs,
+				image->layout.phdr_size, image->header.phoff);
+	if (result < 0) {
+		result = linux_error(result);
+		goto fail;
+	}
+	if (result != image->layout.phdr_size) {
+		result = -LINUX_ENOEXEC;
+		goto fail;
+	}
 	for (i = 0; i < image->header.phnum; i++) {
 		if (elf_image_layout_add(&image->layout, &image->header,
-					 &image->programs[i]) < 0)
+					 &image->programs[i]) < 0) {
+			result = -LINUX_ENOEXEC;
 			goto fail;
+		}
 	}
-	if (elf_image_layout_finish(&image->layout) < 0)
+	if (elf_image_layout_finish(&image->layout) < 0) {
+		result = -LINUX_ENOEXEC;
 		goto fail;
+	}
 	return 0;
 
 fail:
 	elf_image_close(image);
-	return -1;
+	return result;
 }
 
 static int elf_image_interpreter(const struct elf_image *image, char *path)
 {
+	int64 result;
 	uint64 size = image->layout.interp_size;
 
-	if (!image->layout.has_interp || size > MAXPATH ||
-	    vfs_file_pread(image->file, 0, (uint64)path, size,
-			   image->layout.interp_offset) != size ||
+	if (!image->layout.has_interp || size > MAXPATH)
+		return -LINUX_ENOEXEC;
+	result = vfs_file_pread(image->file, 0, (uint64)path, size,
+				image->layout.interp_offset);
+	if (result < 0)
+		return linux_error(result);
+	if (result != size ||
 	    !elf_interpreter_path_valid(path, size, MAXPATH))
-		return -1;
+		return -LINUX_ENOEXEC;
 	return 0;
 }
 
@@ -360,36 +397,52 @@ int exec_linux(char *path, char **argv, char **envp)
 	thread_t current = cur_thread();
 	uint64 brk_start, entry, oldsz, sp, stack_base, sz = 0;
 	char *name, *path_p;
-	int argc, stack_permissions = PTE_W;
+	int argc, error = -LINUX_ENOEXEC, stack_permissions = PTE_W;
 	uint32 stack_protection = LINUX_PROT_READ | LINUX_PROT_WRITE;
 
 	if (process_exec_begin(process, current) < 0)
-		return -1;
+		return -LINUX_EAGAIN;
 	vma_set_init(&new_vmas);
 	vma_set_init(&old_vmas);
-	if (exec_aslr_layout_init(&aslr) < 0 ||
-	    elf_image_open(path, &executable) < 0)
+	if (exec_aslr_layout_init(&aslr) < 0) {
+		error = -LINUX_EIO;
 		goto fail;
-	if (executable.layout.has_interp &&
-	    elf_image_interpreter(&executable, interpreter_path) < 0)
+	}
+	error = elf_image_open(path, &executable);
+	if (error < 0)
 		goto fail;
+	if (executable.layout.has_interp) {
+		error = elf_image_interpreter(&executable,
+					      interpreter_path);
+		if (error < 0)
+			goto fail;
+	}
 
 	pgdir = process_pagedir(process, current);
-	if (!pgdir ||
-	    elf_image_place(&executable, &new_vmas, aslr.pie_hint) < 0 ||
-	    elf_image_map(&executable, pgdir, &new_vmas) < 0)
+	if (!pgdir) {
+		error = -LINUX_ENOMEM;
 		goto fail;
+	}
+	if (elf_image_place(&executable, &new_vmas, aslr.pie_hint) < 0 ||
+	    elf_image_map(&executable, pgdir, &new_vmas) < 0) {
+		error = -LINUX_ENOEXEC;
+		goto fail;
+	}
 	sz = executable.runtime.map_end;
 	entry = executable.runtime.entry;
 	exec.base = 0;
 
 	if (executable.layout.has_interp) {
-		if (elf_image_open(interpreter_path, &interpreter) < 0 ||
-		    interpreter.layout.has_interp ||
+		error = elf_image_open(interpreter_path, &interpreter);
+		if (error < 0)
+			goto fail;
+		if (interpreter.layout.has_interp ||
 		    elf_image_place(&interpreter, &new_vmas,
 				    aslr.interpreter_hint) < 0 ||
-		    elf_image_map(&interpreter, pgdir, &new_vmas) < 0)
+		    elf_image_map(&interpreter, pgdir, &new_vmas) < 0) {
+			error = -LINUX_ENOEXEC;
 			goto fail;
+		}
 		entry = interpreter.runtime.entry;
 		exec.base = interpreter.runtime.load_bias;
 	}
@@ -409,21 +462,27 @@ int exec_linux(char *path, char **argv, char **envp)
 	    vma_insert(&new_vmas, stack_base, aslr.stack_top,
 		       stack_protection,
 		       LINUX_MAP_PRIVATE, VMA_ANONYMOUS, VMA_STACK,
-		       0, 0) < 0)
+		       0, 0) < 0) {
+		error = -LINUX_ENOMEM;
 		goto fail;
+	}
 	sp = aslr.stack_top;
 	argc = build_linux_stack(pgdir, aslr.stack_top, stack_base,
 				 argv, envp, &exec, &sp);
-	if (argc < 0)
+	if (argc < 0) {
+		error = -LINUX_E2BIG;
 		goto fail;
+	}
 	if (sz > (uint64)-1 - aslr.brk_gap)
 		goto fail;
 	brk_start = PGROUNDUP(sz) + aslr.brk_gap;
 	if (brk_start < sz || brk_start >= aslr.mmap_top ||
 	    !vma_range_free(&new_vmas, PGROUNDUP(sz), brk_start + PGSIZE))
 		goto fail;
-	if (process_exec_quiesce(process, current) < 0)
+	if (process_exec_quiesce(process, current) < 0) {
+		error = -LINUX_EAGAIN;
 		goto fail;
+	}
 
 	sleeplock_acquire(&process->mmap_lock);
 	oldpgdir = process->pagetable;
@@ -463,5 +522,5 @@ fail:
 		process_freepagedir(pgdir, sz);
 	vma_set_destroy(&new_vmas);
 	process_exec_end(process);
-	return -1;
+	return error;
 }

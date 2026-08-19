@@ -21,6 +21,7 @@ int fetch_addr_from_user(uint64 user_addr, uint64* dst);
 void argint(int n, int *ip);
 void argaddr(int n, uint64 *ap);
 int argstr(int n, char *buf, int max);
+int64 linux_error(int result);
 #endif
 
 #endif

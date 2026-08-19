@@ -5,7 +5,114 @@
 #include <scheduler.h>
 #include <signal.h>
 #include <syscall.h>
+#include <vfs.h>
 #include <vm.h>
+
+int64 linux_error(int result)
+{
+	switch (result) {
+	case VFS_ERR_PERM:
+		return -LINUX_EPERM;
+	case VFS_ERR_NOENT:
+		return -LINUX_ENOENT;
+	case VFS_ERR_BADF:
+		return -LINUX_EBADF;
+	case VFS_ERR_EXIST:
+		return -LINUX_EEXIST;
+	case VFS_ERR_NOTDIR:
+		return -LINUX_ENOTDIR;
+	case VFS_ERR_ISDIR:
+		return -LINUX_EISDIR;
+	case VFS_ERR_INVAL:
+		return -LINUX_EINVAL;
+	case VFS_ERR_MFILE:
+		return -LINUX_EMFILE;
+	case VFS_ERR_NOSPC:
+		return -LINUX_ENOSPC;
+	case VFS_ERR_NOTEMPTY:
+		return -LINUX_ENOTEMPTY;
+	case VFS_ERR_NODEV:
+		return -LINUX_ENODEV;
+	case VFS_ERR_NOMEM:
+		return -LINUX_ENOMEM;
+	case VFS_ERR_NOTSUPP:
+		return -LINUX_EOPNOTSUPP;
+	case VFS_ERR_NAMETOOLONG:
+		return -LINUX_ENAMETOOLONG;
+	case VFS_ERR_BUSY:
+		return -LINUX_EBUSY;
+	case VFS_ERR_LOOP:
+		return -LINUX_ELOOP;
+	case VFS_ERR_XDEV:
+		return -LINUX_EXDEV;
+	case VFS_ERR_MLINK:
+		return -LINUX_EMLINK;
+	case VFS_ERR_NOTTY:
+		return -LINUX_ENOTTY;
+	case VFS_ERR_NXIO:
+		return -LINUX_ENXIO;
+	case VFS_ERR_FAULT:
+		return -LINUX_EFAULT;
+	case VFS_ERR_IO:
+		return -LINUX_EIO;
+	case VFS_ERR_SPIPE:
+		return -LINUX_ESPIPE;
+	case VFS_ERR_AGAIN:
+		return -LINUX_EAGAIN;
+	case VFS_ERR_NOTSOCK:
+		return -LINUX_ENOTSOCK;
+	case VFS_ERR_DESTADDRREQ:
+		return -LINUX_EDESTADDRREQ;
+	case VFS_ERR_MSGSIZE:
+		return -LINUX_EMSGSIZE;
+	case VFS_ERR_PROTOTYPE:
+		return -LINUX_EPROTOTYPE;
+	case VFS_ERR_NOPROTOOPT:
+		return -LINUX_ENOPROTOOPT;
+	case VFS_ERR_PROTONOSUPPORT:
+		return -LINUX_EPROTONOSUPPORT;
+	case VFS_ERR_SOCKTNOSUPPORT:
+		return -LINUX_ESOCKTNOSUPPORT;
+	case VFS_ERR_AFNOSUPPORT:
+		return -LINUX_EAFNOSUPPORT;
+	case VFS_ERR_ADDRINUSE:
+		return -LINUX_EADDRINUSE;
+	case VFS_ERR_ADDRNOTAVAIL:
+		return -LINUX_EADDRNOTAVAIL;
+	case VFS_ERR_NETDOWN:
+		return -LINUX_ENETDOWN;
+	case VFS_ERR_NETUNREACH:
+		return -LINUX_ENETUNREACH;
+	case VFS_ERR_CONNABORTED:
+		return -LINUX_ECONNABORTED;
+	case VFS_ERR_CONNRESET:
+		return -LINUX_ECONNRESET;
+	case VFS_ERR_NOBUFS:
+		return -LINUX_ENOBUFS;
+	case VFS_ERR_ISCONN:
+		return -LINUX_EISCONN;
+	case VFS_ERR_NOTCONN:
+		return -LINUX_ENOTCONN;
+	case VFS_ERR_SHUTDOWN:
+		return -LINUX_ESHUTDOWN;
+	case VFS_ERR_TIMEDOUT:
+		return -LINUX_ETIMEDOUT;
+	case VFS_ERR_CONNREFUSED:
+		return -LINUX_ECONNREFUSED;
+	case VFS_ERR_HOSTUNREACH:
+		return -LINUX_EHOSTUNREACH;
+	case VFS_ERR_ALREADY:
+		return -LINUX_EALREADY;
+	case VFS_ERR_INPROGRESS:
+		return -LINUX_EINPROGRESS;
+	case VFS_ERR_PIPE:
+		return -LINUX_EPIPE;
+	case VFS_ERR_INTR:
+		return -LINUX_EINTR;
+	default:
+		return -LINUX_EIO;
+	}
+}
 
 static uint64 argraw(int n)
 {
