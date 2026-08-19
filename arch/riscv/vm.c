@@ -17,6 +17,8 @@
 #include <process.h>
 #include <printf.h>
 #include <cpu.h>
+#include <mmap.h>
+#include <scheduler.h>
 
 /* Defination in kernel.ld */
 extern char etext[];
@@ -93,16 +95,25 @@ static uint64 user_va2pa(pagedir_t pgdir, uint64 va, int permissions)
 }
 
 static uint64 user_copy_va2pa_pinned(pagedir_t pgdir, uint64 va,
-				     int permissions, void **pinned_page)
+				     int permissions, int fault,
+				     void **pinned_page)
 {
+	process_t process;
 	void *page;
 	uint64 physical, validated;
+	enum mmap_fault_access access;
 
 	*pinned_page = 0;
+	process = cur_proc();
+	access = permissions & PTE_W ? MMAP_FAULT_WRITE : MMAP_FAULT_READ;
 	for (;;) {
 		physical = user_va2pa(pgdir, va, permissions);
-		if (!physical)
-			return 0;
+		if (!physical) {
+			if (!fault || !process || process->pagetable != pgdir ||
+			    mmap_handle_fault(process, va, access) != MMAP_FAULT_OK)
+				return 0;
+			continue;
+		}
 		page = (void *)PGROUNDDOWN(physical);
 		if (palloc_get(page) < 0)
 			continue;
@@ -445,12 +456,16 @@ int vm_protect_user_range(pagedir_t pgdir, uint64 start, uint64 end,
 		return -1;
 	for (addr = start; addr < end; addr += PGSIZE) {
 		pte = PTE(pgdir, addr, 0);
-		if (!pte || !(*pte & PTE_V) || !(*pte & PTE_SW_USER) ||
+		if (!pte || !(*pte & PTE_V))
+			continue;
+		if (!(*pte & PTE_SW_USER) ||
 		    !(*pte & (PTE_R | PTE_W | PTE_X)))
 			return -1;
 	}
 	for (addr = start; addr < end; addr += PGSIZE) {
 		pte = PTE(pgdir, addr, 0);
+		if (!pte || !(*pte & PTE_V))
+			continue;
 		*pte = PA2PTE(PTE2PA(*pte)) | PTE_V | PTE_SW_USER |
 		       (*pte & (PTE_A | PTE_D)) | permissions;
 	}
@@ -540,14 +555,15 @@ void vm_free_user(pagedir_t pgdir)
 	vm_free_user_walk(pgdir, 2);
 }
 
-int copyout(pagedir_t pgdir, uint64 dstva, char* src, uint64 len)
+static int copyout_internal(pagedir_t pgdir, uint64 dstva, char *src,
+			    uint64 len, int fault)
 {
 	void *pinned_page;
         uint64 n, va0, pa0;
 
         while(len > 0){
                 va0 = PGROUNDDOWN(dstva);
-		pa0 = user_copy_va2pa_pinned(pgdir, va0, PTE_W,
+		pa0 = user_copy_va2pa_pinned(pgdir, va0, PTE_W, fault,
 					     &pinned_page);
                 if(pa0 == 0)
                         return -1;
@@ -564,6 +580,16 @@ int copyout(pagedir_t pgdir, uint64 dstva, char* src, uint64 len)
         return 0;
 }
 
+int copyout(pagedir_t pgdir, uint64 dstva, char *src, uint64 len)
+{
+	return copyout_internal(pgdir, dstva, src, len, 1);
+}
+
+int copyout_nofault(pagedir_t pgdir, uint64 dstva, char *src, uint64 len)
+{
+	return copyout_internal(pgdir, dstva, src, len, 0);
+}
+
 int copyin(pagedir_t pgdir, char* dst, uint64 srcva, uint64 len)
 {
 	void *pinned_page;
@@ -571,7 +597,7 @@ int copyin(pagedir_t pgdir, char* dst, uint64 srcva, uint64 len)
 
         while(len > 0){
                 va0 = PGROUNDDOWN(srcva);
-		pa0 = user_copy_va2pa_pinned(pgdir, va0, PTE_R,
+		pa0 = user_copy_va2pa_pinned(pgdir, va0, PTE_R, 1,
 					     &pinned_page);
                 if(pa0 == 0)
                         return -1;
@@ -596,7 +622,7 @@ int copyinstr(pagedir_t pgdir, char *dst, uint64 srcva, uint64 max)
 
         while(got_null == 0 && max > 0) {
                 va0 = PGROUNDDOWN(srcva);
-		pa0 = user_copy_va2pa_pinned(pgdir, va0, PTE_R,
+		pa0 = user_copy_va2pa_pinned(pgdir, va0, PTE_R, 1,
 					     &pinned_page);
                 if(pa0 == 0)
                         return -1;

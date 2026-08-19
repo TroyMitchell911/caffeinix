@@ -1,6 +1,10 @@
 #include <debug.h>
 #include <linux_uapi.h>
 #include <mem_layout.h>
+#include <mmap.h>
+#include <mystring.h>
+#include <page_cache.h>
+#include <palloc.h>
 #include <process.h>
 #include <scheduler.h>
 #include <syscall.h>
@@ -55,32 +59,126 @@ static int mmap_file_validate(struct vfs_file *file, uint64 offset,
 	return 0;
 }
 
-static int mmap_file_populate(pagedir_t pagetable, uint64 address,
-			      uint64 length, struct vfs_file *file,
-			      uint64 offset, uint64 file_size)
+static enum mmap_fault_result mmap_file_fault(struct vm_area *area,
+					      uint64 page_address,
+					      void **page)
 {
-	uint64 available, destination, done = 0, page_bytes;
+	struct vfs_stat stat;
+	uint64 bytes, file_offset, relative;
+	void *allocated;
 	int64 result;
 
-	available = offset < file_size ? file_size - offset : 0;
-	if (available > length)
-		available = length;
-	while (done < available) {
-		destination = vm_user_pa(pagetable, address + done);
-		if (!destination)
-			return -1;
-		page_bytes = PGSIZE - ((address + done) & (PGSIZE - 1));
-		if (page_bytes > available - done)
-			page_bytes = available - done;
-		result = vfs_file_pread(file, 0, destination, page_bytes,
-					 offset + done);
-		if (result < 0)
-			return -1;
-		if (!result)
-			break;
-		done += result;
+	relative = page_address - area->start;
+	file_offset = area->offset + relative;
+	if (area->usage == VMA_ELF) {
+		if (relative >= area->file_length) {
+			*page = palloc_zero();
+			return *page ? MMAP_FAULT_OK : MMAP_FAULT_NOMEM;
+		}
+		bytes = area->file_length - relative;
+		if (bytes > PGSIZE)
+			bytes = PGSIZE;
+	} else {
+		if (vfs_inode_stat(area->file->path.dentry->inode, &stat) < 0)
+			return MMAP_FAULT_BUSERR;
+		if (file_offset >= stat.size)
+			return MMAP_FAULT_BUSERR;
+		bytes = stat.size - file_offset;
+		if (bytes > PGSIZE)
+			bytes = PGSIZE;
 	}
-	return 0;
+	/*
+	 * A private mmap may later become writable through mprotect().  Until
+	 * private cache mappings have copy-on-write PTEs, only share immutable
+	 * load mappings selected by the ELF loader.
+	 */
+	if (bytes == PGSIZE && area->usage == VMA_ELF &&
+	    !(area->protection & LINUX_PROT_WRITE) &&
+	    page_cache_get(area->file, file_offset, page) == 0)
+		return MMAP_FAULT_OK;
+	allocated = palloc_zero();
+	if (!allocated && page_cache_reclaim(1))
+		allocated = palloc_zero();
+	if (!allocated)
+		return MMAP_FAULT_NOMEM;
+	result = vfs_file_pread(area->file, 0, (uint64)allocated, bytes,
+				file_offset);
+	if (result != (int64)bytes) {
+		pfree(allocated);
+		return area->usage == VMA_ELF ? MMAP_FAULT_NOMEM :
+			MMAP_FAULT_BUSERR;
+	}
+	*page = allocated;
+	return MMAP_FAULT_OK;
+}
+
+static int mmap_access_allowed(const struct vm_area *area,
+			       enum mmap_fault_access access)
+{
+	if (access == MMAP_FAULT_EXEC)
+		return area->protection & LINUX_PROT_EXEC;
+	if (access == MMAP_FAULT_WRITE)
+		return area->protection & LINUX_PROT_WRITE;
+	return area->protection & LINUX_PROT_READ;
+}
+
+enum mmap_fault_result mmap_handle_fault(process_t process, uint64 address,
+					 enum mmap_fault_access access)
+{
+	struct vm_area *area;
+	enum mmap_fault_result result = MMAP_FAULT_NOMEM;
+	uint64 page_address = PGROUNDDOWN(address);
+	int permissions;
+	void *page = 0;
+
+	if (!process || address >= MAXVA)
+		return MMAP_FAULT_MAPERR;
+	sleeplock_acquire(&process->mmap_lock);
+	area = (struct vm_area *)vma_find(&process->vmas, address);
+	if (!area) {
+		result = MMAP_FAULT_MAPERR;
+		goto out;
+	}
+	if (!mmap_access_allowed(area, access)) {
+		result = MMAP_FAULT_ACCERR;
+		goto out;
+	}
+	if (vm_mapped(process->pagetable, page_address)) {
+		pte_t *pte = PTE(process->pagetable, page_address, 0);
+
+		if (pte && (*pte & PTE_V) && (*pte & PTE_U) &&
+		    ((access == MMAP_FAULT_READ && (*pte & PTE_R)) ||
+		     (access == MMAP_FAULT_WRITE && (*pte & PTE_W)) ||
+		     (access == MMAP_FAULT_EXEC && (*pte & PTE_X)))) {
+			result = MMAP_FAULT_OK;
+			goto out;
+		}
+		result = MMAP_FAULT_ACCERR;
+		goto out;
+	}
+	if (area->origin == VMA_FILE_BACKED)
+		result = mmap_file_fault(area, page_address, &page);
+	else {
+		page = palloc_zero();
+		if (!page && page_cache_reclaim(1))
+			page = palloc_zero();
+		result = page ? MMAP_FAULT_OK : MMAP_FAULT_NOMEM;
+	}
+	if (result != MMAP_FAULT_OK)
+		goto out;
+	permissions = mmap_pte_permissions(area->protection);
+	if (vm_map(process->pagetable, page_address, (uint64)page, PGSIZE,
+		   permissions | PTE_SW_USER) < 0) {
+		pfree(page);
+		result = MMAP_FAULT_NOMEM;
+		goto out;
+	}
+	sfence_vma();
+	if (area->protection & LINUX_PROT_EXEC)
+		fence_i();
+out:
+	sleeplock_release(&process->mmap_lock);
+	return result;
 }
 
 uint64 sys_linux_brk(void)
@@ -100,15 +198,10 @@ uint64 sys_linux_brk(void)
 	new_end = PGROUNDUP(requested);
 	if (new_end > old_end) {
 		if (!vma_range_free(&process->vmas, old_end, new_end) ||
-		    vm_alloc_user_range(process->pagetable, old_end, new_end,
-					PTE_R | PTE_W | PTE_U) < 0)
-			goto out;
-		if (vma_insert(&process->vmas, old_end, new_end,
+		    vma_insert(&process->vmas, old_end, new_end,
 			       LINUX_PROT_READ | LINUX_PROT_WRITE,
 			       LINUX_MAP_PRIVATE,
 			       VMA_ANONYMOUS, VMA_HEAP, 0, 0) < 0) {
-			vm_unmap_range(process->pagetable, old_end,
-				       new_end - old_end);
 			goto out;
 		}
 	} else if (new_end < old_end) {
@@ -133,7 +226,7 @@ uint64 sys_linux_mmap(void)
 	struct vfs_stat stat;
 	uint64 address, end, hint, length, offset, start = 0;
 	uint64 result = -LINUX_ENOMEM;
-	int error, fd, flags, permissions, protection;
+	int error, fd, flags, protection;
 	enum vma_origin origin;
 
 	argaddr(0, &address);
@@ -150,7 +243,6 @@ uint64 sys_linux_mmap(void)
 		return -LINUX_EINVAL;
 	if ((flags & LINUX_MAP_FIXED) && address % PGSIZE)
 		return -LINUX_EINVAL;
-	permissions = mmap_pte_permissions(protection);
 	if (flags & LINUX_MAP_ANONYMOUS) {
 		origin = VMA_ANONYMOUS;
 	} else {
@@ -191,22 +283,11 @@ uint64 sys_linux_mmap(void)
 			goto out_unlock;
 		end = start + length;
 	}
-	if (vm_alloc_user_range(process->pagetable, start, end,
-				permissions) < 0)
-		goto out_unlock;
-	if (file && mmap_file_populate(process->pagetable, start, length,
-				       file, offset, stat.size) < 0) {
-		result = -LINUX_EIO;
-		goto out_pages;
-	}
 	if (vma_insert(&process->vmas, start, end, protection, flags & 0xf,
 		       origin, VMA_MMAP, file, offset) < 0)
-		goto out_pages;
+		goto out_unlock;
 	result = start;
 	goto out_unlock;
-
-out_pages:
-	vm_unmap_range(process->pagetable, start, length);
 out_unlock:
 	sleeplock_release(&process->mmap_lock);
 out_file:
@@ -218,7 +299,7 @@ out_file:
 uint64 sys_linux_mprotect(void)
 {
 	process_t process = cur_proc();
-	uint64 address, end, length, page;
+	uint64 address, end, length;
 	int permissions, protection;
 
 	argaddr(0, &address);
@@ -237,12 +318,6 @@ uint64 sys_linux_mprotect(void)
 	if (!vma_range_mapped(&process->vmas, address, end)) {
 		sleeplock_release(&process->mmap_lock);
 		return -LINUX_ENOMEM;
-	}
-	for (page = address; page < end; page += PGSIZE) {
-		if (!vm_user_pa(process->pagetable, page)) {
-			sleeplock_release(&process->mmap_lock);
-			return -LINUX_ENOMEM;
-		}
 	}
 	if (vma_protect(&process->vmas, address, end, protection) < 0) {
 		sleeplock_release(&process->mmap_lock);

@@ -487,6 +487,22 @@ int process_fork(uint64 child_stack)
         return pid;
 }
 
+static int process_prefault_write(process_t process, uint64 address,
+				  uint64 length)
+{
+	uint64 end, page;
+
+	if (!length || address >= MAXVA || length > MAXVA - address)
+		return -1;
+	end = address + length;
+	for (page = PGROUNDDOWN(address); page < end; page += PGSIZE) {
+		if (mmap_handle_fault(process, page, MMAP_FAULT_WRITE) !=
+		    MMAP_FAULT_OK)
+			return -1;
+	}
+	return 0;
+}
+
 int process_clone_thread(uint64 flags, uint64 child_stack,
 			 uint64 parent_tid, uint64 tls, uint64 child_tid)
 {
@@ -497,6 +513,12 @@ int process_clone_thread(uint64 flags, uint64 child_stack,
 
 	if (!child_stack)
 		return -LINUX_EINVAL;
+	if ((flags & LINUX_CLONE_PARENT_SETTID) &&
+	    process_prefault_write(p, parent_tid, sizeof(tid)) < 0)
+		return -LINUX_EFAULT;
+	if ((flags & LINUX_CLONE_CHILD_SETTID) &&
+	    process_prefault_write(p, child_tid, sizeof(tid)) < 0)
+		return -LINUX_EFAULT;
 	spinlock_acquire(&p->lock);
 	if (p->execing || p->group_exiting || p->state != PROCESS_LIVE) {
 		spinlock_release(&p->lock);
@@ -524,14 +546,14 @@ int process_clone_thread(uint64 flags, uint64 child_stack,
 	scheduler_inherit(child, current);
 	tid = child->tid;
 	if ((flags & LINUX_CLONE_PARENT_SETTID) &&
-	    copyout(p->pagetable, parent_tid, (char *)&tid,
-	            sizeof(tid)) < 0) {
+	    copyout_nofault(p->pagetable, parent_tid, (char *)&tid,
+	                    sizeof(tid)) < 0) {
 		error = -LINUX_EFAULT;
 		goto fail_mapped;
 	}
 	if ((flags & LINUX_CLONE_CHILD_SETTID) &&
-	    copyout(p->pagetable, child_tid, (char *)&tid,
-	            sizeof(tid)) < 0) {
+	    copyout_nofault(p->pagetable, child_tid, (char *)&tid,
+	                    sizeof(tid)) < 0) {
 		error = -LINUX_EFAULT;
 		goto fail_mapped;
 	}

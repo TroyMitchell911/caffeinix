@@ -46,6 +46,7 @@
 #include <netdevice.h>
 #include <network_stack.h>
 #include <futex.h>
+#include <page_cache.h>
 
 volatile static uint8 start = 0;
 extern char end[];
@@ -156,8 +157,9 @@ void main(void)
 		pr_info("memory: %lu MiB usable",
 			palloc_usable_bytes() / (1024 * 1024));
 		pr_info("smp: detected %d CPUs", cpu_count());
-		file_init();
-		vfs_init();
+	file_init();
+	vfs_init();
+	page_cache_init();
 		irq_init();
 		plic_init();
 		plic_init_hart();

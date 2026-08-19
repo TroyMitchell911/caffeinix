@@ -376,6 +376,7 @@ struct linux_linger {
 #define LINUX_ILL_ILLOPC                 1
 #define LINUX_TRAP_BRKPT                 1
 #define LINUX_BUS_ADRALN                 1
+#define LINUX_BUS_ADRERR                 2
 #define LINUX_SEGV_MAPERR                1
 #define LINUX_SEGV_ACCERR                2
 

@@ -23,6 +23,7 @@ struct vm_area {
 	uint64 start;
 	uint64 end;
 	uint64 offset;
+	uint64 file_length;
 	uint32 protection;
 	uint32 flags;
 	enum vma_origin origin;
@@ -54,6 +55,9 @@ int vma_insert(struct vma_set *set, uint64 start, uint64 end,
 	       enum vma_usage usage, struct vfs_file *file, uint64 offset);
 int vma_insert_elf(struct vma_set *set, uint64 start, uint64 end,
 		   uint32 protection, struct vfs_file *file, uint64 offset);
+int vma_insert_elf_file(struct vma_set *set, uint64 start, uint64 end,
+			 uint32 protection, struct vfs_file *file,
+			 uint64 offset, uint64 file_length);
 const struct vm_area *vma_find(const struct vma_set *set, uint64 address);
 int vma_range_free(const struct vma_set *set, uint64 start, uint64 end);
 int vma_range_mapped(const struct vma_set *set, uint64 start, uint64 end);

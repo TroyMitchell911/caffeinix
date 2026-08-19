@@ -11,6 +11,7 @@
 #include <printk.h>
 #include <timer.h>
 #include <wait.h>
+#include <mmap.h>
 
 extern void kernel_vec(void);
 extern char trampoline[], user_vec[], user_ret[];
@@ -137,12 +138,25 @@ void user_trap_entry(void)
 		from_syscall = 1;
                 intr_on();
                 syscall();
-        } else if (cause == SCAUSE_INSTRUCTION_PAGE_FAULT ||
+	} else if (cause == SCAUSE_INSTRUCTION_PAGE_FAULT ||
 		   cause == SCAUSE_LOAD_PAGE_FAULT ||
 		   cause == SCAUSE_STORE_PAGE_FAULT) {
+		enum mmap_fault_access access = cause ==
+			SCAUSE_INSTRUCTION_PAGE_FAULT ? MMAP_FAULT_EXEC :
+			cause == SCAUSE_STORE_PAGE_FAULT ? MMAP_FAULT_WRITE :
+			MMAP_FAULT_READ;
+		enum mmap_fault_result fault;
+
 		intr_on();
-		signal_force_fault(LINUX_SIGSEGV, LINUX_SEGV_MAPERR,
-		                   trap_value);
+		fault = mmap_handle_fault(p, trap_value, access);
+		if (fault == MMAP_FAULT_BUSERR)
+			signal_force_fault(LINUX_SIGBUS, LINUX_BUS_ADRERR,
+					   trap_value);
+		else if (fault != MMAP_FAULT_OK)
+			signal_force_fault(LINUX_SIGSEGV,
+				fault == MMAP_FAULT_ACCERR ?
+				LINUX_SEGV_ACCERR : LINUX_SEGV_MAPERR,
+				trap_value);
         } else {
                 if((which_dev = dev_intr(cause)) == 0) {
 			if ((int64)cause < 0)

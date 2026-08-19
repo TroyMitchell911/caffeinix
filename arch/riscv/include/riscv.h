@@ -64,6 +64,11 @@ static inline void sfence_vma(void)
         asm volatile("sfence.vma zero, zero");
 }
 
+static inline void fence_i(void)
+{
+	asm volatile("fence.i" : : : "memory");
+}
+
 /* Supervisor Interrupt Enable */
 #define SIE_SEIE (1L << 9)  /* external */
 #define SIE_STIE (1L << 5)  /* timer */

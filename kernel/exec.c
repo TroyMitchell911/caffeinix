@@ -25,22 +25,6 @@ struct linux_exec_layout {
 	uint16 phnum;
 };
 
-static int flags2perm(int flags)
-{
-	int perm;
-
-	if (!flags)
-		return PTE_R;
-	perm = PTE_U;
-	if (flags & (ELF_PROG_FLAG_READ | ELF_PROG_FLAG_WRITE))
-		perm |= PTE_R;
-	if (flags & ELF_PROG_FLAG_EXEC)
-		perm |= PTE_X;
-	if (flags & ELF_PROG_FLAG_WRITE)
-		perm |= PTE_W;
-	return perm;
-}
-
 static int flags2prot(int flags)
 {
 	int protection = 0;
@@ -54,28 +38,17 @@ static int flags2prot(int flags)
 	return protection;
 }
 
-static int loadseg(pagedir_t pgdir, uint64 va, file_t file,
-		   uint64 offset, uint64 size)
+static int protection2perm(uint32 protection)
 {
-	uint64 page_offset, pa, n;
+	int permissions = PTE_U;
 
-	while (size) {
-		pa = vm_user_pa(pgdir, va);
-		if (!pa)
-			return -1;
-
-		page_offset = va & (PGSIZE - 1);
-		n = PGSIZE - page_offset;
-		if (n > size)
-			n = size;
-		if (vfs_file_pread(file, 0, pa, n, offset) != n)
-			return -1;
-
-		va += n;
-		offset += n;
-		size -= n;
-	}
-	return 0;
+	if (protection & (LINUX_PROT_READ | LINUX_PROT_WRITE))
+		permissions |= PTE_R;
+	if (protection & LINUX_PROT_WRITE)
+		permissions |= PTE_W;
+	if (protection & LINUX_PROT_EXEC)
+		permissions |= PTE_X;
+	return permissions;
 }
 
 static void elf_image_close(struct elf_image *image)
@@ -182,8 +155,9 @@ static int elf_image_place(struct elf_image *image, struct vma_set *vmas,
 static int elf_image_map(struct elf_image *image, pagedir_t pgdir,
 			 struct vma_set *vmas)
 {
+	const struct vm_area *area;
 	const struct proghdr *program;
-	uint64 address, map_end, map_start;
+	uint64 file_length, map_end, map_start;
 	int i;
 
 	for (i = 0; i < image->header.phnum; i++) {
@@ -191,22 +165,61 @@ static int elf_image_map(struct elf_image *image, pagedir_t pgdir,
 		if (program->type != ELF_PROG_LOAD || !program->memsz)
 			continue;
 		if (elf_relocate_address(image->runtime.load_bias,
-					 program->vaddr, &address) < 0 ||
-		    elf_relocate_address(image->runtime.load_bias,
 					 PGROUNDDOWN(program->vaddr),
 					 &map_start) < 0 ||
 		    elf_relocate_address(image->runtime.load_bias,
 					 PGROUNDUP(program->vaddr +
 						   program->memsz),
 					 &map_end) < 0 ||
-		    vm_alloc_load_range(pgdir, map_start, map_end,
-					flags2perm(program->flags)) < 0 ||
-		    vma_insert_elf(vmas, map_start, map_end,
-				    flags2prot(program->flags), image->file,
-				    PGROUNDDOWN(program->off)) < 0 ||
-		    loadseg(pgdir, address, image->file, program->off,
-			    program->filesz) < 0)
+		    program->vaddr - PGROUNDDOWN(program->vaddr) >
+			(uint64)-1 - program->filesz)
 			return -1;
+		file_length = program->vaddr - PGROUNDDOWN(program->vaddr) +
+			      program->filesz;
+		area = vma_find(vmas, map_start);
+		if (vma_insert_elf_file(vmas, map_start, map_end,
+					 flags2prot(program->flags), image->file,
+					 PGROUNDDOWN(program->off),
+					 file_length) < 0)
+			return -1;
+		if (area) {
+			uint64 page, pa, copy_end, copy_start, file_start;
+			int j;
+
+			area = vma_find(vmas, map_start);
+			if (!area || area->end < map_start + PGSIZE ||
+			    vm_alloc_load_range(pgdir, map_start,
+						map_start + PGSIZE,
+						protection2perm(
+							area->protection)) < 0)
+				return -1;
+			pa = vm_user_pa(pgdir, map_start);
+			if (!pa)
+				return -1;
+			for (j = 0; j < image->header.phnum; j++) {
+				const struct proghdr *load = &image->programs[j];
+
+				if (load->type != ELF_PROG_LOAD || !load->filesz ||
+				    elf_relocate_address(image->runtime.load_bias,
+							 load->vaddr,
+							 &file_start) < 0)
+					continue;
+				copy_start = file_start > map_start ?
+					file_start : map_start;
+				copy_end = file_start + load->filesz;
+				if (copy_end > map_start + PGSIZE)
+					copy_end = map_start + PGSIZE;
+				if (copy_start >= copy_end)
+					continue;
+				page = load->off + copy_start - file_start;
+				if (vfs_file_pread(image->file, 0,
+						   pa + copy_start - map_start,
+						   copy_end - copy_start,
+						   page) !=
+				    (int64)(copy_end - copy_start))
+					return -1;
+			}
+		}
 	}
 	return 0;
 }
