@@ -10,13 +10,17 @@ The kernel mounts devfs at `/dev`, tmpfs at `/tmp`, can mount a second FAT16
 or FAT32 disk at `/mnt/fat`, and can run IPv4 over a modern VirtIO network
 device through lwIP.
 
+Upstream musl pthreads run as Linux-style thread groups. The kernel provides
+process- and thread-directed signals, RV64 signal frames, alternate stacks,
+default actions, child notifications, and interruptible blocking calls.
+
 ## Supported target
 
 - Architecture: RISC-V 64-bit little-endian
 - ISA and ABI: RV64GC with LP64D
 - Machine: QEMU `virt`, one, two, four, and eight harts tested
 - Firmware: OpenSBI with SBI v0.2 or newer, TIME, HSM, and IPI for SMP
-- Userspace: dynamically linked and static musl ELF executables
+- Userspace: dynamically linked and static musl ELF executables with pthreads
 - Root filesystem: ext4 with 1 KiB filesystem blocks
 - Optional data filesystem: FAT16 or FAT32
 - Serial console: DT-discovered NS16550A at `/dev/ttyS0` (device 4:64)
@@ -407,10 +411,10 @@ the kernel. No separate rootfs repository or private compiler is required.
 ## Current limitations
 
 - Only a Linux RISC-V UAPI subset is implemented.
-- Pipelines, job control, and real signal delivery are not ready.
+- Pipelines, process groups, job control, and terminal-generated signals are
+  not ready. The underlying thread and signal core is available.
 - Dynamic musl executables and shared libraries use eager private mappings;
   demand paging, shared clean pages, copy-on-write, and ASLR are not ready.
-- Userspace threads are not ready.
 - Networking is IPv4-only and omits interface configuration, AF_UNIX,
   netlink, namespaces, firewalling, and the wider Linux socket option set.
 - VirtIO currently uses modern MMIO split rings without packed rings,

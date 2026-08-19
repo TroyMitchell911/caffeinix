@@ -85,6 +85,15 @@ The guest selftest covers:
 - upstream musl relocation, `DT_NEEDED` lookup, constructors, destructors,
   initial-exec TLS, RELRO, `dlopen`, `dlsym`, `dlclose`, `pread64`,
   close-on-exec, and concurrent dynamic fork/exec;
+- musl pthread creation, TLS, join, detach, mutexes, condition variables,
+  barriers, robust-owner recovery, cancellation, futex operations, and
+  private expedited memory barriers;
+- process- and thread-directed Linux signals, RV64 integer and floating-point
+  signal context, alternate and nested stacks, masks, pending signals,
+  synchronous faults, stop/continue and child state, exec dispositions, and
+  automatic child reaping;
+- `SA_RESTART` and `EINTR` behavior for futex, wait, TTY read, and `ppoll`,
+  including atomic temporary masks and multithreaded `exit_group` pressure;
 - anonymous and private file mappings, address hints, fixed replacement,
   partial protection and removal, child fault isolation, fork isolation, and
   mapping lifetime, including kernel copies honoring mapping permissions;
