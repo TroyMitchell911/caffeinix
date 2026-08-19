@@ -2,7 +2,7 @@
 #ifdef ELF_FIXED_INTERPRETER
 	.asciz "/lib/ld-caffeinix-riscv64.so.1"
 #else
-	.asciz "/lib/ld-musl-riscv64.so.1"
+	.asciz "/lib/ld-caffeinix-test-riscv64.so.1"
 #endif
 
 	.section .rodata

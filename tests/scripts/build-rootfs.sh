@@ -2,6 +2,8 @@
 
 set -euo pipefail
 
+export LC_ALL=C.UTF-8
+
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 tests_dir=$(CDPATH='' cd -- "$script_dir/.." && pwd)
 topdir=$(CDPATH='' cd -- "$tests_dir/.." && pwd)
@@ -72,7 +74,7 @@ download()
 }
 
 for command in \
-	curl sha256sum tar make sed install truncate \
+	curl sha256sum tar make sed install ln truncate \
 	mke2fs e2fsck mkfs.fat fsck.fat; do
 	require_command "$command"
 done
@@ -105,7 +107,7 @@ if ! (
 	"$musl_source/configure" \
 		--target=riscv64-linux-musl \
 		--prefix="$musl_sysroot" \
-		--disable-shared \
+		--syslibdir="$musl_sysroot/lib" \
 		--enable-wrapper=gcc \
 		'CFLAGS=-march=rv64gc -mabi=lp64d' \
 		CROSS_COMPILE="$cross_compile"
@@ -115,6 +117,12 @@ if ! (
 	cat "$musl_log" >&2
 	exit 1
 fi
+
+musl_build_interp=$musl_sysroot/lib/ld-musl-riscv64.so.1
+musl_guest_interp=/lib/ld-musl-riscv64.so.1
+musl_linker_rule="s|-dynamic-linker $musl_build_interp|"
+musl_linker_rule+="-dynamic-linker $musl_guest_interp|"
+sed -i "$musl_linker_rule" "$musl_sysroot/lib/musl-gcc.specs"
 
 busybox_source=$work_dir/busybox-$busybox_version
 busybox_log=$test_output/busybox-build.log
@@ -144,9 +152,14 @@ if ! make -C "$busybox_source" -j"$jobs" \
 	exit 1
 fi
 
-if "${cross_compile}readelf" -l "$busybox_source/busybox" |
-	grep -q INTERP; then
-	echo "BusyBox must be statically linked" >&2
+if ! "${cross_compile}readelf" -l "$busybox_source/busybox" |
+	grep -q '/lib/ld-musl-riscv64.so.1'; then
+	echo "BusyBox must use the musl runtime linker" >&2
+	exit 1
+fi
+if ! "${cross_compile}readelf" -d "$busybox_source/busybox" |
+	grep -q 'Shared library: \[libc.so\]'; then
+	echo "BusyBox must depend on shared musl libc" >&2
 	exit 1
 fi
 
@@ -161,6 +174,28 @@ if ! make -C "$busybox_source" \
 	exit 1
 fi
 
+sed -i \
+	's/^# CONFIG_STATIC is not set$/CONFIG_STATIC=y/' \
+	"$busybox_source/.config"
+set +o pipefail
+yes '' | make -C "$busybox_source" oldconfig >>"$busybox_log" 2>&1
+set -o pipefail
+make -C "$busybox_source" clean >>"$busybox_log" 2>&1
+if ! make -C "$busybox_source" -j"$jobs" \
+		ARCH=riscv \
+		CROSS_COMPILE="$cross_compile" \
+		CC="$musl_cc" >>"$busybox_log" 2>&1; then
+	cat "$busybox_log" >&2
+	exit 1
+fi
+install -m 755 "$busybox_source/busybox" \
+	"$staging/bin/busybox-static"
+if "${cross_compile}readelf" -l "$staging/bin/busybox-static" |
+	grep -q INTERP; then
+	echo "recovery BusyBox must be statically linked" >&2
+	exit 1
+fi
+
 install -d \
 	"$staging/dev" \
 	"$staging/lib" \
@@ -168,6 +203,9 @@ install -d \
 	"$staging/mnt/fat" \
 	"$staging/proc" \
 	"$staging/sys"
+
+install -m 755 "$musl_sysroot/lib/libc.so" "$staging/lib/libc.so"
+ln -s libc.so "$staging/lib/ld-musl-riscv64.so.1"
 
 "${cross_compile}gcc" \
 	-nostdlib -nostartfiles -static -march=rv64gc -mabi=lp64d \
@@ -181,7 +219,7 @@ install -d \
 	-Wl,--build-id=none -Wl,-z,max-page-size=4096 \
 	-Wl,-T,"$tests_dir/elf_interp_loader.ld" \
 	"$tests_dir/elf_interp_loader.S" \
-	-o "$staging/lib/ld-musl-riscv64.so.1"
+	-o "$staging/lib/ld-caffeinix-test-riscv64.so.1"
 
 "${cross_compile}gcc" \
 	-nostdlib -nostartfiles -shared -march=rv64gc -mabi=lp64d \
@@ -233,18 +271,18 @@ if [ "$("${cross_compile}readelf" -h "$staging/bin/elf-interp" |
 	exit 1
 fi
 if [ "$("${cross_compile}readelf" -h \
-	"$staging/lib/ld-musl-riscv64.so.1" |
+	"$staging/lib/ld-caffeinix-test-riscv64.so.1" |
 	awk '$1 == "Type:" { print $2 }')" != DYN ]; then
 	echo "ELF interpreter fixture must be ET_DYN" >&2
 	exit 1
 fi
 if ! "${cross_compile}readelf" -l "$staging/bin/elf-interp" |
-	grep -q '/lib/ld-musl-riscv64.so.1'; then
+	grep -q '/lib/ld-caffeinix-test-riscv64.so.1'; then
 	echo "ELF interpreter selftest has the wrong PT_INTERP" >&2
 	exit 1
 fi
 if "${cross_compile}readelf" -l \
-	"$staging/lib/ld-musl-riscv64.so.1" | grep -q INTERP; then
+	"$staging/lib/ld-caffeinix-test-riscv64.so.1" | grep -q INTERP; then
 	echo "ELF interpreter fixture must not contain PT_INTERP" >&2
 	exit 1
 fi
@@ -297,6 +335,88 @@ if "${cross_compile}readelf" -l "$staging/bin/elf-shared-page" |
 	echo "ELF boundary selftest must be statically linked" >&2
 	exit 1
 fi
+
+"$musl_cc" \
+	-march=rv64gc -mabi=lp64d \
+	-O2 -Wall -Wextra -Werror \
+	"$tests_dir/dynamic_hello.c" \
+	-o "$staging/bin/dynamic-hello"
+
+"$musl_cc" \
+	-shared -fPIC -march=rv64gc -mabi=lp64d \
+	-O2 -Wall -Wextra -Werror \
+	-Wl,-soname,libdynamic-fixture.so \
+	"$tests_dir/dynamic_fixture.c" \
+	-o "$staging/lib/libdynamic-fixture.so"
+
+"$musl_cc" \
+	-shared -fPIC -march=rv64gc -mabi=lp64d \
+	-O2 -Wall -Wextra -Werror \
+	-Wl,-soname,libdynamic-dlopen.so \
+	"$tests_dir/dynamic_dlopen_fixture.c" \
+	-o "$staging/lib/libdynamic-dlopen.so"
+
+"$musl_cc" \
+	-march=rv64gc -mabi=lp64d \
+	-O2 -Wall -Wextra -Werror \
+	-Wl,-z,relro,-z,now \
+	"$tests_dir/dynamic_child.c" \
+	-o "$staging/bin/dynamic-child"
+
+"$musl_cc" \
+	-march=rv64gc -mabi=lp64d \
+	-O2 -Wall -Wextra -Werror \
+	-Wl,-z,relro,-z,now \
+	"$tests_dir/dynamic_runtime.c" \
+	-L"$staging/lib" -ldynamic-fixture \
+	-o "$staging/bin/dynamic-runtime"
+
+for program in \
+	"$staging/bin/dynamic-hello" \
+	"$staging/bin/dynamic-child" \
+	"$staging/bin/dynamic-runtime"; do
+	if ! "${cross_compile}readelf" -l "$program" |
+		grep -q '/lib/ld-musl-riscv64.so.1'; then
+		echo "dynamic fixture has the wrong PT_INTERP: $program" >&2
+		exit 1
+	fi
+	if ! "${cross_compile}readelf" -d "$program" |
+		grep -q 'Shared library: \[libc.so\]'; then
+		echo "dynamic fixture does not depend on musl: $program" >&2
+		exit 1
+	fi
+done
+
+if ! "${cross_compile}readelf" -d "$staging/bin/dynamic-runtime" |
+	grep -q 'Shared library: \[libdynamic-fixture.so\]'; then
+	echo "dynamic runtime lacks its DT_NEEDED fixture" >&2
+	exit 1
+fi
+if ! "${cross_compile}readelf" -l "$staging/bin/dynamic-runtime" |
+	grep -q TLS; then
+	echo "dynamic runtime lacks a PT_TLS segment" >&2
+	exit 1
+fi
+if ! "${cross_compile}readelf" -l "$staging/bin/dynamic-runtime" |
+	grep -q GNU_RELRO; then
+	echo "dynamic runtime lacks a GNU_RELRO segment" >&2
+	exit 1
+fi
+
+for library in \
+	"$staging/lib/libdynamic-fixture.so" \
+	"$staging/lib/libdynamic-dlopen.so" \
+	"$staging/lib/libc.so"; do
+	if [ "$("${cross_compile}readelf" -h "$library" |
+		awk '$1 == "Type:" { print $2 }')" != DYN ]; then
+		echo "shared fixture must be ET_DYN: $library" >&2
+		exit 1
+	fi
+	if "${cross_compile}readelf" -l "$library" | grep -q INTERP; then
+		echo "shared fixture must not contain PT_INTERP: $library" >&2
+		exit 1
+	fi
+done
 
 "$musl_cc" \
 	-static -march=rv64gc -mabi=lp64d \
