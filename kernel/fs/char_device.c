@@ -364,7 +364,7 @@ static int64 zero_read(struct char_device *device, struct vfs_file *file,
 
 		if (either_copyout(user_destination, destination + total,
 		                   zero_page, chunk) < 0)
-			return total ? total : VFS_ERR_IO;
+			return total ? total : VFS_ERR_FAULT;
 		total += chunk;
 	}
 	return total;

@@ -891,7 +891,7 @@ static int64 ext4fs_read(struct vfs_file *file, int user_destination,
 			return total ? total : ext4fs_result(result);
 		if (either_copyout(user_destination, destination + total,
 		                   handle->buffer, transferred) < 0)
-			return total ? total : VFS_ERR_IO;
+			return total ? total : VFS_ERR_FAULT;
 		total += transferred;
 		if (transferred != chunk)
 			break;
