@@ -123,6 +123,8 @@ typedef struct thread {
 
         process_t home;
 	uint64 clear_child_tid;
+	uint64 robust_list;
+	uint64 robust_list_len;
 	uint64 signal_mask;
 	uint8 process_reaper;
 	uint8 exit_requested;
@@ -139,6 +141,8 @@ typedef struct thread {
 	uint64 wait_deadline;
 	int wait_result;
 	uint8 on_timeout_queue;
+	void *wait_private;
+	uint32 wait_bitset;
 }*thread_t;
 
 extern struct thread thread[NTHREAD];
@@ -149,6 +153,7 @@ void thread_setup(void);
 thread_t thread_alloc(process_t p);
 void thread_free(thread_t t);
 void user_thread_reap(thread_t t);
+int thread_get_robust_list(int tid, uint64 *head, uint64 *length);
 thread_t kernel_thread_create(const char *name, thread_func_t function,
 			      void *argument);
 void kernel_thread_reap(thread_t thread);

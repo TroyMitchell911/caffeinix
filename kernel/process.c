@@ -20,6 +20,7 @@
 #include <printk.h>
 #include <vfs.h>
 #include <linux_uapi.h>
+#include <futex.h>
 
 /* From trampoline.S */
 extern char trampoline[];
@@ -605,13 +606,10 @@ void process_thread_exit(int cause, int group)
 {
 	process_t p = cur_proc();
 	thread_t current = cur_thread();
-	uint32 zero = 0;
 	int last;
 	int i;
 
-	if (current->clear_child_tid)
-		(void)copyout(p->pagetable, current->clear_child_tid,
-		              (char *)&zero, sizeof(zero));
+	futex_thread_exit(current);
 
 	spinlock_acquire(&p->lock);
 	if (group && !p->group_exiting) {

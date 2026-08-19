@@ -61,6 +61,9 @@ extern uint64 sys_linux_dup3(void);
 extern uint64 sys_linux_execve(void);
 extern uint64 sys_linux_exit(void);
 extern uint64 sys_linux_exit_group(void);
+extern uint64 sys_linux_futex(void);
+extern uint64 sys_linux_set_robust_list(void);
+extern uint64 sys_linux_get_robust_list(void);
 extern uint64 sys_linux_faccessat(void);
 extern uint64 sys_linux_fcntl(void);
 extern uint64 sys_linux_fstat(void);
@@ -156,6 +159,9 @@ static syscall_t linux_syscalls[LINUX_SYS_renameat2 + 1] = {
 	[LINUX_SYS_utimensat] = sys_linux_utimensat,
 	[LINUX_SYS_exit] = sys_linux_exit,
 	[LINUX_SYS_exit_group] = sys_linux_exit_group,
+	[LINUX_SYS_futex] = sys_linux_futex,
+	[LINUX_SYS_set_robust_list] = sys_linux_set_robust_list,
+	[LINUX_SYS_get_robust_list] = sys_linux_get_robust_list,
 	[LINUX_SYS_set_tid_address] = sys_linux_set_tid_address,
 	[LINUX_SYS_clock_gettime] = sys_linux_clock_gettime,
 	[LINUX_SYS_rt_sigaction] = sys_linux_rt_sigaction,

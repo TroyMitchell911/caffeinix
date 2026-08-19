@@ -36,6 +36,9 @@
 #define LINUX_SYS_exit               93
 #define LINUX_SYS_exit_group         94
 #define LINUX_SYS_set_tid_address    96
+#define LINUX_SYS_futex              98
+#define LINUX_SYS_set_robust_list    99
+#define LINUX_SYS_get_robust_list   100
 #define LINUX_SYS_clock_gettime     113
 #define LINUX_SYS_rt_sigaction      134
 #define LINUX_SYS_rt_sigprocmask    135
@@ -325,6 +328,19 @@ struct linux_linger {
 #define LINUX_CLONE_DETACHED     0x400000
 #define LINUX_CLONE_CHILD_SETTID 0x1000000
 #define LINUX_CLONE_SIGNAL_MASK     0xff
+
+#define LINUX_FUTEX_WAIT                 0
+#define LINUX_FUTEX_WAKE                 1
+#define LINUX_FUTEX_REQUEUE              3
+#define LINUX_FUTEX_CMP_REQUEUE          4
+#define LINUX_FUTEX_WAIT_BITSET          9
+#define LINUX_FUTEX_WAKE_BITSET         10
+#define LINUX_FUTEX_PRIVATE_FLAG       128
+#define LINUX_FUTEX_CLOCK_REALTIME     256
+#define LINUX_FUTEX_CMD_MASK           127
+#define LINUX_FUTEX_BITSET_MATCH_ANY 0xffffffffU
+#define LINUX_FUTEX_WAITERS          0x80000000U
+#define LINUX_FUTEX_OWNER_DIED       0x40000000U
 
 #define LINUX_WNOHANG                   1
 

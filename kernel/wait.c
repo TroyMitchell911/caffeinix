@@ -182,6 +182,63 @@ int wait_queue_wake_all(wait_queue_t queue)
 	return count;
 }
 
+int wait_queue_wake_mask(wait_queue_t queue, int count, uint32 mask)
+{
+	thread_t thread;
+	list_t node, next;
+	int woken = 0;
+
+	if (count <= 0 || !mask)
+		return 0;
+	spinlock_acquire(&timeout_queue.lock);
+	spinlock_acquire(&queue->lock);
+	for (node = queue->waiters.next;
+	     node != &queue->waiters && woken < count; node = next) {
+		next = node->next;
+		thread = list_entry(node, struct thread, wait_node);
+		if (!(thread->wait_bitset & mask))
+			continue;
+		wait_queue_wake_locked(queue, thread, 0);
+		woken++;
+	}
+	spinlock_release(&queue->lock);
+	spinlock_release(&timeout_queue.lock);
+	return woken;
+}
+
+int wait_queue_requeue(wait_queue_t source, wait_queue_t destination,
+		       int count, void *wait_private)
+{
+	thread_t thread;
+	list_t node;
+	int moved = 0;
+
+	if (source == destination || count <= 0)
+		return 0;
+	spinlock_acquire(&timeout_queue.lock);
+	spinlock_acquire(&source->lock);
+	spinlock_acquire(&destination->lock);
+	while (moved < count &&
+	       (node = source->waiters.next) != &source->waiters) {
+		thread = list_entry(node, struct thread, wait_node);
+		spinlock_acquire(&thread->lock);
+		if (thread->state != THREAD_SLEEPING ||
+		    !thread->on_waitqueue || thread->waiting_on != source)
+			PANIC("invalid requeue entry");
+		list_remove(&thread->wait_node);
+		list_insert_before(&destination->waiters,
+		                   &thread->wait_node);
+		thread->waiting_on = destination;
+		thread->wait_private = wait_private;
+		spinlock_release(&thread->lock);
+		moved++;
+	}
+	spinlock_release(&destination->lock);
+	spinlock_release(&source->lock);
+	spinlock_release(&timeout_queue.lock);
+	return moved;
+}
+
 int wait_queue_wake_thread(thread_t thread)
 {
 	wait_queue_t queue;

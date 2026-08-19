@@ -96,6 +96,8 @@ void thread_setup(void)
 		thread_sched_init(t);
                 t->waiting_on = 0;
                 t->on_waitqueue = 0;
+		t->wait_private = 0;
+		t->wait_bitset = ~(uint32)0;
                 list_init(&t->wait_node);
 		t->on_timeout_queue = 0;
 		list_init(&t->timeout_node);
@@ -140,6 +142,8 @@ found:
         t->state = THREAD_ALLOCATED;
 	t->lwip_errno = 0;
 	t->clear_child_tid = 0;
+	t->robust_list = 0;
+	t->robust_list_len = 0;
 	t->signal_mask = 0;
 	t->process_reaper = 0;
 	t->exit_requested = 0;
@@ -147,6 +151,8 @@ found:
 	thread_sched_init(t);
         t->waiting_on = 0;
         t->on_waitqueue = 0;
+	t->wait_private = 0;
+	t->wait_bitset = ~(uint32)0;
         list_init(&t->wait_node);
 	t->on_timeout_queue = 0;
 	list_init(&t->timeout_node);
@@ -204,6 +210,8 @@ found:
 	t->kernel_thread = 1;
 	t->lwip_errno = 0;
 	t->clear_child_tid = 0;
+	t->robust_list = 0;
+	t->robust_list_len = 0;
 	t->signal_mask = 0;
 	t->process_reaper = 0;
 	t->exit_requested = 0;
@@ -211,6 +219,8 @@ found:
 	thread_sched_init(t);
 	t->waiting_on = 0;
 	t->on_waitqueue = 0;
+	t->wait_private = 0;
+	t->wait_bitset = ~(uint32)0;
 	list_init(&t->wait_node);
 	t->on_timeout_queue = 0;
 	list_init(&t->timeout_node);
@@ -236,10 +246,14 @@ void kernel_thread_reap(thread_t t)
 	t->kernel_argument = 0;
 	t->lwip_errno = 0;
 	t->clear_child_tid = 0;
+	t->robust_list = 0;
+	t->robust_list_len = 0;
 	t->signal_mask = 0;
 	t->process_reaper = 0;
 	t->exit_requested = 0;
 	t->exit_status = 0;
+	t->wait_private = 0;
+	t->wait_bitset = ~(uint32)0;
 	thread_sched_init(t);
 	list_init(&t->wait_node);
 	list_init(&t->timeout_node);
@@ -249,7 +263,8 @@ void kernel_thread_reap(thread_t t)
 void thread_free(thread_t t)
 {
         process_t p;
-        int i;
+	int found = 0;
+	int i;
 
 	p = t->home;
 	if (!p || !spinlock_holding(&p->lock) ||
@@ -266,9 +281,12 @@ void thread_free(thread_t t)
         for(i = 0; i < PROC_MAXTHREAD; i++) {
                 if(p->thread[i] == t) {
                         p->thread[i] = 0;
+			found = 1;
                         break;
                 }
         }
+	if (!found)
+		PANIC("thread_free slot");
 	p->tnums--;
 	if (t->state != THREAD_EXITED) {
 		if (!p->live_threads)
@@ -284,13 +302,37 @@ void thread_free(thread_t t)
 	t->tid = 0;
 	t->id_p = -1;
 	t->clear_child_tid = 0;
+	t->robust_list = 0;
+	t->robust_list_len = 0;
 	t->signal_mask = 0;
 	t->process_reaper = 0;
 	t->exit_requested = 0;
 	t->exit_status = 0;
+	t->wait_private = 0;
+	t->wait_bitset = ~(uint32)0;
 	thread_sched_init(t);
         list_init(&t->wait_node);
 	list_init(&t->timeout_node);
+}
+
+int thread_get_robust_list(int tid, uint64 *head, uint64 *length)
+{
+	thread_t target;
+
+	if (tid <= 0 || !head || !length)
+		return -1;
+	for (target = thread; target < &thread[NTHREAD]; target++) {
+		spinlock_acquire(&target->lock);
+		if (target->state != THREAD_UNUSED && !target->kernel_thread &&
+		    target->tid == tid) {
+			*head = target->robust_list;
+			*length = target->robust_list_len;
+			spinlock_release(&target->lock);
+			return 0;
+		}
+		spinlock_release(&target->lock);
+	}
+	return -1;
 }
 
 void user_thread_reap(thread_t t)

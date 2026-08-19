@@ -45,6 +45,7 @@
 #include <virtio.h>
 #include <netdevice.h>
 #include <network_stack.h>
+#include <futex.h>
 
 volatile static uint8 start = 0;
 extern char end[];
@@ -58,6 +59,7 @@ static void main_boot(void)
 	thread_setup();
 	scheduler_init();
 	wait_queue_timeout_init();
+	futex_init();
 	workqueue_init();
 	trap_init_lock();
 	trap_init();
