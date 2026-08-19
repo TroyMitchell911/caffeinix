@@ -19,6 +19,7 @@
 #include <linux/futex.h>
 #include <linux/mman.h>
 #include <linux/membarrier.h>
+#include <linux/random.h>
 #include <linux/sched.h>
 #include <linux/tcp.h>
 #include <linux/time_types.h>
@@ -78,6 +79,8 @@ _Static_assert(LINUX_SYS_msync == __NR_msync, "msync number");
 _Static_assert(LINUX_SYS_wait4 == __NR_wait4, "wait4 number");
 _Static_assert(LINUX_SYS_renameat2 == __NR_renameat2,
 	       "renameat2 number");
+_Static_assert(LINUX_SYS_getrandom == __NR_getrandom,
+	       "getrandom number");
 
 _Static_assert(sizeof(struct linux_stat) == sizeof(struct stat),
 	       "stat size");
@@ -151,6 +154,11 @@ _Static_assert(LINUX_MS_ASYNC == MS_ASYNC, "MS_ASYNC value");
 _Static_assert(LINUX_MS_INVALIDATE == MS_INVALIDATE,
 	       "MS_INVALIDATE value");
 _Static_assert(LINUX_MS_SYNC == MS_SYNC, "MS_SYNC value");
+_Static_assert(LINUX_GRND_NONBLOCK == GRND_NONBLOCK,
+	       "GRND_NONBLOCK value");
+_Static_assert(LINUX_GRND_RANDOM == GRND_RANDOM, "GRND_RANDOM value");
+_Static_assert(LINUX_GRND_INSECURE == GRND_INSECURE,
+	       "GRND_INSECURE value");
 _Static_assert(LINUX_MAP_PRIVATE == MAP_PRIVATE, "MAP_PRIVATE value");
 _Static_assert(LINUX_MAP_FIXED == MAP_FIXED, "MAP_FIXED value");
 _Static_assert(LINUX_MAP_ANONYMOUS == MAP_ANONYMOUS,

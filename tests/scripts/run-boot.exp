@@ -29,6 +29,10 @@ foreach variable {
 		exit 1
 	}
 }
+if {![info exists env(QEMU_RNG_BACKEND)]} {
+	puts stderr "missing environment variable: QEMU_RNG_BACKEND"
+	exit 1
+}
 
 set timeout 60
 if {[info exists env(QEMU_TIMEOUT)] && $env(QEMU_TIMEOUT) ne ""} {
@@ -55,6 +59,7 @@ set command [list \
 	ROOT_BUS=virtio-mmio-bus.0 \
 	NET_BACKEND= \
 	NET_OPTIONS= \
+	RNG_BACKEND=$env(QEMU_RNG_BACKEND) \
 	QEMU_SNAPSHOT=1 \
 	QEMU_EXTRA_OPTS= \
 	QEMU_PREBUILT=1 \
@@ -83,6 +88,27 @@ expect {
 	-re {\[PANIC\]} { abort_test "kernel panic after dynamic musl hello" }
 	timeout { abort_test "shell prompt timeout" }
 	eof { abort_test "QEMU exited after dynamic musl hello" }
+}
+
+send -- "/bin/random-runtime\r"
+expect {
+	-re {\r?\nRANDOM_RUNTIME_OK} {}
+	-re {RANDOM_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "userspace random test reported failure"
+	}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic in userspace random test"
+	}
+	timeout { abort_test "userspace random test timeout" }
+	eof { abort_test "QEMU exited during userspace random test" }
+}
+expect {
+	-re {\r?\n# $} {}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic after userspace random test"
+	}
+	timeout { abort_test "shell prompt timeout" }
+	eof { abort_test "QEMU exited after userspace random test" }
 }
 
 send -- "/bin/thread-runtime\r"

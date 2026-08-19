@@ -458,6 +458,12 @@ done
 "$musl_cc" \
 	-static -march=rv64gc -mabi=lp64d \
 	-O2 -Wall -Wextra -Werror \
+	"$tests_dir/random_runtime.c" \
+	-o "$staging/bin/random-runtime"
+
+"$musl_cc" \
+	-static -march=rv64gc -mabi=lp64d \
+	-O2 -Wall -Wextra -Werror \
 	"$tests_dir/thread_runtime.c" "$tests_dir/thread_clone.S" \
 	-o "$staging/bin/thread-runtime"
 
@@ -519,6 +525,12 @@ fi
 if "${cross_compile}readelf" -l "$staging/bin/vm-runtime" |
 	grep -q INTERP; then
 	echo "VM selftest must be statically linked" >&2
+	exit 1
+fi
+
+if "${cross_compile}readelf" -l "$staging/bin/random-runtime" |
+	grep -q INTERP; then
+	echo "random selftest must be statically linked" >&2
 	exit 1
 fi
 

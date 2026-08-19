@@ -108,6 +108,9 @@ The guest selftest covers:
   final pages, and cross-process invalidation after truncation;
 - shared anonymous mappings faulted before and after `fork`, including VMA
   protection splits and partial unmapping;
+- per-exec `AT_RANDOM`, Linux `getrandom` flags and errors, non-repeating
+  output across calls and `fork`, a default VirtIO entropy source, and the
+  explicitly warned no-device fallback;
 - remote TLB invalidation after a sibling thread removes a user mapping;
 - prompt release of exited processes' user pages while zombies await their
   parent's `wait4`, under memory pressure exceeding available guest RAM;

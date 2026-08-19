@@ -93,7 +93,7 @@ normalize_kernel_log()
 		-e '^(Caffeinix |OF: machine:|SBI: spec=|memory: )' \
 		-e '^(clocksource: |smp: |irq: PLIC|mmu: |console: )' \
 		-e '^(virtio-mmio: |virtio-blk|eth[0-9]+: virtio-net)' \
-		-e '^(CPU: |lwIP: |VFS: |init: )' \
+		-e '^(CPU: |random: |lwIP: |VFS: |init: )' \
 		"$timestamped"; then
 		echo "kernel message without a timestamp" >&2
 		exit 1
@@ -119,6 +119,16 @@ check_boot_log()
 	local fat_mounts=0
 	local logical
 	local marker_count
+	local random_count
+
+	random_count=$(awk \
+		'$0 == "random: crng initialized" ||
+		 $0 == "random: using untrusted boot-time seed" { count++ }
+		 END { print count + 0 }' "$clean")
+	if [ "$random_count" -ne 1 ]; then
+		echo "missing or duplicate random initialization report" >&2
+		exit 1
+	fi
 
 	marker_count=$(awk \
 		'$0 ~ /^SBI: spec=[0-9]+\.[0-9]+ implementation=1 / {
@@ -262,11 +272,21 @@ run_boot_smoke()
 	local cpus=$1
 	local memory=$2
 	local pressure_iterations=${3:-1}
+	local rng_backend=/dev/urandom
 	local log=$test_output/qemu-smp${cpus}-${memory}.log
 	local clean=$test_output/qemu-smp${cpus}-${memory}.clean.log
+	local random_marker='random: crng initialized'
+
+	if [ "$#" -ge 4 ]; then
+		rng_backend=$4
+	fi
+	if [ -z "$rng_backend" ]; then
+		random_marker='random: using untrusted boot-time seed'
+	fi
 
 	export QEMU_CPUS=$cpus
 	export QEMU_MEMORY=$memory
+	export QEMU_RNG_BACKEND=$rng_backend
 	export QEMU_LOG=$log
 	export DYNAMIC_PRESSURE_ITERATIONS=$pressure_iterations
 	expect "$script_dir/run-boot.exp"
@@ -279,6 +299,16 @@ run_boot_smoke()
 	if [ "$(awk '$0 == "DYNAMIC_HELLO_OK" { count++ }
 		END { print count + 0 }' "$clean")" -ne 1 ]; then
 		echo "dynamic musl smoke marker is missing" >&2
+		exit 1
+	fi
+	if [ "$(awk '$0 == "RANDOM_RUNTIME_OK" { count++ }
+		END { print count + 0 }' "$clean")" -ne 1 ]; then
+		echo "userspace random marker is missing" >&2
+		exit 1
+	fi
+	if [ "$(awk -v marker="$random_marker" '$0 == marker { count++ }
+		END { print count + 0 }' "$clean")" -ne 1 ]; then
+		echo "unexpected random initialization status" >&2
 		exit 1
 	fi
 	if [ "$(awk '$0 == "THREAD_CLONE_OK" { count++ }
@@ -331,7 +361,7 @@ run_boot_smoke()
 	check_boot_log "$clean" "$cpus"
 }
 
-run_boot_smoke 1 64M
+run_boot_smoke 1 64M 1 ""
 run_boot_smoke 2 192M
 run_boot_smoke 3 96M 32
 run_boot_smoke 4 128M
@@ -390,6 +420,7 @@ check_boot_log "$clean_log" "$QEMU_CPUS" 2
 for marker in \
 	BUSYBOX_SHELL_OK \
 	DYNAMIC_HELLO_OK \
+	RANDOM_RUNTIME_OK \
 	DYNAMIC_CONSTRUCTOR_OK \
 	DYNAMIC_NEEDED_OK \
 	DYNAMIC_TLS_OK \

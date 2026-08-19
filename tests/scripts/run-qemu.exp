@@ -82,6 +82,20 @@ expect {
 }
 expect_prompt
 
+send -- "/bin/random-runtime\r"
+expect {
+	-re {\r?\nRANDOM_RUNTIME_OK} {}
+	-re {RANDOM_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "userspace random test reported failure"
+	}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic in userspace random test"
+	}
+	timeout { abort_test "userspace random test timeout" }
+	eof { abort_test "QEMU exited during userspace random test" }
+}
+expect_prompt
+
 send -- "/bin/dynamic-runtime\r"
 foreach marker {
 	DYNAMIC_CONSTRUCTOR_OK

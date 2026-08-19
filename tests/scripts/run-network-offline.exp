@@ -40,6 +40,7 @@ set command [list \
 	NET_BACKEND=socket \
 	NET_OPTIONS=udp=127.0.0.1:19991,localaddr=127.0.0.1:19990 \
 	NET_BUS=virtio-mmio-bus.2 \
+	RNG_BACKEND= \
 	QEMU_SNAPSHOT=1 \
 	QEMU_EXTRA_OPTS=$extra_opts \
 	QEMU_PREBUILT=1 \
