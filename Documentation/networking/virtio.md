@@ -96,10 +96,19 @@ mounts as the configured ext4 root.  It then mounts a different FAT device,
 if present.  Inserting a network or unsupported VirtIO device before the
 disks therefore cannot redirect storage.
 
+## Entropy driver
+
+`drivers/char/virtio_rng.c` requests one boot seed from a VirtIO entropy
+device.  Probe completes before userspace starts, so the random core can mix
+the bytes before it creates `AT_RANDOM` or serves `getrandom(2)`.  The driver
+uses a bounded poll because interrupts and worker threads are not required
+for this one-time transaction.  A missing or unresponsive device leaves the
+random core on its explicitly warned weak-seed fallback.
+
 ## Supported VirtIO subset
 
 The implementation requires modern VirtIO MMIO version 2 and split rings.
-It supports block ID 2 and network ID 1.  Packed rings, indirect descriptors,
-event index, shared interrupts, reset recovery, hot removal, and legacy MMIO
-are deferred.  `virtio-net` negotiates only MAC and link-status features;
-`virtio-blk` negotiates optional flush.
+It supports network ID 1, block ID 2, and entropy ID 4.  Packed rings,
+indirect descriptors, event index, shared interrupts, reset recovery, hot
+removal, and legacy MMIO are deferred.  `virtio-net` negotiates only MAC and
+link-status features; `virtio-blk` negotiates optional flush.

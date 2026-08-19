@@ -259,6 +259,8 @@ described in the
 [`network architecture`](Documentation/networking/architecture.md).
 The SMP scheduling and virtual-runtime rules are described in
 [`Documentation/scheduler.md`](Documentation/scheduler.md).
+The userspace entropy source and weak-seed fallback are described in
+[`Documentation/random.md`](Documentation/random.md).
 
 ## Run
 
@@ -296,6 +298,24 @@ make -C "$CAFFEINIX_DIR" qemu \
 The kernel Makefile never downloads or builds OpenSBI. See
 [`Documentation/opensbi.md`](Documentation/opensbi.md) for the boot register,
 memory, SBI extension, and multi-hart contracts.
+
+## Randomness
+
+QEMU attaches a VirtIO entropy source backed by `/dev/urandom` by default.
+The kernel uses it for Linux `getrandom(2)` and the `AT_RANDOM` bytes passed
+to every program. Select another host source with `RNG_BACKEND`, or omit the
+device by passing an empty value:
+
+```bash
+make -C "$CAFFEINIX_DIR" qemu \
+  FS_IMG="$FS_IMG" \
+  RNG_BACKEND=
+```
+
+Without a trusted source the kernel keeps the system usable with a weak
+boot-time seed and prints a warning. Such output is not suitable for keys or
+other secrets. `RNG_BUS` selects the VirtIO MMIO slot and defaults to
+`virtio-mmio-bus.3`.
 
 ## Network device
 

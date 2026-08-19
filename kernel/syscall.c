@@ -110,6 +110,7 @@ extern uint64 sys_linux_rt_sigtimedwait(void);
 extern uint64 sys_linux_rt_sigreturn(void);
 extern uint64 sys_linux_setpriority(void);
 extern uint64 sys_linux_getpriority(void);
+extern uint64 sys_linux_getrandom(void);
 extern uint64 sys_linux_symlinkat(void);
 extern uint64 sys_linux_sync(void);
 extern uint64 sys_linux_umask(void);
@@ -221,6 +222,7 @@ static syscall_t linux_syscalls[LINUX_SYS_membarrier + 1] = {
 	[LINUX_SYS_accept4] = sys_linux_accept4,
 	[LINUX_SYS_wait4] = sys_linux_wait4,
 	[LINUX_SYS_renameat2] = sys_linux_renameat2,
+	[LINUX_SYS_getrandom] = sys_linux_getrandom,
 	[LINUX_SYS_membarrier] = sys_linux_membarrier,
 };
 

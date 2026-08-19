@@ -3,7 +3,7 @@ CFLAGS_file.o :=
 
 
 obj-y += debug.o string.o memrange.o buddy.o palloc.o spinlock.o rbtree.o \
-vma.o elf.o page_cache.o anon_mapping.o \
+vma.o elf.o page_cache.o anon_mapping.o random.o \
 ktime.o \
 timeconv.o \
 printk.o thread.o wait.o futex.o membarrier.o signal.o \

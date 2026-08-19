@@ -3,6 +3,7 @@
 #include <mem_layout.h>
 #include <mystring.h>
 #include <process.h>
+#include <random.h>
 #include <scheduler.h>
 #include <syscall.h>
 #include <vm.h>
@@ -107,6 +108,39 @@ uint64 sys_linux_getegid(void)
 uint64 sys_linux_gettid(void)
 {
 	return cur_thread()->tid;
+}
+
+uint64 sys_linux_getrandom(void)
+{
+	uint8 buffer[64];
+	uint64 address, length, total = 0;
+	int flags;
+
+	argaddr(0, &address);
+	argaddr(1, &length);
+	argint(2, &flags);
+	if (flags & ~(LINUX_GRND_NONBLOCK | LINUX_GRND_RANDOM |
+		      LINUX_GRND_INSECURE) ||
+	    (flags & LINUX_GRND_RANDOM && flags & LINUX_GRND_INSECURE))
+		return -LINUX_EINVAL;
+	if (length && address > (uint64)-1 - length)
+		return -LINUX_EFAULT;
+	while (total < length) {
+		uint64 count = length - total;
+
+		if (count > sizeof(buffer))
+			count = sizeof(buffer);
+		if (get_random_bytes(buffer, count) < 0)
+			return total ? total : -LINUX_EAGAIN;
+		if (copyout(cur_proc()->pagetable, address + total,
+			    (char *)buffer, count) < 0) {
+			memset(buffer, 0, sizeof(buffer));
+			return -LINUX_EFAULT;
+		}
+		total += count;
+	}
+	memset(buffer, 0, sizeof(buffer));
+	return total;
 }
 
 uint64 sys_linux_setpriority(void)

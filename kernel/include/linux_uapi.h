@@ -86,6 +86,7 @@
 #define LINUX_SYS_accept4           242
 #define LINUX_SYS_wait4             260
 #define LINUX_SYS_renameat2         276
+#define LINUX_SYS_getrandom         278
 #define LINUX_SYS_membarrier        283
 
 #define LINUX_EPERM                   1
@@ -298,6 +299,10 @@ struct linux_linger {
 #define LINUX_MS_ASYNC                0x1
 #define LINUX_MS_INVALIDATE           0x2
 #define LINUX_MS_SYNC                 0x4
+
+#define LINUX_GRND_NONBLOCK            0x1
+#define LINUX_GRND_RANDOM              0x2
+#define LINUX_GRND_INSECURE            0x4
 
 #define LINUX_PR_GET_NAME             16
 

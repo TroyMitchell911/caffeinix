@@ -48,6 +48,7 @@
 #include <futex.h>
 #include <page_cache.h>
 #include <mmap.h>
+#include <random.h>
 
 volatile static uint8 start = 0;
 extern char end[];
@@ -64,6 +65,7 @@ static void main_boot(void)
 	wait_queue_timeout_init();
 	futex_init();
 	workqueue_init();
+	random_init();
 	trap_init_lock();
 	trap_init();
 #ifdef CONFIG_STACK_OVERFLOW_TEST
@@ -94,8 +96,11 @@ static void main_boot(void)
 		PANIC("register virtio-blk driver");
 	if (virtio_net_init() < 0)
 		PANIC("register virtio-net driver");
+	if (virtio_rng_init() < 0)
+		PANIC("register virtio-rng driver");
 	if (virtio_mmio_init() < 0)
 		PANIC("register virtio-mmio driver");
+	random_finalize_boot();
 	network_stack_init();
 	ext4fs_init();
 	fatfs_init();

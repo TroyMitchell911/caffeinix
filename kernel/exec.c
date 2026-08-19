@@ -4,6 +4,7 @@
 #include <mem_layout.h>
 #include <mystring.h>
 #include <palloc.h>
+#include <random.h>
 #include <scheduler.h>
 #include <vfs.h>
 #include <vm.h>
@@ -232,7 +233,7 @@ static int build_linux_stack(pagedir_t pgdir, uint64 stack_top,
 	uint64 argv_address[MAXARG];
 	uint64 envp_address[MAXARG];
 	uint64 words[4 * MAXARG + 32];
-	uint64 random[2];
+	uint8 random[16];
 	uint64 sp = stack_top;
 	uint64 length;
 	int argc, envc, nwords = 0;
@@ -258,12 +259,15 @@ static int build_linux_stack(pagedir_t pgdir, uint64 stack_top,
 		envp_address[envc] = sp;
 	}
 
-	random[0] = 0x4341464645494e49ULL;
-	random[1] = 0x582d4d55534c2d58ULL;
+	if (get_random_bytes(random, sizeof(random)) < 0)
+		return -1;
 	sp -= sizeof(random);
 	if (sp < stack_base ||
-	    copyout(pgdir, sp, (char *)random, sizeof(random)) < 0)
+	    copyout(pgdir, sp, (char *)random, sizeof(random)) < 0) {
+		memset(random, 0, sizeof(random));
 		return -1;
+	}
+	memset(random, 0, sizeof(random));
 	length = sp;
 
 	words[nwords++] = argc;
