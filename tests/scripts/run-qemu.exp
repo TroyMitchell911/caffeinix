@@ -423,6 +423,15 @@ expect {
 	eof { abort_test "QEMU exited during pread64 runtime test" }
 }
 expect {
+	-re {\r?\nVM_SHARED_ANON_OK} {}
+	-re {VM_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "shared anonymous mapping test reported failure"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in shared anonymous test" }
+	timeout { abort_test "shared anonymous mapping test timeout" }
+	eof { abort_test "QEMU exited during shared anonymous mapping test" }
+}
+expect {
 	-re {\r?\nVM_SHARED_MAP_OK} {}
 	-re {VM_RUNTIME_FAIL[^\r\n]*} {
 		abort_test "shared file mapping test reported failure"

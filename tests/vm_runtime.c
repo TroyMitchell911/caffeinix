@@ -34,6 +34,9 @@
 #define SHARED_SPARSE_PATH "/vm-shared-sparse.bin"
 #define SHARED_TRUNCATE_START "/tmp/vm-shared-truncate-start"
 #define OPEN_TRUNCATE_PATH "/tmp/vm-open-truncate.bin"
+#define SHARED_ANON_CHILD "/tmp/vm-shared-anon-child"
+#define SHARED_ANON_PARENT "/tmp/vm-shared-anon-parent"
+#define SHARED_ANON_SPLIT "/tmp/vm-shared-anon-split"
 #define HINT_ADDRESS ((void *)0x20000000UL)
 
 #define CHECK(condition, name) do { \
@@ -877,6 +880,105 @@ static void test_open_truncate_mapping(void)
 	CHECK(unlink(OPEN_TRUNCATE_PATH) == 0, "open truncate unlink");
 }
 
+static int create_barrier(const char *path)
+{
+	int fd = open(path, O_CREAT | O_TRUNC | O_WRONLY, 0600);
+
+	if (fd < 0)
+		return -1;
+	return close(fd);
+}
+
+static void wait_for_barrier(const char *path)
+{
+	while (access(path, F_OK) < 0) {
+		if (errno != ENOENT)
+			fail("shared anonymous barrier", __LINE__);
+	}
+}
+
+static void shared_anon_child(volatile unsigned char *mapping)
+{
+	if (mapping[0] != 0x11 || mapping[PAGE_SIZE + 7] != 0)
+		_exit(EXIT_FAILURE);
+	mapping[PAGE_SIZE + 7] = 0x22;
+	if (create_barrier(SHARED_ANON_CHILD) < 0)
+		_exit(EXIT_FAILURE);
+	wait_for_barrier(SHARED_ANON_PARENT);
+	_exit(mapping[0] == 0x33 ? EXIT_SUCCESS : EXIT_FAILURE);
+}
+
+static void shared_anon_split_child(volatile unsigned char *mapping)
+{
+	if (mapping[2 * PAGE_SIZE] != 0)
+		_exit(EXIT_FAILURE);
+	mapping[2 * PAGE_SIZE] = 0x55;
+	if (create_barrier(SHARED_ANON_SPLIT) < 0)
+		_exit(EXIT_FAILURE);
+	_exit(EXIT_SUCCESS);
+}
+
+static void test_shared_anonymous_mapping(void)
+{
+	volatile unsigned char *mapping;
+	int status;
+	pid_t child;
+
+	unlink(SHARED_ANON_CHILD);
+	unlink(SHARED_ANON_PARENT);
+	unlink(SHARED_ANON_SPLIT);
+	mapping = mmap(0, 3 * PAGE_SIZE, PROT_READ | PROT_WRITE,
+		       MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+	CHECK(mapping != MAP_FAILED, "shared anonymous mmap");
+	mapping[0] = 0x11;
+	child = fork();
+	CHECK(child >= 0, "shared anonymous fork");
+	if (!child)
+		shared_anon_child(mapping);
+	wait_for_barrier(SHARED_ANON_CHILD);
+	CHECK(mapping[PAGE_SIZE + 7] == 0x22,
+	      "shared anonymous delayed fault");
+	mapping[0] = 0x33;
+	CHECK(create_barrier(SHARED_ANON_PARENT) == 0,
+	      "shared anonymous parent barrier");
+	CHECK(waitpid(child, &status, 0) == child,
+	      "shared anonymous wait");
+	CHECK(WIFEXITED(status) && WEXITSTATUS(status) == EXIT_SUCCESS,
+	      "shared anonymous child status");
+	CHECK(mprotect((void *)mapping + 2 * PAGE_SIZE, PAGE_SIZE,
+		       PROT_READ) == 0, "shared anonymous protect");
+	CHECK(mprotect((void *)mapping + 2 * PAGE_SIZE, PAGE_SIZE,
+		       PROT_READ | PROT_WRITE) == 0,
+	      "shared anonymous restore");
+	CHECK(munmap((void *)mapping + PAGE_SIZE, PAGE_SIZE) == 0,
+	      "shared anonymous split");
+	child = fork();
+	CHECK(child >= 0, "shared anonymous split fork");
+	if (!child)
+		shared_anon_split_child(mapping);
+	wait_for_barrier(SHARED_ANON_SPLIT);
+	CHECK(waitpid(child, &status, 0) == child,
+	      "shared anonymous split wait");
+	CHECK(WIFEXITED(status) && WEXITSTATUS(status) == EXIT_SUCCESS,
+	      "shared anonymous split status");
+	CHECK(mapping[2 * PAGE_SIZE] == 0x55,
+	      "shared anonymous split fault");
+	CHECK(msync((void *)mapping, PAGE_SIZE, MS_SYNC) == 0,
+	      "shared anonymous first msync");
+	CHECK(msync((void *)mapping + 2 * PAGE_SIZE, PAGE_SIZE, 0) == 0,
+	      "shared anonymous second msync");
+	CHECK(munmap((void *)mapping, PAGE_SIZE) == 0,
+	      "shared anonymous first munmap");
+	CHECK(munmap((void *)mapping + 2 * PAGE_SIZE, PAGE_SIZE) == 0,
+	      "shared anonymous second munmap");
+	CHECK(unlink(SHARED_ANON_CHILD) == 0,
+	      "shared anonymous child unlink");
+	CHECK(unlink(SHARED_ANON_PARENT) == 0,
+	      "shared anonymous parent unlink");
+	CHECK(unlink(SHARED_ANON_SPLIT) == 0,
+	      "shared anonymous split unlink");
+}
+
 static void cow_pressure_child(const unsigned char *mapping,
 			       unsigned int child)
 {
@@ -1056,6 +1158,8 @@ int main(void)
 	test_fork_isolation(anonymous, file_mapping);
 	test_kernel_copy_cow();
 	test_cached_private_write();
+	test_shared_anonymous_mapping();
+	puts("VM_SHARED_ANON_OK");
 	test_shared_sparse_write();
 	test_shared_file_mapping();
 	test_open_truncate_mapping();

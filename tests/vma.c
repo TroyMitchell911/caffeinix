@@ -15,6 +15,29 @@
 static struct vfs_file files[2];
 static int file_refs[2];
 
+struct test_backing {
+	struct vma_backing backing;
+	int references;
+};
+
+static void backing_get(struct vma_backing *base)
+{
+	struct test_backing *backing;
+
+	backing = container_of(base, struct test_backing, backing);
+	CHECK(backing->references > 0);
+	backing->references++;
+}
+
+static void backing_put(struct vma_backing *base)
+{
+	struct test_backing *backing;
+
+	backing = container_of(base, struct test_backing, backing);
+	CHECK(backing->references > 0);
+	backing->references--;
+}
+
 struct vfs_file *vfs_file_get(struct vfs_file *file)
 {
 	int index = file - files;
@@ -221,6 +244,44 @@ static void test_clone_and_move(void)
 	CHECK(!file_refs[1]);
 }
 
+static void test_shared_backing(void)
+{
+	struct test_backing backing = {
+		.backing = {
+			.get = backing_get,
+			.put = backing_put,
+		},
+		.references = 1,
+	};
+	struct vma_set clone, source;
+	const struct vm_area *area;
+
+	vma_set_init(&source);
+	vma_set_init(&clone);
+	CHECK(vma_insert_backed(&source, 0x40000, 0x44000,
+				LINUX_PROT_READ | LINUX_PROT_WRITE,
+				LINUX_MAP_SHARED, VMA_MMAP,
+				&backing.backing, 0) == 0);
+	CHECK(backing.references == 2);
+	CHECK(vma_protect(&source, 0x41000, 0x43000,
+			  LINUX_PROT_READ) == 0);
+	CHECK(vma_count(&source) == 3 && backing.references == 4);
+	area = area_at(&source, 1);
+	CHECK(area->backing == &backing.backing && area->offset == 0x1000);
+	area = area_at(&source, 2);
+	CHECK(area->backing == &backing.backing && area->offset == 0x3000);
+	CHECK(vma_set_clone(&clone, &source) == 0);
+	CHECK(vma_count(&clone) == 3 && backing.references == 7);
+	CHECK(vma_unmap(&source, 0x41000, 0x42000) == 0);
+	area = area_at(&source, 1);
+	CHECK(area->start == 0x42000 && area->offset == 0x2000);
+	vma_set_destroy(&source);
+	vma_set_destroy(&clone);
+	CHECK(backing.references == 1);
+	backing.backing.put(&backing.backing);
+	CHECK(!backing.references);
+}
+
 int main(void)
 {
 	test_order_and_merge();
@@ -229,6 +290,7 @@ int main(void)
 	test_elf_overlap();
 	test_split_and_protect();
 	test_clone_and_move();
+	test_shared_backing();
 	puts("VMA_OK");
 	return EXIT_SUCCESS;
 }

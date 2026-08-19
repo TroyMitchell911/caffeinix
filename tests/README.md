@@ -106,6 +106,8 @@ The guest selftest covers:
 - shared file mappings, immediate alias and fork visibility, coherent
   positional and ordinary I/O, synchronous writeback, persistence, partial
   final pages, and cross-process invalidation after truncation;
+- shared anonymous mappings faulted before and after `fork`, including VMA
+  protection splits and partial unmapping;
 - remote TLB invalidation after a sibling thread removes a user mapping;
 - prompt release of exited processes' user pages while zombies await their
   parent's `wait4`, under memory pressure exceeding available guest RAM;
