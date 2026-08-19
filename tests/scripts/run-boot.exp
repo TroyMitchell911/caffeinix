@@ -169,6 +169,27 @@ expect {
 	eof { abort_test "QEMU exited after Linux membarrier test" }
 }
 
+send -- "/bin/signal-runtime\r"
+expect {
+	-re {\r?\nSIGNAL_RUNTIME_OK} {}
+	-re {SIGNAL_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "Linux signal test reported failure"
+	}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic in Linux signal test"
+	}
+	timeout { abort_with_dump "Linux signal test timeout" }
+	eof { abort_test "QEMU exited during Linux signal test" }
+}
+expect {
+	-re {\r?\n# $} {}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic after Linux signal test"
+	}
+	timeout { abort_test "shell prompt timeout" }
+	eof { abort_test "QEMU exited after Linux signal test" }
+}
+
 send -- "/bin/dynamic-runtime pressure $pressure_iterations\r"
 expect {
 	-re {\r?\nDYNAMIC_EXEC_PRESSURE_OK} {}

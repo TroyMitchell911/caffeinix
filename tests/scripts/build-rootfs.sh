@@ -478,6 +478,13 @@ done
 	"$tests_dir/membarrier_runtime.c" \
 	-o "$staging/bin/membarrier-runtime"
 
+"$musl_cc" \
+	-march=rv64gc -mabi=lp64d \
+	-O2 -Wall -Wextra -Werror -pthread \
+	"$tests_dir/signal_runtime.c" \
+	"$tests_dir/signal_register.S" \
+	-o "$staging/bin/signal-runtime"
+
 if "${cross_compile}readelf" -l "$staging/bin/fs-runtime" |
 	grep -q INTERP; then
 	echo "guest selftest must be statically linked" >&2
@@ -535,6 +542,12 @@ fi
 if ! "${cross_compile}readelf" -l "$staging/bin/membarrier-runtime" |
 	grep -q '/lib/ld-musl-riscv64.so.1'; then
 	echo "membarrier selftest must use the musl runtime linker" >&2
+	exit 1
+fi
+
+if ! "${cross_compile}readelf" -l "$staging/bin/signal-runtime" |
+	grep -q '/lib/ld-musl-riscv64.so.1'; then
+	echo "signal selftest must use the musl runtime linker" >&2
 	exit 1
 fi
 

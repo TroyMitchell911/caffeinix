@@ -1,6 +1,7 @@
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -99,7 +100,7 @@ static void test_relro(void)
 		_exit(0);
 	}
 	if (waitpid(pid, &status, 0) != pid ||
-	    !WIFEXITED(status) || WEXITSTATUS(status) == 0)
+	    !WIFSIGNALED(status) || WTERMSIG(status) != SIGSEGV)
 		fail("RELRO protection");
 	puts("DYNAMIC_RELRO_OK");
 }

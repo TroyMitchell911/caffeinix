@@ -4,10 +4,13 @@
 #include <linux_uapi.h>
 
 #include <asm/ioctls.h>
+#include <asm/ptrace.h>
 #include <asm/signal.h>
+#include <asm/sigcontext.h>
 #include <asm/stat.h>
 #include <asm/termbits.h>
 #include <asm/unistd.h>
+#include <asm/ucontext.h>
 #include <asm-generic/poll.h>
 #include <asm-generic/socket.h>
 #include <asm-generic/termios.h>
@@ -39,6 +42,21 @@ _Static_assert(LINUX_SYS_fsync == __NR_fsync, "fsync number");
 _Static_assert(LINUX_SYS_umask == __NR_umask, "umask number");
 _Static_assert(LINUX_SYS_rt_sigaction == __NR_rt_sigaction,
 	       "rt_sigaction number");
+_Static_assert(LINUX_SYS_kill == __NR_kill, "kill number");
+_Static_assert(LINUX_SYS_tkill == __NR_tkill, "tkill number");
+_Static_assert(LINUX_SYS_tgkill == __NR_tgkill, "tgkill number");
+_Static_assert(LINUX_SYS_sigaltstack == __NR_sigaltstack,
+	       "sigaltstack number");
+_Static_assert(LINUX_SYS_rt_sigsuspend == __NR_rt_sigsuspend,
+	       "rt_sigsuspend number");
+_Static_assert(LINUX_SYS_rt_sigprocmask == __NR_rt_sigprocmask,
+	       "rt_sigprocmask number");
+_Static_assert(LINUX_SYS_rt_sigpending == __NR_rt_sigpending,
+	       "rt_sigpending number");
+_Static_assert(LINUX_SYS_rt_sigtimedwait == __NR_rt_sigtimedwait,
+	       "rt_sigtimedwait number");
+_Static_assert(LINUX_SYS_rt_sigreturn == __NR_rt_sigreturn,
+	       "rt_sigreturn number");
 _Static_assert(LINUX_SYS_setpriority == __NR_setpriority,
 	       "setpriority number");
 _Static_assert(LINUX_SYS_getpriority == __NR_getpriority,
@@ -68,6 +86,33 @@ _Static_assert(offsetof(struct linux_stat, blocks) ==
 _Static_assert(sizeof(struct linux_sigaction) == sizeof(struct sigaction),
 	       "sigaction size");
 _Static_assert(LINUX_SIGSET_SIZE == sizeof(sigset_t), "sigset size");
+_Static_assert(sizeof(struct linux_sigaltstack) == sizeof(stack_t),
+	       "signal alternate stack size");
+_Static_assert(sizeof(struct linux_user_regs) ==
+	       sizeof(struct user_regs_struct), "signal register size");
+_Static_assert(sizeof(struct linux_sigcontext) ==
+	       sizeof(struct sigcontext), "signal context size");
+_Static_assert(sizeof(struct linux_ucontext) == sizeof(struct ucontext),
+	       "user context size");
+_Static_assert(offsetof(struct linux_ucontext, signal_mask) ==
+	       offsetof(struct ucontext, uc_sigmask),
+	       "user context signal mask offset");
+_Static_assert(offsetof(struct linux_ucontext, mcontext) ==
+	       offsetof(struct ucontext, uc_mcontext),
+	       "user context machine state offset");
+_Static_assert(LINUX_SIGHUP == SIGHUP, "SIGHUP value");
+_Static_assert(LINUX_SIGKILL == SIGKILL, "SIGKILL value");
+_Static_assert(LINUX_SIGCHLD == SIGCHLD, "SIGCHLD value");
+_Static_assert(LINUX_SIGRTMIN == SIGRTMIN, "SIGRTMIN value");
+_Static_assert(LINUX_SIGRTMAX == SIGRTMAX, "SIGRTMAX value");
+_Static_assert(LINUX_SA_NOCLDSTOP == SA_NOCLDSTOP,
+	       "SA_NOCLDSTOP value");
+_Static_assert(LINUX_SA_SIGINFO == SA_SIGINFO, "SA_SIGINFO value");
+_Static_assert(LINUX_SA_ONSTACK == SA_ONSTACK, "SA_ONSTACK value");
+_Static_assert(LINUX_SA_RESTART == SA_RESTART, "SA_RESTART value");
+_Static_assert(LINUX_SA_NODEFER == SA_NODEFER, "SA_NODEFER value");
+_Static_assert(LINUX_SA_RESETHAND == SA_RESETHAND,
+	       "SA_RESETHAND value");
 _Static_assert(sizeof(struct linux_termios) == sizeof(struct termios),
 	       "termios size");
 _Static_assert(sizeof(struct linux_winsize) == sizeof(struct winsize),
