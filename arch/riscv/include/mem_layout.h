@@ -20,8 +20,7 @@
         in both user and kernel space.
  */
 #define TRAMPOLINE      (MAXVA - PGSIZE)
-#define TRAPFRAME_INFO   (TRAMPOLINE - PGSIZE)
-#define TRAPFRAME(x)    (TRAPFRAME_INFO - ((PGSIZE) * (x + 1)))
+#define TRAPFRAME(x)    (TRAMPOLINE - ((PGSIZE) * ((x) + 1)))
 
 /* Keep the userspace stack separate from the ELF break and mmap area. */
 #define USER_STACK_TOP   0x40000000L

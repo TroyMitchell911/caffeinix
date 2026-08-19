@@ -121,19 +121,11 @@ pagedir_t process_pagedir(process_t p)
 		return 0;
         }
         /* Map address of under trampoline to trapframe */
-        ret = vm_map(pgdir, TRAPFRAME_INFO, (uint64)p->tinfo, PGSIZE, PTE_W | PTE_R);
-	if(ret){
-                /* We don't need free the address that PTE points because it is a code seg */
-		vm_unmap(pgdir, TRAMPOLINE, 1, 0);
-		pagedir_free(pgdir);
-		return 0;
-	}
         ret = vm_map(pgdir, TRAPFRAME(0), (uint64)thread->trapframe,
                      PGSIZE, PTE_W | PTE_R);
 	if(ret){
                 /* We don't need free the address that PTE points because it is a code seg */
 		vm_unmap(pgdir, TRAMPOLINE, 1, 0);
-		vm_unmap(pgdir, TRAPFRAME_INFO, 1, 0);
 		pagedir_free(pgdir);
 		return 0;
 	}
@@ -149,8 +141,6 @@ void process_freepagedir(pagedir_t pgdir, uint64 sz)
 		if (vm_mapped(pgdir, TRAPFRAME(i)))
 			vm_unmap(pgdir, TRAPFRAME(i), 1, 0);
 	}
-	if (vm_mapped(pgdir, TRAPFRAME_INFO))
-		vm_unmap(pgdir, TRAPFRAME_INFO, 1, 0);
 	if (vm_mapped(pgdir, TRAMPOLINE))
 		vm_unmap(pgdir, TRAMPOLINE, 1, 0);
 	vm_free_user(pgdir);
@@ -252,17 +242,10 @@ static process_t process_alloc(void)
         if(!t)
                 goto r0;
 
-	p->tinfo = (trapframe_info_t)palloc_zero();
-        if(!p->tinfo) {
-                goto r1;
-        }
-
-        p->tinfo->nums = 1;
-
         /* Alloc memory for page-table */
         p->pagetable = process_pagedir(p);
-        if(!p->pagetable) {
-                goto r2;
+	if(!p->pagetable) {
+		goto r1;
         }
         
         /* Alloc pid */
@@ -277,8 +260,6 @@ static process_t process_alloc(void)
         spinlock_release(&wait_lock);
 
         return p;
-r2:
-	pfree(p->tinfo);
 r1:
 	thread_free(t);
 	spinlock_release(&t->lock);
@@ -308,8 +289,6 @@ static void process_free(process_t p)
                 thread_free(thread);
                 spinlock_release(&thread->lock);
         }
-	if (p->tinfo)
-		pfree(p->tinfo);
         list_remove(&p->all_tag);
         spinlock_release(&p->lock);
         free(p);

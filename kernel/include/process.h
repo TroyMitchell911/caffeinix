@@ -24,11 +24,6 @@ typedef enum process_state{
         PROCESS_ZOMBIE,
 }process_state_t;
 
-typedef struct trapframe_info {
-        uint64 addr;
-        uint64 nums;
-}*trapframe_info_t;
-
 struct process_signal_action {
 	uint64 handler;
 	uint64 flags;
@@ -60,7 +55,6 @@ typedef struct process{
 	struct process_signal_action signal_actions[64];
         struct process *parent;
         struct wait_queue child_wait;
-        trapframe_info_t tinfo;
         int tnums;
         thread_t thread[PROC_MAXTHREAD];
         

@@ -455,8 +455,6 @@ void scheduler(void)
 		__atomic_store_n(&cpu->need_resched, 0, __ATOMIC_RELEASE);
 		cpu->current = next;
 		spinlock_release(&runqueue.lock);
-		if (next->home)
-			next->home->tinfo->addr = TRAPFRAME(next->id_p);
 		switchto(&cpu->context, &next->context);
 		spinlock_acquire(&runqueue.lock);
 		if (cpu->current != next || cpu->selected)

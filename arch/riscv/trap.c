@@ -195,8 +195,9 @@ void user_trap_ret(void)
         satp = MAKE_SATP(p->pagetable);
 
         trampoline_userret = TRAMPOLINE + (user_ret - trampoline);
-        /* Call user_ret */
-        ((void (*)(uint64))trampoline_userret)(satp);
+	/* Call user_ret with this hart's current user trapframe mapping. */
+	((void (*)(uint64, uint64))trampoline_userret)(
+		satp, TRAPFRAME(cur_thread()->id_p));
 }
 
 /* This function for first hart */
