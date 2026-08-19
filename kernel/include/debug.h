@@ -18,7 +18,9 @@
 #ifdef DEBUG
 
 extern void panic(char* s);
+void debug_init(void);
 void debug_dump_state(void);
+void debug_dump_state_request(void);
 #define PANIC(s) do {           \
     panic(s);                   \
 } while (0)

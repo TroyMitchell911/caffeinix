@@ -12,6 +12,9 @@ struct page_cache_stats {
 	uint64 hits;
 	uint64 misses;
 	uint64 reclaimed;
+	uint64 mapped_pages;
+	uint64 shared_pages;
+	uint64 mapping_references;
 };
 
 enum page_cache_truncate_result {

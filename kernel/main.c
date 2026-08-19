@@ -65,6 +65,7 @@ static void main_boot(void)
 	wait_queue_timeout_init();
 	futex_init();
 	workqueue_init();
+	debug_init();
 	random_init();
 	trap_init_lock();
 	trap_init();

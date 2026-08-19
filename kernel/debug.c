@@ -3,12 +3,31 @@
 #include <debug.h>
 #include <ext4fs.h>
 #include <page_cache.h>
+#include <palloc.h>
 #include <printf.h>
 #include <scheduler.h>
 #include <thread.h>
 #include <wait.h>
+#include <workqueue.h>
 
 static volatile uint8 dumping;
+static struct work_struct dump_work;
+
+static void debug_dump_work(struct work_struct *work)
+{
+	(void)work;
+	debug_dump_state();
+}
+
+void debug_init(void)
+{
+	work_init(&dump_work, debug_dump_work);
+}
+
+void debug_dump_state_request(void)
+{
+	schedule_work(&dump_work);
+}
 
 static int thread_pointer_valid(thread_t candidate)
 {
@@ -48,6 +67,7 @@ static const char *thread_state_name(thread_state_t state)
 void debug_dump_state(void)
 {
 	struct page_cache_stats page_cache_stats;
+	uint64 free_pages, total_pages;
 	thread_t current, selected;
 	int index;
 
@@ -77,10 +97,18 @@ void debug_dump_state(void)
 				 thread[index].on_timeout_queue);
 	}
 	page_cache_get_stats(&page_cache_stats);
+	total_pages = palloc_usable_bytes() / PGSIZE;
+	free_pages = palloc_free_pages();
+	printf_emergency("memory pages=%lu free=%lu used=%lu\n",
+			 total_pages, free_pages, total_pages - free_pages);
 	printf_emergency("page-cache pages=%lu hits=%lu misses=%lu "
-			 "reclaimed=%lu\n", page_cache_stats.pages,
+			 "reclaimed=%lu mapped=%lu shared=%lu refs=%lu\n",
+			 page_cache_stats.pages,
 			 page_cache_stats.hits, page_cache_stats.misses,
-			 page_cache_stats.reclaimed);
+			 page_cache_stats.reclaimed,
+			 page_cache_stats.mapped_pages,
+			 page_cache_stats.shared_pages,
+			 page_cache_stats.mapping_references);
 	ext4fs_debug_dump();
 	virtio_blk_debug_dump();
 	printf_emergency("DEBUG_STATE_END\n");

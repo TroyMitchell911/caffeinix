@@ -125,6 +125,16 @@ uint64 palloc_usable_bytes(void)
 	return usable_bytes;
 }
 
+uint64 palloc_free_pages(void)
+{
+	uint64 pages;
+
+	spinlock_acquire(&page_lock);
+	pages = buddy_free_page_count(&page_allocator);
+	spinlock_release(&page_lock);
+	return pages;
+}
+
 static void palloc_discover_memory(void)
 {
 	struct of_memory_range range;

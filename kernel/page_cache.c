@@ -502,9 +502,27 @@ out:
 
 void page_cache_get_stats(struct page_cache_stats *stats)
 {
+	struct page_cache_entry *entry;
+	uint32 references;
+	list_t node;
+
 	if (!stats)
 		return;
 	sleeplock_acquire(&page_cache.lock);
 	*stats = page_cache.stats;
+	stats->mapped_pages = 0;
+	stats->shared_pages = 0;
+	stats->mapping_references = 0;
+	for (node = page_cache.entries.next; node != &page_cache.entries;
+	     node = node->next) {
+		entry = list_entry(node, struct page_cache_entry, node);
+		references = palloc_refcount(entry->page);
+		if (references > 1) {
+			stats->mapped_pages++;
+			stats->mapping_references += references - 1;
+		}
+		if (references > 2)
+			stats->shared_pages++;
+	}
 	sleeplock_release(&page_cache.lock);
 }
