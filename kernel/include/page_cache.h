@@ -22,6 +22,7 @@ enum page_cache_truncate_result {
 
 enum page_cache_get_result {
 	PAGE_CACHE_GET_OK,
+	PAGE_CACHE_GET_RETRY,
 	PAGE_CACHE_GET_IO,
 	PAGE_CACHE_GET_ERROR,
 };
@@ -41,6 +42,7 @@ int page_cache_writeback_super(struct vfs_super_block *superblock);
 int page_cache_truncate(struct vfs_inode *inode, uint64 old_size,
 			uint64 size);
 uint64 page_cache_reclaim(uint64 target);
+uint64 page_cache_reclaim_mapped(uint64 target);
 void page_cache_get_stats(struct page_cache_stats *stats);
 
 #endif

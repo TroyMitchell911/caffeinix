@@ -1,5 +1,6 @@
 #include <debug.h>
 #include <anon_mapping.h>
+#include <cpu.h>
 #include <linux_uapi.h>
 #include <mem_layout.h>
 #include <mmap.h>
@@ -17,6 +18,9 @@ static struct {
 	struct sleeplock lock;
 	struct list processes;
 } mmap_registry;
+
+#define MMAP_RECLAIM_BATCH  64
+#define MMAP_RECLAIM_TARGET 32
 
 void mmap_init(void)
 {
@@ -138,6 +142,157 @@ int mmap_file_truncate(struct vfs_inode *inode, uint64 old_size,
 	return result;
 }
 
+static int mmap_file_page_address(const struct vm_area *area,
+				  const struct vfs_inode *inode,
+				  uint64 offset, uint64 *address)
+{
+	uint64 relative;
+
+	if (!mmap_area_matches_inode(area, inode) || offset < area->offset)
+		return 0;
+	relative = offset - area->offset;
+	if (relative >= area->end - area->start)
+		return 0;
+	*address = area->start + relative;
+	return 1;
+}
+
+static int mmap_reclaim_file_scan(struct vfs_inode *inode, uint64 offset,
+				  void *page, int invalidate,
+				  int *changed)
+{
+	struct vm_area *area;
+	process_t process;
+	uint64 address;
+	list_t area_node, process_node;
+	pte_t *pte;
+
+	for (process_node = mmap_registry.processes.next;
+	     process_node != &mmap_registry.processes;
+	     process_node = process_node->next) {
+		process = list_entry(process_node, struct process, mmap_tag);
+		sleeplock_acquire(&process->mmap_lock);
+		for (area_node = process->vmas.areas.next;
+		     area_node != &process->vmas.areas;
+		     area_node = area_node->next) {
+			area = list_entry(area_node, struct vm_area, node);
+			if (!mmap_file_page_address(area, inode, offset,
+						    &address))
+				continue;
+			pte = PTE(process->pagetable, address, 0);
+			if (!pte || !(*pte & PTE_V) ||
+			    !(*pte & PTE_SW_USER) ||
+			    !(*pte & (PTE_R | PTE_W | PTE_X)) ||
+			    PTE2PA(*pte) != (uint64)page)
+				continue;
+			if ((area->flags & 0xf) == LINUX_MAP_SHARED &&
+			    (area->protection & LINUX_PROT_WRITE)) {
+				sleeplock_release(&process->mmap_lock);
+				return 1;
+			}
+			if (!invalidate)
+				continue;
+			*pte = 0;
+			pfree(page);
+			*changed = 1;
+		}
+		sleeplock_release(&process->mmap_lock);
+	}
+	return 0;
+}
+
+int mmap_reclaim_file_page(struct vfs_file *file, uint64 offset, void *page)
+{
+	struct vfs_inode *inode;
+	int blocked, changed = 0;
+
+	if (!file || !file->path.dentry ||
+	    !(inode = file->path.dentry->inode) || !page)
+		return 1;
+	sleeplock_acquire(&mmap_registry.lock);
+	blocked = mmap_reclaim_file_scan(inode, offset, page, 0, &changed);
+	if (!blocked)
+		blocked = mmap_reclaim_file_scan(inode, offset, page, 1,
+						 &changed);
+	if (changed)
+		cpu_tlb_flush_all();
+	sleeplock_release(&mmap_registry.lock);
+	return blocked;
+}
+
+static uint64 mmap_reclaim_anonymous(process_t process, uint64 target)
+{
+	struct vm_area *area;
+	void *pages[MMAP_RECLAIM_BATCH];
+	uint64 address, reclaimed = 0;
+	list_t node;
+	pte_t *pte;
+	int count = 0, index, single;
+
+	if (!process || !target)
+		return 0;
+	spinlock_acquire(&process->lock);
+	single = process == cur_proc() && process->state == PROCESS_LIVE &&
+		 process->live_threads == 1 && process->tnums == 1;
+	spinlock_release(&process->lock);
+	if (!single)
+		return 0;
+
+	sleeplock_acquire(&process->mmap_lock);
+	for (node = process->vmas.areas.next;
+	     node != &process->vmas.areas && reclaimed < target;
+	     node = node->next) {
+		area = list_entry(node, struct vm_area, node);
+		if (area->origin != VMA_ANONYMOUS || area->backing ||
+		    (area->flags & 0xf) != LINUX_MAP_PRIVATE ||
+		    area->usage == VMA_ELF)
+			continue;
+		for (address = area->start;
+		     address < area->end && reclaimed < target;
+		     address += PGSIZE) {
+			pte = PTE(process->pagetable, address, 0);
+			if (!pte || !(*pte & PTE_V) ||
+			    !(*pte & PTE_SW_USER) || (*pte & PTE_D) ||
+			    !(*pte & (PTE_R | PTE_W | PTE_X)))
+				continue;
+			pages[count++] = (void *)PTE2PA(*pte);
+			*pte = 0;
+			if (count < MMAP_RECLAIM_BATCH)
+				continue;
+			cpu_tlb_flush_all();
+			for (index = 0; index < count; index++) {
+				if (palloc_refcount(pages[index]) == 1)
+					reclaimed++;
+				pfree(pages[index]);
+			}
+			count = 0;
+		}
+	}
+	if (count) {
+		cpu_tlb_flush_all();
+		for (index = 0; index < count; index++) {
+			if (palloc_refcount(pages[index]) == 1)
+				reclaimed++;
+			pfree(pages[index]);
+		}
+	}
+	sleeplock_release(&process->mmap_lock);
+	return reclaimed;
+}
+
+uint64 mmap_reclaim_clean_pages(uint64 target)
+{
+	uint64 reclaimed;
+
+	if (!target)
+		return 0;
+	reclaimed = page_cache_reclaim_mapped(target);
+	if (reclaimed < target)
+		reclaimed += mmap_reclaim_anonymous(cur_proc(),
+						     target - reclaimed);
+	return reclaimed;
+}
+
 static int mmap_protection_valid(int protection)
 {
 	return !(protection & ~(LINUX_PROT_READ | LINUX_PROT_WRITE |
@@ -235,6 +390,8 @@ static enum mmap_fault_result mmap_file_fault(struct vm_area *area,
 			*cached = 1;
 			return MMAP_FAULT_OK;
 		}
+		if (cache_result == PAGE_CACHE_GET_RETRY)
+			return MMAP_FAULT_RETRY;
 		if (cache_result == PAGE_CACHE_GET_IO)
 			return area->usage == VMA_ELF ? MMAP_FAULT_NOMEM :
 				MMAP_FAULT_BUSERR;
@@ -250,6 +407,8 @@ static enum mmap_fault_result mmap_file_fault(struct vm_area *area,
 				file_offset);
 	if (result != (int64)bytes) {
 		pfree(allocated);
+		if (result == VFS_ERR_NOMEM)
+			return MMAP_FAULT_NOMEM;
 		return area->usage == VMA_ELF ? MMAP_FAULT_NOMEM :
 			MMAP_FAULT_BUSERR;
 	}
@@ -271,14 +430,18 @@ enum mmap_fault_result mmap_handle_fault(process_t process, uint64 address,
 					 enum mmap_fault_access access)
 {
 	struct vm_area *area;
-	enum mmap_fault_result result = MMAP_FAULT_NOMEM;
+	enum mmap_fault_result result;
 	uint64 page_address = PGROUNDDOWN(address);
-	int permissions;
-	int cached = 0;
-	void *page = 0;
+	int permissions, reclaimed = 0;
+	int cached;
+	void *page;
 
 	if (!process || address >= MAXVA)
 		return MMAP_FAULT_MAPERR;
+retry:
+	result = MMAP_FAULT_NOMEM;
+	cached = 0;
+	page = 0;
 	sleeplock_acquire(&process->mmap_lock);
 	area = (struct vm_area *)vma_find(&process->vmas, address);
 	if (!area) {
@@ -352,6 +515,13 @@ enum mmap_fault_result mmap_handle_fault(process_t process, uint64 address,
 		fence_i();
 out:
 	sleeplock_release(&process->mmap_lock);
+	if (result == MMAP_FAULT_RETRY)
+		goto retry;
+	if (result == MMAP_FAULT_NOMEM && !reclaimed) {
+		reclaimed = mmap_reclaim_clean_pages(MMAP_RECLAIM_TARGET) != 0;
+		if (reclaimed)
+			goto retry;
+	}
 	return result;
 }
 

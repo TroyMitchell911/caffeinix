@@ -91,6 +91,8 @@ static uint64 user_va2pa(pagedir_t pgdir, uint64 va, int permissions)
 	if ((*pte & PTE_U) == 0 ||
 	    (*pte & permissions) != (uint64)permissions)
 		return 0;
+	if (permissions & PTE_W)
+		__atomic_fetch_or(pte, PTE_A | PTE_D, __ATOMIC_RELAXED);
 	leaf_size = sv39_level_size(level);
 	return PTE2PA(*pte) +
 	       (va & (leaf_size - 1) & ~(PGSIZE - 1));

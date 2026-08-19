@@ -1,4 +1,5 @@
 #include <list.h>
+#include <mmap.h>
 #include <mystring.h>
 #include <page_cache.h>
 #include <palloc.h>
@@ -68,6 +69,22 @@ static void page_cache_release(struct page_cache_entry *entry)
 	page_cache.stats.pages--;
 }
 
+static struct page_cache_entry *page_cache_select_clean_locked(void)
+{
+	struct page_cache_entry *entry;
+	list_t node;
+
+	for (node = page_cache.entries.prev; node != &page_cache.entries;
+	     node = node->prev) {
+		entry = list_entry(node, struct page_cache_entry, node);
+		if (entry->dirty || entry->writeback_mapped || entry->evicting)
+			continue;
+		entry->evicting = 1;
+		return entry;
+	}
+	return 0;
+}
+
 static uint64 page_cache_reclaim_locked(uint64 target)
 {
 	list_t node, next;
@@ -99,6 +116,42 @@ uint64 page_cache_reclaim(uint64 target)
 	return reclaimed;
 }
 
+uint64 page_cache_reclaim_mapped(uint64 target)
+{
+	struct page_cache_entry *entry;
+	uint64 budget, reclaimed = 0;
+	int blocked;
+
+	sleeplock_acquire(&page_cache.lock);
+	budget = page_cache.stats.pages;
+	sleeplock_release(&page_cache.lock);
+	while (reclaimed < target && budget--) {
+		sleeplock_acquire(&page_cache.lock);
+		entry = page_cache_select_clean_locked();
+		sleeplock_release(&page_cache.lock);
+		if (!entry)
+			break;
+
+		blocked = mmap_reclaim_file_page(entry->file, entry->offset,
+						 entry->page);
+
+		sleeplock_acquire(&page_cache.lock);
+		if (blocked || entry->dirty || entry->writeback_mapped ||
+		    palloc_refcount(entry->page) != 1) {
+			entry->evicting = 0;
+			list_remove(&entry->node);
+			list_insert_after(&page_cache.entries, &entry->node);
+			sleeplock_release(&page_cache.lock);
+			continue;
+		}
+		page_cache_release(entry);
+		reclaimed++;
+		page_cache.stats.reclaimed++;
+		sleeplock_release(&page_cache.lock);
+	}
+	return reclaimed;
+}
+
 enum page_cache_get_result page_cache_get(struct vfs_file *file,
 					  uint64 offset, uint32 bytes,
 					  void **page)
@@ -114,14 +167,12 @@ enum page_cache_get_result page_cache_get(struct vfs_file *file,
 	    !(inode = file->path.dentry->inode) ||
 	    inode->type != VFS_INODE_REGULAR)
 		return PAGE_CACHE_GET_ERROR;
-retry:
 	sleeplock_acquire(&page_cache.lock);
 	entry = page_cache_find(inode->superblock, inode->number, offset);
 	if (entry) {
 		if (entry->evicting) {
 			sleeplock_release(&page_cache.lock);
-			yield();
-			goto retry;
+			return PAGE_CACHE_GET_RETRY;
 		}
 		if (palloc_get(entry->page) < 0) {
 			sleeplock_release(&page_cache.lock);

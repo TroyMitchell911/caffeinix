@@ -4,6 +4,7 @@
 #include <typedefs.h>
 
 struct process;
+struct vfs_file;
 struct vfs_inode;
 
 enum mmap_fault_access {
@@ -18,6 +19,7 @@ enum mmap_fault_result {
 	MMAP_FAULT_ACCERR,
 	MMAP_FAULT_BUSERR,
 	MMAP_FAULT_NOMEM,
+	MMAP_FAULT_RETRY,
 };
 
 enum mmap_fault_result mmap_handle_fault(struct process *process,
@@ -29,5 +31,8 @@ void mmap_process_unregister(struct process *process);
 int mmap_process_fork(struct process *parent, struct process *child);
 int mmap_file_truncate(struct vfs_inode *inode, uint64 old_size,
 		       uint64 size);
+int mmap_reclaim_file_page(struct vfs_file *file, uint64 offset,
+			   void *page);
+uint64 mmap_reclaim_clean_pages(uint64 target);
 
 #endif
