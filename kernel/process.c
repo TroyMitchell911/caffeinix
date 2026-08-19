@@ -495,6 +495,56 @@ void process_expire_timers(uint64 now)
 	spinlock_release(&wait_lock);
 }
 
+int process_task_exists(int tid)
+{
+	process_t process;
+	list_t entry;
+	int found = 0, index;
+
+	if (tid <= 0)
+		return 0;
+	spinlock_acquire(&wait_lock);
+	for (entry = proc.next; entry != &proc; entry = entry->next) {
+		process = list_entry(entry, struct process, all_tag);
+		spinlock_acquire(&process->lock);
+		if (process->state == PROCESS_LIVE) {
+			for (index = 0; index < PROC_MAXTHREAD; index++) {
+				thread_t thread = process->thread[index];
+
+				if (thread && thread->tid == tid &&
+				    thread->state != THREAD_UNUSED &&
+				    thread->state != THREAD_EXITED) {
+					found = 1;
+					break;
+				}
+			}
+		}
+		spinlock_release(&process->lock);
+		if (found)
+			break;
+	}
+	spinlock_release(&wait_lock);
+	return found;
+}
+
+uint32 process_task_count(void)
+{
+	process_t process;
+	list_t entry;
+	uint64 count = 0;
+
+	spinlock_acquire(&wait_lock);
+	for (entry = proc.next; entry != &proc; entry = entry->next) {
+		process = list_entry(entry, struct process, all_tag);
+		spinlock_acquire(&process->lock);
+		if (process->state == PROCESS_LIVE)
+			count += process->live_threads;
+		spinlock_release(&process->lock);
+	}
+	spinlock_release(&wait_lock);
+	return count > 0xffffffffU ? 0xffffffffU : count;
+}
+
 int process_fork(uint64 child_stack)
 {
         int pid, i;

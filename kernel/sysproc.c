@@ -4,6 +4,7 @@
 #include <mem_layout.h>
 #include <mystring.h>
 #include <process.h>
+#include <palloc.h>
 #include <random.h>
 #include <scheduler.h>
 #include <syscall.h>
@@ -295,6 +296,78 @@ uint64 sys_linux_gettimeofday(void)
 	            (char *)&timezone, sizeof(timezone)) < 0)
 		return -LINUX_EFAULT;
 	return 0;
+}
+
+uint64 sys_linux_uname(void)
+{
+	struct linux_utsname name;
+	uint64 address;
+
+	argaddr(0, &address);
+	memset(&name, 0, sizeof(name));
+	safe_strncpy(name.sysname, "Caffeinix", sizeof(name.sysname));
+	safe_strncpy(name.nodename, "caffeinix", sizeof(name.nodename));
+	safe_strncpy(name.release, "0.1.0", sizeof(name.release));
+	safe_strncpy(name.version, "Caffeinix 0.1.0",
+	             sizeof(name.version));
+	safe_strncpy(name.machine, "riscv64", sizeof(name.machine));
+	safe_strncpy(name.domainname, "(none)", sizeof(name.domainname));
+	if (copyout(cur_proc()->pagetable, address, (char *)&name,
+	            sizeof(name)) < 0)
+		return -LINUX_EFAULT;
+	return 0;
+}
+
+uint64 sys_linux_sysinfo(void)
+{
+	struct linux_sysinfo information;
+	uint64 address, free_bytes;
+	uint32 count;
+
+	argaddr(0, &address);
+	memset(&information, 0, sizeof(information));
+	information.uptime = ktime_get_boot_ns() / NSEC_PER_SEC;
+	information.totalram = palloc_usable_bytes();
+	free_bytes = palloc_free_pages();
+	information.freeram = free_bytes > ~(uint64)0 / PGSIZE ?
+		~(uint64)0 : free_bytes * PGSIZE;
+	count = process_task_count();
+	information.procs = count > 0xffff ? 0xffff : count;
+	information.mem_unit = 1;
+	if (copyout(cur_proc()->pagetable, address, (char *)&information,
+	            sizeof(information)) < 0)
+		return -LINUX_EFAULT;
+	return 0;
+}
+
+uint64 sys_linux_sched_getaffinity(void)
+{
+	process_t process = cur_proc();
+	uint8 *mask;
+	uint64 size, address, required;
+	int count, cpu, pid;
+
+	argint(0, &pid);
+	argaddr(1, &size);
+	argaddr(2, &address);
+	if (pid < 0 || (pid && !process_task_exists(pid)))
+		return -LINUX_ESRCH;
+	count = cpu_count();
+	required = ((uint64)count + 63) / 64 * sizeof(uint64);
+	if (size < required)
+		return -LINUX_EINVAL;
+	mask = calloc(required, 1);
+	if (!mask)
+		return -LINUX_ENOMEM;
+	for (cpu = 0; cpu < count; cpu++)
+		mask[cpu / 8] |= 1U << (cpu % 8);
+	if (copyout(process->pagetable, address, (char *)mask,
+	            required) < 0) {
+		free(mask);
+		return -LINUX_EFAULT;
+	}
+	free(mask);
+	return required;
 }
 
 uint64 sys_linux_exit_group(void)

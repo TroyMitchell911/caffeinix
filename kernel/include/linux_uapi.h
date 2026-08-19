@@ -50,6 +50,7 @@
 #define LINUX_SYS_clock_gettime     113
 #define LINUX_SYS_clock_getres      114
 #define LINUX_SYS_clock_nanosleep   115
+#define LINUX_SYS_sched_getaffinity 123
 #define LINUX_SYS_kill              129
 #define LINUX_SYS_tkill             130
 #define LINUX_SYS_tgkill            131
@@ -66,6 +67,7 @@
 #define LINUX_SYS_getpgid           155
 #define LINUX_SYS_getsid            156
 #define LINUX_SYS_setsid            157
+#define LINUX_SYS_uname             160
 #define LINUX_SYS_umask             166
 #define LINUX_SYS_prctl             167
 #define LINUX_SYS_gettimeofday     169
@@ -76,6 +78,7 @@
 #define LINUX_SYS_getgid            176
 #define LINUX_SYS_getegid           177
 #define LINUX_SYS_gettid            178
+#define LINUX_SYS_sysinfo           179
 #define LINUX_SYS_socket            198
 #define LINUX_SYS_socketpair        199
 #define LINUX_SYS_bind              200
@@ -199,6 +202,35 @@ struct linux_timezone {
 struct linux_itimerval {
 	struct linux_timeval interval;
 	struct linux_timeval value;
+};
+
+#define LINUX_UTS_LEN 65
+
+struct linux_utsname {
+	char sysname[LINUX_UTS_LEN];
+	char nodename[LINUX_UTS_LEN];
+	char release[LINUX_UTS_LEN];
+	char version[LINUX_UTS_LEN];
+	char machine[LINUX_UTS_LEN];
+	char domainname[LINUX_UTS_LEN];
+};
+
+struct linux_sysinfo {
+	int64 uptime;
+	uint64 loads[3];
+	uint64 totalram;
+	uint64 freeram;
+	uint64 sharedram;
+	uint64 bufferram;
+	uint64 totalswap;
+	uint64 freeswap;
+	uint16 procs;
+	uint16 pad;
+	uint32 alignment;
+	uint64 totalhigh;
+	uint64 freehigh;
+	uint32 mem_unit;
+	uint32 reserved;
 };
 
 struct linux_pollfd {

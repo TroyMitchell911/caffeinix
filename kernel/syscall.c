@@ -261,6 +261,9 @@ extern uint64 sys_linux_clock_nanosleep(void);
 extern uint64 sys_linux_nanosleep(void);
 extern uint64 sys_linux_getitimer(void);
 extern uint64 sys_linux_setitimer(void);
+extern uint64 sys_linux_sched_getaffinity(void);
+extern uint64 sys_linux_uname(void);
+extern uint64 sys_linux_sysinfo(void);
 extern uint64 sys_linux_gettimeofday(void);
 extern uint64 sys_linux_kill(void);
 extern uint64 sys_linux_tkill(void);
@@ -356,6 +359,7 @@ static syscall_t linux_syscalls[LINUX_SYS_pwritev2 + 1] = {
 	[LINUX_SYS_clock_gettime] = sys_linux_clock_gettime,
 	[LINUX_SYS_clock_getres] = sys_linux_clock_getres,
 	[LINUX_SYS_clock_nanosleep] = sys_linux_clock_nanosleep,
+	[LINUX_SYS_sched_getaffinity] = sys_linux_sched_getaffinity,
 	[LINUX_SYS_kill] = sys_linux_kill,
 	[LINUX_SYS_tkill] = sys_linux_tkill,
 	[LINUX_SYS_tgkill] = sys_linux_tgkill,
@@ -372,6 +376,7 @@ static syscall_t linux_syscalls[LINUX_SYS_pwritev2 + 1] = {
 	[LINUX_SYS_getpgid] = sys_linux_getpgid,
 	[LINUX_SYS_getsid] = sys_linux_getsid,
 	[LINUX_SYS_setsid] = sys_linux_setsid,
+	[LINUX_SYS_uname] = sys_linux_uname,
 	[LINUX_SYS_umask] = sys_linux_umask,
 	[LINUX_SYS_prctl] = sys_linux_prctl,
 	[LINUX_SYS_gettimeofday] = sys_linux_gettimeofday,
@@ -382,6 +387,7 @@ static syscall_t linux_syscalls[LINUX_SYS_pwritev2 + 1] = {
 	[LINUX_SYS_getgid] = sys_linux_getgid,
 	[LINUX_SYS_getegid] = sys_linux_getegid,
 	[LINUX_SYS_gettid] = sys_linux_gettid,
+	[LINUX_SYS_sysinfo] = sys_linux_sysinfo,
 	[LINUX_SYS_socket] = sys_linux_socket,
 	[LINUX_SYS_socketpair] = sys_linux_socketpair,
 	[LINUX_SYS_bind] = sys_linux_bind,

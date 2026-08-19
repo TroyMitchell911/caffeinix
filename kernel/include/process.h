@@ -124,6 +124,8 @@ int process_tty_signal_foreground(struct tty *tty, int signal);
 int process_set_nice(int pid, int nice);
 int process_get_nice(int pid, int *nice);
 void process_expire_timers(uint64 now);
+int process_task_exists(int tid);
+uint32 process_task_count(void);
 
 int either_copyout(int user_dst, uint64 dst, void* src, uint64 len);
 int either_copyin(void *dst, int user_src, uint64 src, uint64 len);
