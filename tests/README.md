@@ -100,6 +100,9 @@ The guest selftest covers:
 - demand faults for anonymous, ELF, interpreter, and private file mappings,
   sharing of clean executable pages, page-cache accounting, and `SIGBUS` for
   pages wholly beyond the mapped file's end;
+- copy-on-write isolation for anonymous and cached private mappings, kernel
+  copies into child memory, fork under resident-memory pressure, and stale
+  writable-TLB rejection while sibling threads run on other harts;
 - read and positional-read copy faults through ext4, tmpfs, FAT, and
   character devices, plus concurrent reads through one ext4 file handle;
 - CFS runqueue progress with 24 runnable processes, timer preemption,

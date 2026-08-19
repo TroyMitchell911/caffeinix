@@ -25,6 +25,9 @@
 #define PREAD_WRITE_LENGTH (16 * PAGE_SIZE)
 #define PREAD_WRITE_READERS 4
 #define PREAD_WRITE_ITERATIONS 16
+#define COW_PRESSURE_LENGTH (48 * 1024 * 1024UL)
+#define COW_PRESSURE_CHILDREN 4
+#define COW_PRESSURE_START "/tmp/vm-cow-pressure-start"
 #define HINT_ADDRESS ((void *)0x20000000UL)
 
 #define CHECK(condition, name) do { \
@@ -599,6 +602,112 @@ static void test_fork_isolation(unsigned char *anonymous,
 	CHECK(file_mapping[0] == file_value, "file fork isolation");
 }
 
+static void test_kernel_copy_cow(void)
+{
+	unsigned char *mapping;
+	int fd, status;
+	pid_t child;
+
+	mapping = mmap(0, PAGE_SIZE, PROT_READ | PROT_WRITE,
+		       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	CHECK(mapping != MAP_FAILED, "copyout COW mmap");
+	mapping[0] = 0xa5;
+	fd = open(FILE_PATH, O_RDONLY);
+	CHECK(fd >= 0, "copyout COW open");
+	child = fork();
+	CHECK(child >= 0, "copyout COW fork");
+	if (!child) {
+		if (pread(fd, mapping, 1, 0) != 1 ||
+		    mapping[0] != pattern(0, 0))
+			_exit(EXIT_FAILURE);
+		_exit(EXIT_SUCCESS);
+	}
+	CHECK(waitpid(child, &status, 0) == child, "copyout COW wait");
+	CHECK(WIFEXITED(status) && WEXITSTATUS(status) == EXIT_SUCCESS,
+	      "copyout COW child status");
+	CHECK(mapping[0] == 0xa5, "copyout COW parent isolation");
+	CHECK(close(fd) == 0, "copyout COW close");
+	CHECK(munmap(mapping, PAGE_SIZE) == 0, "copyout COW munmap");
+}
+
+static void test_cached_private_write(void)
+{
+	unsigned char *first, *second;
+	unsigned char original = pattern(0, 0);
+	int fd = open(FILE_PATH, O_RDONLY);
+
+	CHECK(fd >= 0, "cached private open");
+	first = mmap(0, PAGE_SIZE, PROT_READ, MAP_PRIVATE, fd, 0);
+	CHECK(first != MAP_FAILED, "cached private first mmap");
+	second = mmap(0, PAGE_SIZE, PROT_READ, MAP_PRIVATE, fd, 0);
+	CHECK(second != MAP_FAILED, "cached private second mmap");
+	CHECK(first[0] == original && second[0] == original,
+	      "cached private initial contents");
+	CHECK(mprotect(first, PAGE_SIZE, PROT_READ | PROT_WRITE) == 0,
+	      "cached private mprotect");
+	first[0] ^= 0xff;
+	CHECK(first[0] == (unsigned char)(original ^ 0xff),
+	      "cached private write");
+	CHECK(second[0] == original, "cached private isolation");
+	CHECK(munmap(second, PAGE_SIZE) == 0,
+	      "cached private second munmap");
+	CHECK(munmap(first, PAGE_SIZE) == 0,
+	      "cached private first munmap");
+	CHECK(close(fd) == 0, "cached private close");
+}
+
+static void cow_pressure_child(const unsigned char *mapping,
+			       unsigned int child)
+{
+	unsigned long page;
+
+	while (access(COW_PRESSURE_START, F_OK) < 0) {
+		if (errno != ENOENT)
+			_exit(EXIT_FAILURE);
+	}
+	for (page = child; page < COW_PRESSURE_LENGTH / PAGE_SIZE;
+	     page += 257) {
+		if (mapping[page * PAGE_SIZE] != (unsigned char)page)
+			_exit(EXIT_FAILURE);
+	}
+	_exit(EXIT_SUCCESS);
+}
+
+static void test_cow_memory_pressure(void)
+{
+	unsigned char *mapping;
+	pid_t children[COW_PRESSURE_CHILDREN];
+	unsigned long page;
+	int fd, status;
+	unsigned int child;
+
+	mapping = mmap(0, COW_PRESSURE_LENGTH, PROT_READ | PROT_WRITE,
+		       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	CHECK(mapping != MAP_FAILED, "COW pressure mmap");
+	for (page = 0; page < COW_PRESSURE_LENGTH / PAGE_SIZE; page++)
+		mapping[page * PAGE_SIZE] = (unsigned char)page;
+	unlink(COW_PRESSURE_START);
+	for (child = 0; child < COW_PRESSURE_CHILDREN; child++) {
+		children[child] = fork();
+		CHECK(children[child] >= 0, "COW pressure fork");
+		if (!children[child])
+			cow_pressure_child(mapping, child);
+	}
+	fd = open(COW_PRESSURE_START, O_CREAT | O_TRUNC | O_WRONLY, 0600);
+	CHECK(fd >= 0, "COW pressure barrier");
+	CHECK(close(fd) == 0, "COW pressure barrier close");
+	for (child = 0; child < COW_PRESSURE_CHILDREN; child++) {
+		CHECK(waitpid(children[child], &status, 0) == children[child],
+		      "COW pressure wait");
+		CHECK(WIFEXITED(status) && WEXITSTATUS(status) == EXIT_SUCCESS,
+		      "COW pressure child status");
+	}
+	CHECK(unlink(COW_PRESSURE_START) == 0,
+	      "COW pressure barrier unlink");
+	CHECK(munmap(mapping, COW_PRESSURE_LENGTH) == 0,
+	      "COW pressure munmap");
+}
+
 static void test_mapping_lifetime(void)
 {
 	int iteration;
@@ -665,6 +774,10 @@ int main(void)
 	test_hint_and_fixed();
 	test_partial_changes(anonymous);
 	test_fork_isolation(anonymous, file_mapping);
+	test_kernel_copy_cow();
+	test_cached_private_write();
+	test_cow_memory_pressure();
+	puts("VM_COW_OK");
 	test_mapping_lifetime();
 	test_kernel_copy_permissions();
 	CHECK(munmap(anonymous, 3 * PAGE_SIZE) == 0, "unmap anonymous");

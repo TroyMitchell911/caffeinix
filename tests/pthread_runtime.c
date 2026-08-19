@@ -21,6 +21,9 @@
 #define COPY_PAGE_SIZE 4096UL
 #define BREAK_FORK_ROUNDS 128
 #define BREAK_GROWTH (4 * COPY_PAGE_SIZE)
+#define COW_WORKERS 4
+#define COW_PAGE_SIZE 4096UL
+#define COW_DONE_PATH "/tmp/pthread-cow-done"
 
 static pthread_mutex_t counter_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_barrier_t worker_barrier;
@@ -52,6 +55,10 @@ static volatile int break_stop;
 static volatile int break_failure;
 static uintptr_t break_base;
 static uintptr_t break_target;
+static unsigned char *cow_mapping;
+static volatile int cow_ready;
+static volatile int cow_go;
+static volatile int cow_done;
 
 static int fail(const char *reason, int error)
 {
@@ -355,6 +362,83 @@ static int test_thread_nice(void)
 	return 0;
 }
 
+static void *cow_worker(void *argument)
+{
+	intptr_t index = (intptr_t)argument;
+	unsigned char *value = cow_mapping + index * COW_PAGE_SIZE;
+
+	*value = 0x20 + index;
+	__atomic_add_fetch(&cow_ready, 1, __ATOMIC_RELEASE);
+	while (!__atomic_load_n(&cow_go, __ATOMIC_ACQUIRE))
+		;
+	*value = 0x80 + index;
+	__atomic_add_fetch(&cow_done, 1, __ATOMIC_RELEASE);
+	return 0;
+}
+
+static int test_remote_cow_tlb(void)
+{
+	pthread_t threads[COW_WORKERS];
+	unsigned long spins;
+	pid_t child;
+	int error, fd, i, status;
+
+	cow_mapping = mmap(0, COW_WORKERS * COW_PAGE_SIZE,
+	                   PROT_READ | PROT_WRITE,
+	                   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	if (cow_mapping == MAP_FAILED)
+		return fail("COW mmap", errno);
+	unlink(COW_DONE_PATH);
+	for (i = 0; i < COW_WORKERS; i++) {
+		error = pthread_create(&threads[i], 0, cow_worker,
+		                       (void *)(intptr_t)i);
+		if (error)
+			return fail("COW create", error);
+	}
+	for (spins = 0; spins < 100000000UL &&
+	     __atomic_load_n(&cow_ready, __ATOMIC_ACQUIRE) != COW_WORKERS;
+	     spins++)
+		;
+	if (cow_ready != COW_WORKERS)
+		return fail("COW ready timeout", cow_ready);
+	child = fork();
+	if (child < 0)
+		return fail("COW fork", errno);
+	if (!child) {
+		while (access(COW_DONE_PATH, F_OK) < 0) {
+			if (errno != ENOENT)
+				_exit(EXIT_FAILURE);
+		}
+		for (i = 0; i < COW_WORKERS; i++) {
+			if (cow_mapping[i * COW_PAGE_SIZE] != 0x20 + i)
+				_exit(EXIT_FAILURE);
+		}
+		_exit(EXIT_SUCCESS);
+	}
+	__atomic_store_n(&cow_go, 1, __ATOMIC_RELEASE);
+	for (spins = 0; spins < 100000000UL &&
+	     __atomic_load_n(&cow_done, __ATOMIC_ACQUIRE) != COW_WORKERS;
+	     spins++)
+		;
+	if (cow_done != COW_WORKERS)
+		return fail("COW write timeout", cow_done);
+	fd = open(COW_DONE_PATH, O_CREAT | O_TRUNC | O_WRONLY, 0600);
+	if (fd < 0 || close(fd) < 0)
+		return fail("COW barrier", errno);
+	if (waitpid(child, &status, 0) != child || !WIFEXITED(status) ||
+	    WEXITSTATUS(status) != EXIT_SUCCESS)
+		return fail("COW child isolation", status);
+	for (i = 0; i < COW_WORKERS; i++) {
+		error = pthread_join(threads[i], 0);
+		if (error || cow_mapping[i * COW_PAGE_SIZE] != 0x80 + i)
+			return fail("COW parent write", error);
+	}
+	if (unlink(COW_DONE_PATH) < 0 ||
+	    munmap(cow_mapping, COW_WORKERS * COW_PAGE_SIZE) < 0)
+		return fail("COW cleanup", errno);
+	return 0;
+}
+
 int main(void)
 {
 	pthread_t threads[WORKERS];
@@ -475,6 +559,8 @@ int main(void)
 	if (test_concurrent_fault())
 		return 1;
 	if (test_copy_unmap_race())
+		return 1;
+	if (test_remote_cow_tlb())
 		return 1;
 
 	puts("PTHREAD_RUNTIME_OK");
