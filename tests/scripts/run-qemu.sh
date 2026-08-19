@@ -92,6 +92,7 @@ normalize_kernel_log()
 	if grep -Eq \
 		-e '^(Caffeinix |OF: machine:|SBI: spec=|memory: )' \
 		-e '^(clocksource: |smp: |irq: PLIC|mmu: |console: )' \
+		-e '^(rtc: )' \
 		-e '^(virtio-mmio: |virtio-blk|eth[0-9]+: virtio-net)' \
 		-e '^(CPU: |random: |lwIP: |VFS: |init: )' \
 		"$timestamped"; then
@@ -147,6 +148,7 @@ check_boot_log()
 		"^irq: PLIC configured for $cpus CPUs$" \
 		'^mmu: Sv39 enabled$' \
 		'^console: ttyS0 at 0x[0-9a-f]+ irq=[0-9]+$' \
+		'^rtc: goldfish wall clock initialized$' \
 		"^smp: brought up $cpus CPUs$" \
 		'^VFS: mounted root [(]ext4[)] on virtio-blk[0-9]+$' \
 		'^VFS: mounted devfs on /dev$' \
