@@ -72,12 +72,12 @@ expect {
 	eof { abort_test "QEMU exited during ext4 state" }
 }
 expect {
-	-re {virtio-blk[0-9]+ avail=[0-9]+ .* used=[0-9]+ .* size=[0-9]+} {}
+	-re {virtio-blk[0-9]+ avail=[0-9]+ [^\r\n]* used=[0-9]+ [^\r\n]* size=[0-9]+} {}
 	timeout { abort_test "virtio-blk state timeout" }
 	eof { abort_test "QEMU exited during virtio-blk state" }
 }
 expect {
-	-re {virtio-blk[0-9]+ avail=[0-9]+ .* used=[0-9]+ .* size=[0-9]+} {}
+	-re {virtio-blk[0-9]+ avail=[0-9]+ [^\r\n]* used=[0-9]+ [^\r\n]* size=[0-9]+} {}
 	timeout { abort_test "second virtio-blk state timeout" }
 	eof { abort_test "QEMU exited during virtio-blk state" }
 }
