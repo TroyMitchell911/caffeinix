@@ -313,7 +313,17 @@ struct linux_linger {
 #define LINUX_SIGSET_SIZE              8
 
 #define LINUX_CLONE_VM             0x100
+#define LINUX_CLONE_FS             0x200
+#define LINUX_CLONE_FILES          0x400
+#define LINUX_CLONE_SIGHAND        0x800
 #define LINUX_CLONE_VFORK         0x4000
+#define LINUX_CLONE_THREAD       0x10000
+#define LINUX_CLONE_SYSVSEM      0x40000
+#define LINUX_CLONE_SETTLS       0x80000
+#define LINUX_CLONE_PARENT_SETTID 0x100000
+#define LINUX_CLONE_CHILD_CLEARTID 0x200000
+#define LINUX_CLONE_DETACHED     0x400000
+#define LINUX_CLONE_CHILD_SETTID 0x1000000
 #define LINUX_CLONE_SIGNAL_MASK     0xff
 
 #define LINUX_WNOHANG                   1

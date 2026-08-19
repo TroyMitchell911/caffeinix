@@ -91,8 +91,6 @@ void kernel_trap(void)
         sstatus_w(sstatus);
 }
 
-extern void exit(int cause);
-
 __attribute__((noreturn)) void kernel_stack_overflow(uint64 stack_pointer)
 {
 	printf_enter_panic();
@@ -108,6 +106,7 @@ __attribute__((noreturn)) void kernel_stack_overflow(uint64 stack_pointer)
 void user_trap_entry(void)
 {
         int which_dev = 0;
+	int exit_status;
         process_t p = cur_proc();
         uint64 cause = scause_r();
 
@@ -120,8 +119,10 @@ void user_trap_entry(void)
         cur_thread()->trapframe->epc = sepc_r();
 
         if(cause == 8) {
-                if(killed(p))
-                        exit(-1);
+		if (killed(p) || process_group_exiting(p, &exit_status))
+			process_thread_exit(killed(p) ? -1 : exit_status, 0);
+		if (process_thread_exit_requested(cur_thread(), &exit_status))
+			process_thread_exit(exit_status, 0);
 
                 /* System call */
                 cur_thread()->trapframe->epc += 4;
@@ -134,7 +135,7 @@ void user_trap_entry(void)
 		pr_warn("process: pid=%d (%s) page fault cause=%lu "
 			"address=%p epc=%p", p->pid, p->name, cause,
 			stval_r(), cur_thread()->trapframe->epc);
-		exit(-1);
+		process_thread_exit(-1, 1);
 		return;
         } else {
                 if((which_dev = dev_intr(cause)) == 0) {
@@ -145,8 +146,10 @@ void user_trap_entry(void)
                 }
         }
 
-        if(killed(p))
-                exit(-1);
+	if (killed(p) || process_group_exiting(p, &exit_status))
+		process_thread_exit(killed(p) ? -1 : exit_status, 0);
+	if (process_thread_exit_requested(cur_thread(), &exit_status))
+		process_thread_exit(exit_status, 0);
 
 	if (which_dev == 2)
 		scheduler_tick();

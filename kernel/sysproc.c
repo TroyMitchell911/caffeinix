@@ -7,8 +7,6 @@
 #include <syscall.h>
 #include <vm.h>
 
-extern void exit(int cause);
-
 uint64 sys_linux_clock_gettime(void)
 {
 	struct linux_timespec time;
@@ -34,22 +32,25 @@ uint64 sys_linux_exit_group(void)
 	int status;
 
 	argint(0, &status);
-	exit(status);
+	process_thread_exit(status, 1);
 	return 0;
 }
 
 uint64 sys_linux_exit(void)
 {
-	return sys_linux_exit_group();
+	int status;
+
+	argint(0, &status);
+	process_thread_exit(status, 0);
+	return 0;
 }
 
 uint64 sys_linux_set_tid_address(void)
 {
-	process_t p = cur_proc();
 	uint64 address;
 
 	argaddr(0, &address);
-	p->clear_child_tid = address;
+	cur_thread()->clear_child_tid = address;
 	return cur_thread()->tid;
 }
 
@@ -110,7 +111,6 @@ uint64 sys_linux_gettid(void)
 
 uint64 sys_linux_setpriority(void)
 {
-	process_t process = cur_proc();
 	int which, who, nice;
 
 	argint(0, &which);
@@ -118,26 +118,21 @@ uint64 sys_linux_setpriority(void)
 	argint(2, &nice);
 	if (which != LINUX_PRIO_PROCESS)
 		return -LINUX_EINVAL;
-	if (!who)
-		who = process->pid;
 	if (nice < -20)
 		nice = -20;
 	if (nice > 19)
 		nice = 19;
-	return process_set_nice(who, nice) ? -LINUX_ESRCH : 0;
+	return process_set_nice(who, nice);
 }
 
 uint64 sys_linux_getpriority(void)
 {
-	process_t process = cur_proc();
 	int nice, which, who;
 
 	argint(0, &which);
 	argint(1, &who);
 	if (which != LINUX_PRIO_PROCESS)
 		return -LINUX_EINVAL;
-	if (!who)
-		who = process->pid;
 	if (process_get_nice(who, &nice))
 		return -LINUX_ESRCH;
 	/* Linux returns 20 - nice so a negative nice value is not an error. */
@@ -192,6 +187,7 @@ uint64 sys_linux_rt_sigaction(void)
 uint64 sys_linux_rt_sigprocmask(void)
 {
 	process_t process = cur_proc();
+	thread_t current = cur_thread();
 	uint64 mask, mask_address, old_mask_address, sigset_size;
 	int how;
 
@@ -203,7 +199,7 @@ uint64 sys_linux_rt_sigprocmask(void)
 		return -LINUX_EINVAL;
 	if (old_mask_address &&
 	    copyout(process->pagetable, old_mask_address,
-	            (char *)&process->signal_mask, sizeof(uint64)) < 0)
+	            (char *)&current->signal_mask, sizeof(uint64)) < 0)
 		return -LINUX_EFAULT;
 	if (!mask_address)
 		return 0;
@@ -213,11 +209,11 @@ uint64 sys_linux_rt_sigprocmask(void)
 	mask &= ~(1ULL << (LINUX_SIGKILL - 1));
 	mask &= ~(1ULL << (LINUX_SIGSTOP - 1));
 	if (how == LINUX_SIG_BLOCK)
-		process->signal_mask |= mask;
+		current->signal_mask |= mask;
 	else if (how == LINUX_SIG_UNBLOCK)
-		process->signal_mask &= ~mask;
+		current->signal_mask &= ~mask;
 	else if (how == LINUX_SIG_SETMASK)
-		process->signal_mask = mask;
+		current->signal_mask = mask;
 	else
 		return -LINUX_EINVAL;
 	return 0;
@@ -225,11 +221,29 @@ uint64 sys_linux_rt_sigprocmask(void)
 
 uint64 sys_linux_clone(void)
 {
-	uint64 child_stack, flags;
+	const uint64 thread_required =
+		LINUX_CLONE_VM | LINUX_CLONE_FS | LINUX_CLONE_FILES |
+		LINUX_CLONE_SIGHAND | LINUX_CLONE_THREAD;
+	const uint64 thread_allowed =
+		thread_required | LINUX_CLONE_SYSVSEM | LINUX_CLONE_SETTLS |
+		LINUX_CLONE_PARENT_SETTID | LINUX_CLONE_CHILD_CLEARTID |
+		LINUX_CLONE_CHILD_SETTID | LINUX_CLONE_DETACHED;
+	uint64 child_stack, child_tid, flags, parent_tid, tls;
 	int pid;
 
 	argaddr(0, &flags);
 	argaddr(1, &child_stack);
+	argaddr(2, &parent_tid);
+	argaddr(3, &tls);
+	argaddr(4, &child_tid);
+	if (flags & LINUX_CLONE_THREAD) {
+		if ((flags & thread_required) != thread_required ||
+		    flags & ~thread_allowed ||
+		    (flags & LINUX_CLONE_SIGNAL_MASK))
+			return -LINUX_EINVAL;
+		return process_clone_thread(flags, child_stack, parent_tid,
+		                            tls, child_tid);
+	}
 	if ((flags & LINUX_CLONE_SIGNAL_MASK) != LINUX_SIGCHLD ||
 	    flags & ~(LINUX_CLONE_SIGNAL_MASK | LINUX_CLONE_VM |
 	              LINUX_CLONE_VFORK))

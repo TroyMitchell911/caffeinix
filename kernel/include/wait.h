@@ -6,6 +6,8 @@
 
 struct thread;
 
+#define WAIT_QUEUE_TERMINATED  -3
+
 typedef struct wait_queue {
 	struct spinlock lock;
 	struct list waiters;
@@ -23,6 +25,7 @@ int wait_queue_sleep_timeout(wait_queue_t queue,
 int wait_queue_wake_one(wait_queue_t queue);
 int wait_queue_wake_all(wait_queue_t queue);
 int wait_queue_wake_thread(struct thread *thread);
+int wait_queue_terminate_thread(struct thread *thread);
 int wait_queue_empty(wait_queue_t queue);
 void wait_queue_timeout_init(void);
 void wait_queue_expire(uint64 now);

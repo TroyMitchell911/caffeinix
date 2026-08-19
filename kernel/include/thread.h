@@ -122,6 +122,11 @@ typedef struct thread {
         struct context context;
 
         process_t home;
+	uint64 clear_child_tid;
+	uint64 signal_mask;
+	uint8 process_reaper;
+	uint8 exit_requested;
+	int exit_status;
 	thread_func_t kernel_function;
 	void *kernel_argument;
 	uint8 kernel_thread;
@@ -143,6 +148,7 @@ void map_kernel_stack(pagedir_t pgdir);
 void thread_setup(void);
 thread_t thread_alloc(process_t p);
 void thread_free(thread_t t);
+void user_thread_reap(thread_t t);
 thread_t kernel_thread_create(const char *name, thread_func_t function,
 			      void *argument);
 void kernel_thread_reap(thread_t thread);

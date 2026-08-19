@@ -263,6 +263,25 @@ static void wake_cpu(int target)
 		PANIC("SBI send IPI failed");
 }
 
+void scheduler_kick(thread_t thread)
+{
+	int logical, target = -1;
+
+	if (!thread)
+		return;
+	spinlock_acquire(&runqueue.lock);
+	for (logical = 0; logical < cpu_count(); logical++) {
+		if (cpus[logical]->current != thread)
+			continue;
+		__atomic_store_n(&cpus[logical]->need_resched, 1,
+		                 __ATOMIC_RELEASE);
+		target = logical;
+		break;
+	}
+	spinlock_release(&runqueue.lock);
+	wake_cpu(target);
+}
+
 static void scheduler_enqueue(thread_t thread, int wake_idle)
 {
 	thread_state_t previous;
@@ -461,8 +480,12 @@ void scheduler(void)
 			PANIC("invalid current thread");
 		cpu->current = 0;
 		spinlock_release(&runqueue.lock);
-		if (next->state == THREAD_EXITED && next->kernel_thread)
-			kernel_thread_reap(next);
+		if (next->state == THREAD_EXITED) {
+			if (next->kernel_thread)
+				kernel_thread_reap(next);
+			else if (!next->process_reaper)
+				user_thread_reap(next);
+		}
 		spinlock_release(&next->lock);
 	}
 }

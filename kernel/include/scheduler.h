@@ -37,6 +37,7 @@ void sched(void);
 void scheduler_exit(void);
 void scheduler_exit_locked(void);
 void scheduler_make_runnable(thread_t thread);
+void scheduler_kick(thread_t thread);
 void scheduler_block_current(void);
 void scheduler_inherit(thread_t child, thread_t parent);
 int scheduler_set_nice(thread_t thread, int nice);

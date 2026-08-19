@@ -298,11 +298,14 @@ int exec_linux(char *path, char **argv, char **envp)
 	char interpreter_path[MAXPATH];
 	pagedir_t oldpgdir, pgdir = 0;
 	process_t process = cur_proc();
+	thread_t current = cur_thread();
 	uint64 entry, oldsz, sp, sz = 0;
 	char *name, *path_p;
 	int argc, stack_permissions = PTE_W;
 	uint32 stack_protection = LINUX_PROT_READ | LINUX_PROT_WRITE;
 
+	if (process_exec_begin(process, current) < 0)
+		return -1;
 	vma_set_init(&new_vmas);
 	vma_set_init(&old_vmas);
 	if (elf_image_open(path, &executable) < 0)
@@ -311,7 +314,7 @@ int exec_linux(char *path, char **argv, char **envp)
 	    elf_image_interpreter(&executable, interpreter_path) < 0)
 		goto fail;
 
-	pgdir = process_pagedir(process);
+	pgdir = process_pagedir(process, current);
 	if (!pgdir ||
 	    elf_image_place(&executable, &new_vmas, USER_PIE_BASE) < 0 ||
 	    elf_image_map(&executable, pgdir, &new_vmas) < 0)
@@ -352,6 +355,8 @@ int exec_linux(char *path, char **argv, char **envp)
 				 argv, envp, &exec, &sp);
 	if (argc < 0)
 		goto fail;
+	if (process_exec_quiesce(process, current) < 0)
+		goto fail;
 
 	sleeplock_acquire(&process->mmap_lock);
 	oldpgdir = process->pagetable;
@@ -363,19 +368,19 @@ int exec_linux(char *path, char **argv, char **envp)
 	process->brk = sz;
 	process->brk_start = sz;
 	sleeplock_release(&process->mmap_lock);
-	cur_thread()->trapframe->a0 = argc;
-	cur_thread()->trapframe->a1 = sp + sizeof(uint64);
-	cur_thread()->trapframe->sp = sp;
-	cur_thread()->trapframe->epc = entry;
-	memset(cur_thread()->trapframe->f, 0,
-	       sizeof(cur_thread()->trapframe->f));
-	cur_thread()->trapframe->fcsr = 0;
+	current->trapframe->a0 = argc;
+	current->trapframe->a1 = sp + sizeof(uint64);
+	current->trapframe->sp = sp;
+	current->trapframe->epc = entry;
+	memset(current->trapframe->f, 0, sizeof(current->trapframe->f));
+	current->trapframe->fcsr = 0;
 
 	for (name = path_p = path; *path_p; path_p++) {
 		if (*path_p == '/')
 			name = path_p + 1;
 	}
 	safe_strncpy(process->name, name, MAXNAME);
+	process_exec_end(process);
 	process_freepagedir(oldpgdir, oldsz);
 	vma_set_destroy(&old_vmas);
 	return argc;
@@ -386,5 +391,6 @@ fail:
 	if (pgdir)
 		process_freepagedir(pgdir, sz);
 	vma_set_destroy(&new_vmas);
+	process_exec_end(process);
 	return -1;
 }

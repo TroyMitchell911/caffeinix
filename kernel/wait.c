@@ -1,5 +1,6 @@
 #include <debug.h>
 #include <ktime.h>
+#include <process.h>
 #include <scheduler.h>
 #include <thread.h>
 #include <wait.h>
@@ -43,10 +44,15 @@ static int wait_queue_sleep_deadline(wait_queue_t queue,
 				     uint64 deadline)
 {
 	thread_t current = cur_thread();
-	int result;
+	int exit_status, result;
 
 	if (!current || !spinlock_holding(condition_lock))
 		PANIC("wait without condition lock");
+	if (process_thread_exit_requested(current, &exit_status)) {
+		spinlock_release(condition_lock);
+		process_thread_exit(exit_status, 0);
+		PANIC("terminated wait returned");
+	}
 	spinlock_acquire(&timeout_queue.lock);
 	spinlock_acquire(&queue->lock);
 	spinlock_acquire(&current->lock);
@@ -60,6 +66,22 @@ static int wait_queue_sleep_deadline(wait_queue_t queue,
 	list_insert_before(&queue->waiters, &current->wait_node);
 	if (deadline)
 		timeout_insert_locked(current);
+	if (process_thread_exit_requested(current, &exit_status)) {
+		list_remove(&current->wait_node);
+		current->on_waitqueue = 0;
+		current->waiting_on = 0;
+		if (current->on_timeout_queue) {
+			list_remove(&current->timeout_node);
+			current->on_timeout_queue = 0;
+		}
+		current->wait_result = WAIT_QUEUE_TERMINATED;
+		spinlock_release(&current->lock);
+		spinlock_release(&queue->lock);
+		spinlock_release(&timeout_queue.lock);
+		spinlock_release(condition_lock);
+		process_thread_exit(exit_status, 0);
+		PANIC("terminated wait returned");
+	}
 	scheduler_block_current();
 	spinlock_release(condition_lock);
 	spinlock_release(&queue->lock);
@@ -73,6 +95,13 @@ static int wait_queue_sleep_deadline(wait_queue_t queue,
 	result = current->wait_result;
 	spinlock_release(&current->lock);
 	spinlock_acquire(condition_lock);
+	if (result == WAIT_QUEUE_TERMINATED) {
+		if (!process_thread_exit_requested(current, &exit_status))
+			PANIC("terminated wait without request");
+		spinlock_release(condition_lock);
+		process_thread_exit(exit_status, 0);
+		PANIC("terminated wait returned");
+	}
 	return result;
 }
 
@@ -182,6 +211,29 @@ int wait_queue_wake_thread(thread_t thread)
 	thread->wait_result = 0;
 	scheduler_make_runnable(thread);
 	spinlock_release(&thread->lock);
+	spinlock_release(&queue->lock);
+	spinlock_release(&timeout_queue.lock);
+	return 1;
+}
+
+int wait_queue_terminate_thread(thread_t thread)
+{
+	wait_queue_t queue;
+
+	spinlock_acquire(&timeout_queue.lock);
+	queue = thread->waiting_on;
+	if (!queue) {
+		spinlock_release(&timeout_queue.lock);
+		return 0;
+	}
+	spinlock_acquire(&queue->lock);
+	if (thread->state != THREAD_SLEEPING || !thread->on_waitqueue ||
+	    thread->waiting_on != queue) {
+		spinlock_release(&queue->lock);
+		spinlock_release(&timeout_queue.lock);
+		return 0;
+	}
+	wait_queue_wake_locked(queue, thread, WAIT_QUEUE_TERMINATED);
 	spinlock_release(&queue->lock);
 	spinlock_release(&timeout_queue.lock);
 	return 1;

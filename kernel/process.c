@@ -19,23 +19,28 @@
 #include <block_device.h>
 #include <printk.h>
 #include <vfs.h>
+#include <linux_uapi.h>
 
 /* From trampoline.S */
 extern char trampoline[];
 extern int exec_linux(char *path, char **argv, char **envp);
+extern void user_trap_ret(void);
 
-static struct spinlock pid_lock, wait_lock;
+static struct spinlock wait_lock;
 // struct process proc[NPROC];
 struct list proc;
-static int next_pid = 1;
 static process_t first;
 
 static int setup_stdio(void)
 {
 	process_t p = cur_proc();
+	int occupied;
 	int fd;
 
-	if (p->ofile[0] || p->ofile[1] || p->ofile[2])
+	spinlock_acquire(&p->files_lock);
+	occupied = p->ofile[0] || p->ofile[1] || p->ofile[2];
+	spinlock_release(&p->files_lock);
+	if (occupied)
 		return -1;
 	if (vfs_open("/dev/console", VFS_OPEN_READ | VFS_OPEN_WRITE, 0,
 	             &fd) < 0 ||
@@ -102,13 +107,13 @@ static void reparent(process_t p)
         }
 }
 
-pagedir_t process_pagedir(process_t p)
+pagedir_t process_pagedir(process_t p, thread_t thread)
 {
         int ret;
         pagedir_t pgdir;
-        thread_t thread = p->thread[0];
 
-        if(!thread)
+	if (!p || !thread || thread->home != p || thread->id_p < 0 ||
+	    thread->id_p >= PROC_MAXTHREAD)
                 return 0;
         /* Malloc memory for page-talble */
         pgdir = pagedir_alloc();
@@ -121,7 +126,8 @@ pagedir_t process_pagedir(process_t p)
 		return 0;
         }
         /* Map address of under trampoline to trapframe */
-        ret = vm_map(pgdir, TRAPFRAME(0), (uint64)thread->trapframe,
+	ret = vm_map(pgdir, TRAPFRAME(thread->id_p),
+	             (uint64)thread->trapframe,
                      PGSIZE, PTE_W | PTE_R);
 	if(ret){
                 /* We don't need free the address that PTE points because it is a code seg */
@@ -199,19 +205,15 @@ static void proc_first_start(void)
 			PANIC("exec init");
 		}
 	}
-        extern void user_trap_ret(void);
         user_trap_ret();
 }
 
-/* All processes have a alone id, pid */
-static int pid_alloc(void)
+static void user_thread_start(void)
 {
-        int pid;
-        spinlock_acquire(&pid_lock);
-        pid = next_pid ++;
-        spinlock_release(&pid_lock);
-        return pid;
+	spinlock_release(&cur_thread()->lock);
+	user_trap_ret();
 }
+
 /* Alloc a process */
 static process_t process_alloc(void)
 {
@@ -225,8 +227,10 @@ static process_t process_alloc(void)
 	memset(p, 0, sizeof(*p));
 	p->umask = 0022;
 	p->state = PROCESS_LIVE;
-        wait_queue_init(&p->child_wait, "child wait");
+	wait_queue_init(&p->child_wait, "child wait");
+	wait_queue_init(&p->thread_reap_wait, "thread reap");
 	sleeplock_init(&p->mmap_lock, "process mmap");
+	spinlock_init(&p->files_lock, "process files");
 	vma_set_init(&p->vmas);
         
         spinlock_init(&p->lock, "process");
@@ -243,13 +247,13 @@ static process_t process_alloc(void)
                 goto r0;
 
         /* Alloc memory for page-table */
-        p->pagetable = process_pagedir(p);
+	p->pagetable = process_pagedir(p, t);
 	if(!p->pagetable) {
 		goto r1;
         }
         
-        /* Alloc pid */
-        p->pid = pid_alloc();
+	/* Linux thread-group leaders share their PID and TID. */
+	p->pid = t->tid;
         
         /* Set the context of return address */
         t->context.ra = (uint64)(proc_first_start);
@@ -274,9 +278,11 @@ static void process_free(process_t p)
         thread_t thread;
         int i;
 
-        spinlock_acquire(&p->lock);
+	spinlock_acquire(&p->lock);
         if(!wait_queue_empty(&p->child_wait))
                 PANIC("free process with child waiter");
+	if (!wait_queue_empty(&p->thread_reap_wait))
+		PANIC("free process with thread reaper");
 	vma_set_destroy(&p->vmas);
         if(p->pagetable) {
                 process_freepagedir(p->pagetable, p->sz);
@@ -302,7 +308,6 @@ static void process_free(process_t p)
 void process_init(void)
 {
 	/* Init the spinlock */
-	spinlock_init(&pid_lock, "pid_lock");
 	spinlock_init(&wait_lock, "wait_lock");
 	list_init(&proc);
 }
@@ -393,16 +398,18 @@ int process_fork(uint64 child_stack)
         pid = newp->pid;
         newt->trapframe->a0 = 0;
 
-        for(i = 0; i < NOFILE; i++) {
+	spinlock_acquire(&oldp->files_lock);
+	for(i = 0; i < NOFILE; i++) {
 		if(oldp->ofile[i])
 			newp->ofile[i] = file_dup(oldp->ofile[i]);
 		newp->fd_flags[i] = oldp->fd_flags[i];
-        }
+	}
+	spinlock_release(&oldp->files_lock);
 	vfs_path_copy(&newp->root, &oldp->root);
 	vfs_path_copy(&newp->cwd, &oldp->cwd);
         /* Copy the process name into newp */
 	safe_strncpy(newp->name, oldp->name, MAXNAME);
-	newp->signal_mask = oldp->signal_mask;
+	newt->signal_mask = oldt->signal_mask;
 	memmove(newp->signal_actions, oldp->signal_actions,
 	        sizeof(newp->signal_actions));
 
@@ -421,48 +428,236 @@ int process_fork(uint64 child_stack)
         return pid;
 }
 
-void exit(int cause)
+int process_clone_thread(uint64 flags, uint64 child_stack,
+			 uint64 parent_tid, uint64 tls, uint64 child_tid)
 {
-        process_t p;
-        file_t f;
-        int fd;
+	process_t p = cur_proc();
+	thread_t child, current = cur_thread();
+	int error = -LINUX_ENOMEM;
+	int tid;
 
-        p = cur_proc();
+	if (!child_stack)
+		return -LINUX_EINVAL;
+	spinlock_acquire(&p->lock);
+	if (p->execing || p->group_exiting || p->state != PROCESS_LIVE) {
+		spinlock_release(&p->lock);
+		return -LINUX_EAGAIN;
+	}
+	child = thread_alloc(p);
+	if (!child) {
+		spinlock_release(&p->lock);
+		return -LINUX_EAGAIN;
+	}
+	if (vm_map(p->pagetable, TRAPFRAME(child->id_p),
+	           (uint64)child->trapframe, PGSIZE, PTE_R | PTE_W) < 0)
+		goto fail;
+
+	*child->trapframe = *current->trapframe;
+	child->trapframe->a0 = 0;
+	child->trapframe->sp = child_stack;
+	if (flags & LINUX_CLONE_SETTLS)
+		child->trapframe->tp = tls;
+	child->signal_mask = current->signal_mask;
+	if (flags & LINUX_CLONE_CHILD_CLEARTID)
+		child->clear_child_tid = child_tid;
+	child->context.ra = (uint64)user_thread_start;
+	safe_strncpy(child->name, current->name, sizeof(child->name));
+	scheduler_inherit(child, current);
+	tid = child->tid;
+	if ((flags & LINUX_CLONE_PARENT_SETTID) &&
+	    copyout(p->pagetable, parent_tid, (char *)&tid,
+	            sizeof(tid)) < 0) {
+		error = -LINUX_EFAULT;
+		goto fail_mapped;
+	}
+	if ((flags & LINUX_CLONE_CHILD_SETTID) &&
+	    copyout(p->pagetable, child_tid, (char *)&tid,
+	            sizeof(tid)) < 0) {
+		error = -LINUX_EFAULT;
+		goto fail_mapped;
+	}
+	spinlock_release(&p->lock);
+	scheduler_make_runnable(child);
+	spinlock_release(&child->lock);
+	return tid;
+
+fail_mapped:
+	vm_unmap(p->pagetable, TRAPFRAME(child->id_p), 1, 0);
+fail:
+	thread_free(child);
+	spinlock_release(&child->lock);
+	spinlock_release(&p->lock);
+	return error;
+}
+
+int process_exec_begin(process_t p, thread_t current)
+{
+	int result = -1;
+
+	spinlock_acquire(&p->lock);
+	if (p->state == PROCESS_LIVE && !p->group_exiting && !p->execing &&
+	    current->home == p) {
+		p->execing = 1;
+		result = 0;
+	}
+	spinlock_release(&p->lock);
+	return result;
+}
+
+static void process_request_thread_exit_locked(thread_t thread, int status)
+{
+	if (!thread || !thread->home ||
+	    !spinlock_holding(&thread->home->lock) ||
+	    thread->state == THREAD_EXITED)
+		return;
+	thread->exit_status = status;
+	__atomic_store_n(&thread->exit_requested, 1, __ATOMIC_RELEASE);
+	wait_queue_terminate_thread(thread);
+	scheduler_kick(thread);
+}
+
+int process_thread_exit_requested(thread_t thread, int *status)
+{
+	if (!thread ||
+	    !__atomic_load_n(&thread->exit_requested, __ATOMIC_ACQUIRE))
+		return 0;
+	if (status)
+		*status = thread->exit_status;
+	return 1;
+}
+
+int process_exec_quiesce(process_t p, thread_t current)
+{
+	int index;
+
+	spinlock_acquire(&p->lock);
+	if (p->state != PROCESS_LIVE || p->group_exiting || !p->execing ||
+	    current->home != p) {
+		spinlock_release(&p->lock);
+		return -1;
+	}
+	for (index = 0; index < PROC_MAXTHREAD; index++) {
+		thread_t thread = p->thread[index];
+
+		if (thread && thread != current)
+			process_request_thread_exit_locked(thread, 0);
+	}
+	while (p->tnums != 1) {
+		if (p->group_exiting) {
+			spinlock_release(&p->lock);
+			return -1;
+		}
+		wait_queue_sleep(&p->thread_reap_wait, &p->lock);
+	}
+	if (p->thread[current->id_p] != current ||
+	    current->state != THREAD_RUNNING)
+		PANIC("invalid exec thread");
+	current->tid = p->pid;
+	spinlock_release(&p->lock);
+	return 0;
+}
+
+void process_exec_end(process_t p)
+{
+	spinlock_acquire(&p->lock);
+	if (!p->execing)
+		PANIC("finish inactive exec");
+	p->execing = 0;
+	spinlock_release(&p->lock);
+}
+
+int process_group_exiting(process_t p, int *status)
+{
+	int exiting;
+
+	spinlock_acquire(&p->lock);
+	exiting = p->group_exiting;
+	if (exiting && status)
+		*status = p->group_exit_state;
+	spinlock_release(&p->lock);
+	return exiting;
+}
+
+static void process_release_resources(process_t p)
+{
+	file_t files[NOFILE];
+	int count = 0, fd;
+
 	sleeplock_acquire(&p->mmap_lock);
 	vma_set_destroy(&p->vmas);
 	sleeplock_release(&p->mmap_lock);
-
-        for(fd = 0; fd < NOFILE; fd++) {
-                if((f = p->ofile[fd]) != 0) {
-                        file_close(f);
-                        p->ofile[fd] = 0;
-                }
-        }
-
+	spinlock_acquire(&p->files_lock);
+	for (fd = 0; fd < NOFILE; fd++) {
+		if (!p->ofile[fd])
+			continue;
+		files[count++] = p->ofile[fd];
+		p->ofile[fd] = 0;
+		p->fd_flags[fd] = 0;
+	}
+	spinlock_release(&p->files_lock);
+	for (fd = 0; fd < count; fd++)
+		file_close(files[fd]);
 	vfs_path_put(&p->cwd);
 	vfs_path_put(&p->root);
+}
 
-        spinlock_acquire(&wait_lock);
+void process_thread_exit(int cause, int group)
+{
+	process_t p = cur_proc();
+	thread_t current = cur_thread();
+	uint32 zero = 0;
+	int last;
+	int i;
 
-        reparent(p);
+	if (current->clear_child_tid)
+		(void)copyout(p->pagetable, current->clear_child_tid,
+		              (char *)&zero, sizeof(zero));
 
-	/*
-	 * Keep the final thread alive from publishing PROCESS_ZOMBIE until
-	 * the scheduler has switched away. A parent on another CPU may reap
-	 * the process as soon as wait_lock is released.
-	 */
-	spinlock_acquire(&cur_thread()->lock);
-        spinlock_acquire(&p->lock);
-	if (p->tnums != 1)
-		PANIC("multithreaded exit unsupported");
-        p->exit_state = cause;
-        p->state = PROCESS_ZOMBIE;
-        spinlock_release(&p->lock);
+	spinlock_acquire(&p->lock);
+	if (group && !p->group_exiting) {
+		p->group_exiting = 1;
+		p->group_exit_state = cause;
+	}
+	if (p->group_exiting)
+		cause = p->group_exit_state;
+	__atomic_store_n(&current->exit_requested, 0, __ATOMIC_RELEASE);
+	if (current->state != THREAD_RUNNING || p->live_threads <= 0)
+		PANIC("invalid user thread exit");
+	p->live_threads--;
+	last = p->live_threads == 0;
+	if (p->group_exiting) {
+		for (i = 0; i < PROC_MAXTHREAD; i++) {
+			thread_t thread = p->thread[i];
 
-        if(p->parent)
+			if (thread && thread != current)
+				process_request_thread_exit_locked(
+					thread, p->group_exit_state);
+		}
+	}
+	if (!last) {
+		spinlock_release(&p->lock);
+		spinlock_acquire(&current->lock);
+		scheduler_exit_locked();
+	}
+	while (p->tnums != 1)
+		wait_queue_sleep(&p->thread_reap_wait, &p->lock);
+	spinlock_release(&p->lock);
+
+	process_release_resources(p);
+	spinlock_acquire(&wait_lock);
+	reparent(p);
+	spinlock_acquire(&p->lock);
+	spinlock_acquire(&current->lock);
+	if (p->tnums != 1 || p->thread[current->id_p] != current ||
+	    p->state != PROCESS_LIVE)
+		PANIC("invalid final user thread");
+	p->exit_state = cause;
+	p->state = PROCESS_ZOMBIE;
+	current->process_reaper = 1;
+	spinlock_release(&p->lock);
+	if (p->parent)
 		wait_queue_wake_all(&p->parent->child_wait);
-
-        spinlock_release(&wait_lock);
+	spinlock_release(&wait_lock);
 	scheduler_exit_locked();
 }
 
@@ -523,51 +718,75 @@ int process_wait(int target, uint64 status_address, int nohang)
         }
 }
 
-static process_t process_find_locked(int pid)
+static thread_t process_find_thread_locked(int tid, process_t *owner)
 {
 	process_t process;
 	list_t entry;
+	int index;
 
 	if (!spinlock_holding(&wait_lock))
-		PANIC("process lookup unlocked");
+		PANIC("thread lookup unlocked");
 	for (entry = proc.next; entry != &proc; entry = entry->next) {
 		process = list_entry(entry, struct process, all_tag);
-		if (process->pid == pid && process->state == PROCESS_LIVE)
-			return process;
+		spinlock_acquire(&process->lock);
+		if (process->state != PROCESS_LIVE) {
+			spinlock_release(&process->lock);
+			continue;
+		}
+		for (index = 0; index < PROC_MAXTHREAD; index++) {
+			thread_t thread = process->thread[index];
+
+			if (thread && thread->state != THREAD_EXITED &&
+			    thread->tid == tid) {
+				*owner = process;
+				return thread;
+			}
+		}
+		spinlock_release(&process->lock);
 	}
 	return 0;
 }
 
-int process_set_nice(int pid, int nice)
+int process_set_nice(int tid, int nice)
 {
-	process_t process;
+	process_t process = 0;
 	thread_t thread;
-	int result = -1;
+	int result = -LINUX_ESRCH;
 
+	if (!tid)
+		return scheduler_set_nice(cur_thread(), nice) < 0 ?
+			-LINUX_EINVAL : 0;
 	spinlock_acquire(&wait_lock);
-	process = process_find_locked(pid);
-	thread = process ? process->thread[0] : 0;
+	thread = process_find_thread_locked(tid, &process);
 	if (thread)
-		result = scheduler_set_nice(thread, nice);
+		result = scheduler_set_nice(thread, nice) < 0 ?
+			-LINUX_EINVAL : 0;
+	if (process)
+		spinlock_release(&process->lock);
 	spinlock_release(&wait_lock);
 	return result;
 }
 
-int process_get_nice(int pid, int *nice)
+int process_get_nice(int tid, int *nice)
 {
-	process_t process;
+	process_t process = 0;
 	thread_t thread;
 	int result = -1;
 
 	if (!nice)
 		return -1;
+	if (!tid) {
+		*nice = scheduler_get_nice(cur_thread());
+		return 0;
+	}
 	spinlock_acquire(&wait_lock);
-	process = process_find_locked(pid);
-	thread = process ? process->thread[0] : 0;
+	thread = process_find_thread_locked(tid, &process);
 	if (thread) {
 		*nice = scheduler_get_nice(thread);
 		result = 0;
 	}
+	if (process)
+		spinlock_release(&process->lock);
 	spinlock_release(&wait_lock);
 	return result;
 }
@@ -591,7 +810,7 @@ int kill(int pid)
                 spinlock_acquire(&p->lock);
                 if(p->pid == pid) {
                         p->killed = 1;
-                        for(int i = 0; i < p->tnums; i++)
+				for(int i = 0; i < PROC_MAXTHREAD; i++)
                                 if(p->thread[i])
                                         wait_queue_wake_thread(p->thread[i]);
                         spinlock_release(&p->lock);

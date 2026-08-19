@@ -718,21 +718,32 @@ static int fd_alloc(file_t file, int minimum, uint8 flags)
 
 	if (minimum < 0)
 		minimum = 0;
+	spinlock_acquire(&process->files_lock);
 	for (fd = minimum; fd < NOFILE; fd++) {
 		if (!process->ofile[fd]) {
 			process->ofile[fd] = file;
 			process->fd_flags[fd] = flags;
+			spinlock_release(&process->files_lock);
 			return fd;
 		}
 	}
+	spinlock_release(&process->files_lock);
 	return -1;
 }
 
 static int fd_get(int fd, file_t *file)
 {
-	if (fd < 0 || fd >= NOFILE || !cur_proc()->ofile[fd])
+	process_t process = cur_proc();
+
+	if (fd < 0 || fd >= NOFILE)
 		return VFS_ERR_BADF;
-	*file = cur_proc()->ofile[fd];
+	spinlock_acquire(&process->files_lock);
+	if (!process->ofile[fd]) {
+		spinlock_release(&process->files_lock);
+		return VFS_ERR_BADF;
+	}
+	*file = file_dup(process->ofile[fd]);
+	spinlock_release(&process->files_lock);
 	return VFS_OK;
 }
 
@@ -919,14 +930,9 @@ int vfs_install_file(file_t file, uint8 flags, int *fd_out)
 
 int vfs_get_file_fd(int fd, file_t *result)
 {
-	file_t file;
-
 	if (!result)
 		return VFS_ERR_INVAL;
-	if (fd_get(fd, &file) != VFS_OK)
-		return VFS_ERR_BADF;
-	*result = file_dup(file);
-	return VFS_OK;
+	return fd_get(fd, result);
 }
 
 uint32 vfs_file_poll(struct vfs_file *file, uint32 events)
@@ -1038,12 +1044,20 @@ void vfs_poll_notify(void)
 
 int vfs_close(int fd)
 {
+	process_t process = cur_proc();
 	file_t file;
 
-	if (fd_get(fd, &file) != VFS_OK)
+	if (fd < 0 || fd >= NOFILE)
 		return VFS_ERR_BADF;
-	cur_proc()->ofile[fd] = 0;
-	cur_proc()->fd_flags[fd] = 0;
+	spinlock_acquire(&process->files_lock);
+	file = process->ofile[fd];
+	if (!file) {
+		spinlock_release(&process->files_lock);
+		return VFS_ERR_BADF;
+	}
+	process->ofile[fd] = 0;
+	process->fd_flags[fd] = 0;
+	spinlock_release(&process->files_lock);
 	file_close(file);
 	vfs_poll_notify();
 	return VFS_OK;
@@ -1051,15 +1065,31 @@ int vfs_close(int fd)
 
 int vfs_dup(int oldfd, int minimum, uint8 flags, int *fd_out)
 {
+	process_t process = cur_proc();
 	file_t file;
 	int fd;
 
-	if (fd_get(oldfd, &file) != VFS_OK)
+	if (oldfd < 0 || oldfd >= NOFILE)
 		return VFS_ERR_BADF;
-	fd = fd_alloc(file, minimum, flags);
-	if (fd < 0)
+	if (minimum < 0)
+		minimum = 0;
+	spinlock_acquire(&process->files_lock);
+	file = process->ofile[oldfd];
+	if (!file) {
+		spinlock_release(&process->files_lock);
+		return VFS_ERR_BADF;
+	}
+	for (fd = minimum; fd < NOFILE; fd++) {
+		if (!process->ofile[fd])
+			break;
+	}
+	if (fd == NOFILE) {
+		spinlock_release(&process->files_lock);
 		return VFS_ERR_MFILE;
-	file_dup(file);
+	}
+	process->ofile[fd] = file_dup(file);
+	process->fd_flags[fd] = flags;
+	spinlock_release(&process->files_lock);
 	*fd_out = fd;
 	return VFS_OK;
 }
@@ -1067,18 +1097,25 @@ int vfs_dup(int oldfd, int minimum, uint8 flags, int *fd_out)
 int vfs_dup_to(int oldfd, int newfd, uint8 flags)
 {
 	process_t process = cur_proc();
-	file_t file;
+	file_t file, replaced;
 
-	if (fd_get(oldfd, &file) != VFS_OK)
-		return VFS_ERR_BADF;
-	if (newfd < 0 || newfd >= NOFILE)
+	if (oldfd < 0 || oldfd >= NOFILE || newfd < 0 || newfd >= NOFILE)
 		return VFS_ERR_BADF;
 	if (oldfd == newfd)
 		return VFS_ERR_INVAL;
-	if (process->ofile[newfd])
-		vfs_close(newfd);
+	spinlock_acquire(&process->files_lock);
+	file = process->ofile[oldfd];
+	if (!file) {
+		spinlock_release(&process->files_lock);
+		return VFS_ERR_BADF;
+	}
+	replaced = process->ofile[newfd];
 	process->ofile[newfd] = file_dup(file);
 	process->fd_flags[newfd] = flags;
+	spinlock_release(&process->files_lock);
+	if (replaced)
+		file_close(replaced);
+	vfs_poll_notify();
 	return VFS_OK;
 }
 
@@ -1090,8 +1127,10 @@ int vfs_read(int fd, uint64 address, int length)
 	if (fd_get(fd, &file) != VFS_OK)
 		return VFS_ERR_BADF;
 	if (length < 0)
-		return VFS_ERR_INVAL;
-	result = file_read(file, 1, address, length, &file->position);
+		result = VFS_ERR_INVAL;
+	else
+		result = file_read(file, 1, address, length, &file->position);
+	vfs_file_put(file);
 	return result > 0x7fffffff ? VFS_ERR_INVAL : result;
 }
 
@@ -1124,17 +1163,20 @@ int vfs_write(int fd, uint64 address, int length)
 
 	if (fd_get(fd, &file) != VFS_OK)
 		return VFS_ERR_BADF;
-	if (length < 0)
-		return VFS_ERR_INVAL;
-	lock = vfs_regular_write_lock(file);
-	if (lock)
-		sleeplock_acquire(lock);
-	result = vfs_prepare_append(file);
-	if (result >= 0)
-		result = file_write(file, 1, address, length,
-				    &file->position);
-	if (lock)
-		sleeplock_release(lock);
+	if (length < 0) {
+		result = VFS_ERR_INVAL;
+	} else {
+		lock = vfs_regular_write_lock(file);
+		if (lock)
+			sleeplock_acquire(lock);
+		result = vfs_prepare_append(file);
+		if (result >= 0)
+			result = file_write(file, 1, address, length,
+					    &file->position);
+		if (lock)
+			sleeplock_release(lock);
+	}
+	vfs_file_put(file);
 	return result > 0x7fffffff ? VFS_ERR_INVAL : result;
 }
 
@@ -1149,11 +1191,15 @@ int64 vfs_writev(int fd, int user_source,
 
 	if (fd_get(fd, &file) != VFS_OK)
 		return VFS_ERR_BADF;
-	if (!(file->flags & VFS_OPEN_WRITE))
-		return VFS_ERR_BADF;
+	if (!(file->flags & VFS_OPEN_WRITE)) {
+		result = VFS_ERR_BADF;
+		goto out_file;
+	}
 	for (index = 0; index < count; index++) {
-		if (iovecs[index].length > 0x7fffffff)
-			return VFS_ERR_INVAL;
+		if (iovecs[index].length > 0x7fffffff) {
+			result = VFS_ERR_INVAL;
+			goto out_file;
+		}
 	}
 	lock = vfs_regular_write_lock(file);
 	if (lock)
@@ -1181,6 +1227,8 @@ int64 vfs_writev(int fd, int user_source,
 out:
 	if (lock)
 		sleeplock_release(lock);
+out_file:
+	vfs_file_put(file);
 	return result;
 }
 
@@ -1219,10 +1267,13 @@ out:
 int64 vfs_ioctl(int fd, uint64 request, uint64 argument)
 {
 	file_t file;
+	int64 result;
 
 	if (fd_get(fd, &file) != VFS_OK)
 		return VFS_ERR_BADF;
-	return file_ioctl(file, request, argument);
+	result = file_ioctl(file, request, argument);
+	vfs_file_put(file);
+	return result;
 }
 
 int vfs_seek(int fd, int64 offset, int whence, uint64 *result)
@@ -1234,8 +1285,10 @@ int vfs_seek(int fd, int64 offset, int whence, uint64 *result)
 
 	if (fd_get(fd, &file) != VFS_OK)
 		return VFS_ERR_BADF;
-	if (!file->path.dentry)
-		return VFS_ERR_SPIPE;
+	if (!file->path.dentry) {
+		status = VFS_ERR_SPIPE;
+		goto out;
+	}
 	if (whence == 0)
 		next = offset;
 	else if (whence == 1)
@@ -1243,30 +1296,41 @@ int vfs_seek(int fd, int64 offset, int whence, uint64 *result)
 	else if (whence == 2) {
 		status = vfs_inode_stat(file->path.dentry->inode, &stat);
 		if (status < 0)
-			return status;
+			goto out;
 		next = (int64)stat.size + offset;
 	} else {
-		return VFS_ERR_INVAL;
+		status = VFS_ERR_INVAL;
+		goto out;
 	}
-	if (next < 0)
-		return VFS_ERR_INVAL;
+	if (next < 0) {
+		status = VFS_ERR_INVAL;
+		goto out;
+	}
 	file->position = next;
 	*result = next;
-	return VFS_OK;
+	status = VFS_OK;
+out:
+	vfs_file_put(file);
+	return status;
 }
 
 int vfs_stat_fd(int fd, struct vfs_stat *stat)
 {
 	file_t file;
+	int result;
 
 	if (fd_get(fd, &file) != VFS_OK)
 		return VFS_ERR_BADF;
 	if (!file->path.dentry) {
 		if (!file->operations || !file->operations->getattr)
-			return VFS_ERR_INVAL;
-		return file->operations->getattr(file, stat);
+			result = VFS_ERR_INVAL;
+		else
+			result = file->operations->getattr(file, stat);
+	} else {
+		result = vfs_inode_stat(file->path.dentry->inode, stat);
 	}
-	return vfs_inode_stat(file->path.dentry->inode, stat);
+	vfs_file_put(file);
+	return result;
 }
 
 int vfs_stat_path(const char *name, int follow_symlink,
@@ -1286,16 +1350,20 @@ int vfs_stat_path(const char *name, int follow_symlink,
 int vfs_next_dirent(int fd, struct vfs_dirent *dirent)
 {
 	file_t file;
+	int result;
 
 	if (fd_get(fd, &file) != VFS_OK)
 		return VFS_ERR_BADF;
 	if (!file->path.dentry)
-		return VFS_ERR_NOTDIR;
-	if (file->path.dentry->inode->type != VFS_INODE_DIRECTORY)
-		return VFS_ERR_NOTDIR;
-	if (!file->operations || !file->operations->readdir)
-		return VFS_ERR_NOTSUPP;
-	return file->operations->readdir(file, dirent);
+		result = VFS_ERR_NOTDIR;
+	else if (file->path.dentry->inode->type != VFS_INODE_DIRECTORY)
+		result = VFS_ERR_NOTDIR;
+	else if (!file->operations || !file->operations->readdir)
+		result = VFS_ERR_NOTSUPP;
+	else
+		result = file->operations->readdir(file, dirent);
+	vfs_file_put(file);
+	return result;
 }
 
 int vfs_mkdir(const char *name, uint32 mode)
@@ -1511,12 +1579,16 @@ out_source:
 int vfs_fsync(int fd)
 {
 	file_t file;
+	int result;
 
 	if (fd_get(fd, &file) != VFS_OK)
 		return VFS_ERR_BADF;
 	if (!file->operations || !file->operations->fsync)
-		return VFS_ERR_INVAL;
-	return file->operations->fsync(file);
+		result = VFS_ERR_INVAL;
+	else
+		result = file->operations->fsync(file);
+	vfs_file_put(file);
+	return result;
 }
 
 int vfs_sync(void)
@@ -1623,23 +1695,33 @@ int vfs_access(const char *name)
 
 int vfs_get_fd_flags(int fd, uint8 *flags)
 {
-	file_t file;
+	process_t process = cur_proc();
 
-	if (fd_get(fd, &file) != VFS_OK)
+	if (fd < 0 || fd >= NOFILE)
 		return VFS_ERR_BADF;
-	(void)file;
-	*flags = cur_proc()->fd_flags[fd];
+	spinlock_acquire(&process->files_lock);
+	if (!process->ofile[fd]) {
+		spinlock_release(&process->files_lock);
+		return VFS_ERR_BADF;
+	}
+	*flags = process->fd_flags[fd];
+	spinlock_release(&process->files_lock);
 	return VFS_OK;
 }
 
 int vfs_set_fd_flags(int fd, uint8 flags)
 {
-	file_t file;
+	process_t process = cur_proc();
 
-	if (fd_get(fd, &file) != VFS_OK)
+	if (fd < 0 || fd >= NOFILE)
 		return VFS_ERR_BADF;
-	(void)file;
-	cur_proc()->fd_flags[fd] = flags;
+	spinlock_acquire(&process->files_lock);
+	if (!process->ofile[fd]) {
+		spinlock_release(&process->files_lock);
+		return VFS_ERR_BADF;
+	}
+	process->fd_flags[fd] = flags;
+	spinlock_release(&process->files_lock);
 	return VFS_OK;
 }
 
@@ -1650,6 +1732,7 @@ int vfs_get_file_flags(int fd, uint32 *flags)
 	if (fd_get(fd, &file) != VFS_OK)
 		return VFS_ERR_BADF;
 	*flags = file->flags;
+	vfs_file_put(file);
 	return VFS_OK;
 }
 
@@ -1665,20 +1748,34 @@ int vfs_set_file_flags(int fd, uint32 flags)
 	next = (file->flags & ~mutable) | (flags & mutable);
 	if (file->operations && file->operations->set_flags) {
 		status = file->operations->set_flags(file, next);
-		if (status < 0)
+		if (status < 0) {
+			vfs_file_put(file);
 			return status;
+		}
 	}
 	file->flags = next;
+	vfs_file_put(file);
 	return VFS_OK;
 }
 
 void vfs_close_on_exec(void)
 {
-	int fd;
+	process_t process = cur_proc();
+	file_t files[NOFILE];
+	int count = 0, fd;
 
+	spinlock_acquire(&process->files_lock);
 	for (fd = 0; fd < NOFILE; fd++) {
-		if (cur_proc()->ofile[fd] &&
-		    (cur_proc()->fd_flags[fd] & VFS_FD_CLOEXEC))
-			vfs_close(fd);
+		if (!process->ofile[fd] ||
+		    !(process->fd_flags[fd] & VFS_FD_CLOEXEC))
+			continue;
+		files[count++] = process->ofile[fd];
+		process->ofile[fd] = 0;
+		process->fd_flags[fd] = 0;
 	}
+	spinlock_release(&process->files_lock);
+	for (fd = 0; fd < count; fd++)
+		file_close(files[fd]);
+	if (count)
+		vfs_poll_notify();
 }
