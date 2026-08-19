@@ -70,6 +70,45 @@ expect {
 }
 expect_prompt
 
+send -- "/bin/dynamic-hello\r"
+expect {
+	-re {\r?\nDYNAMIC_HELLO_OK} {}
+	-re {DYNAMIC_RUNTIME_FAIL|not found|Bad system call} {
+		abort_test "dynamic musl hello failed"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in dynamic musl hello" }
+	timeout { abort_test "dynamic musl hello timeout" }
+	eof { abort_test "QEMU exited during dynamic musl hello" }
+}
+expect_prompt
+
+send -- "/bin/dynamic-runtime\r"
+foreach marker {
+	DYNAMIC_CONSTRUCTOR_OK
+	DYNAMIC_NEEDED_OK
+	DYNAMIC_TLS_OK
+	DYNAMIC_DLOPEN_OK
+	DYNAMIC_PREAD_OK
+	DYNAMIC_RELRO_OK
+	DYNAMIC_EXEC_OK
+	DYNAMIC_EXEC_PRESSURE_OK
+	DYNAMIC_RUNTIME_OK
+	DYNAMIC_DESTRUCTOR_OK
+} {
+	expect {
+		-re "\\r?\\n$marker" {}
+		-re {DYNAMIC_RUNTIME_FAIL[^\r\n]*} {
+			abort_test "dynamic musl runtime test failed"
+		}
+		-re {\[PANIC\]} {
+			abort_test "kernel panic in dynamic musl runtime test"
+		}
+		timeout { abort_test "dynamic musl runtime test timeout" }
+		eof { abort_test "QEMU exited during dynamic musl runtime test" }
+	}
+}
+expect_prompt
+
 send -- "/bin/elf-interp\r"
 expect {
 	-re {\r?\nELF_INTERP_OK} {}
