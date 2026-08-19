@@ -295,6 +295,10 @@ struct linux_linger {
 #define LINUX_MAP_PRIVATE            0x2
 #define LINUX_MAP_FIXED             0x10
 #define LINUX_MAP_ANONYMOUS         0x20
+#define LINUX_MAP_NORESERVE       0x4000
+#define LINUX_MAP_POPULATE        0x8000
+#define LINUX_MAP_STACK          0x20000
+#define LINUX_MAP_FIXED_NOREPLACE 0x100000
 
 #define LINUX_MS_ASYNC                0x1
 #define LINUX_MS_INVALIDATE           0x2

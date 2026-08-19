@@ -272,6 +272,9 @@ int vma_insert_elf_file(struct vma_set *set, uint64 start, uint64 end,
 		    overlap->usage != VMA_ELF ||
 		    overlap->flags != LINUX_MAP_PRIVATE)
 			return -1;
+		if ((overlap->protection | protection) & LINUX_PROT_WRITE &&
+		    (overlap->protection | protection) & LINUX_PROT_EXEC)
+			return -1;
 		if (overlap->start < start) {
 			area = vma_allocate_split(overlap, start);
 			if (!area)

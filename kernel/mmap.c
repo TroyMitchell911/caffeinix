@@ -144,6 +144,12 @@ static int mmap_protection_valid(int protection)
 			       LINUX_PROT_EXEC));
 }
 
+static int mmap_protection_wx(int protection)
+{
+	return (protection & LINUX_PROT_WRITE) &&
+	       (protection & LINUX_PROT_EXEC);
+}
+
 static int mmap_pte_permissions(int protection)
 {
 	int permissions = 0;
@@ -349,6 +355,26 @@ out:
 	return result;
 }
 
+static void mmap_populate(process_t process, uint64 start, uint64 length,
+			  int protection)
+{
+	enum mmap_fault_access access;
+	uint64 end = start + length;
+
+	if (protection == LINUX_PROT_NONE)
+		return;
+	if (protection & LINUX_PROT_READ)
+		access = MMAP_FAULT_READ;
+	else if (protection & LINUX_PROT_WRITE)
+		access = MMAP_FAULT_WRITE;
+	else
+		access = MMAP_FAULT_EXEC;
+	for (; start < end; start += PGSIZE) {
+		if (mmap_handle_fault(process, start, access) != MMAP_FAULT_OK)
+			break;
+	}
+}
+
 uint64 sys_linux_brk(void)
 {
 	process_t process = cur_proc();
@@ -395,7 +421,7 @@ uint64 sys_linux_mmap(void)
 	struct vfs_stat stat;
 	uint64 address, end, hint, length, offset, start = 0;
 	uint64 result = -LINUX_ENOMEM;
-	int error, fd, flags, protection;
+	int error, fd, flags, populate = 0, protection;
 	enum vma_origin origin;
 
 	argaddr(0, &address);
@@ -409,9 +435,16 @@ uint64 sys_linux_mmap(void)
 	    ((flags & 0xf) != LINUX_MAP_PRIVATE &&
 	     (flags & 0xf) != LINUX_MAP_SHARED) ||
 	    flags & ~(LINUX_MAP_SHARED | LINUX_MAP_PRIVATE | LINUX_MAP_FIXED |
-		      LINUX_MAP_ANONYMOUS))
+		      LINUX_MAP_ANONYMOUS | LINUX_MAP_NORESERVE |
+		      LINUX_MAP_POPULATE | LINUX_MAP_STACK |
+		      LINUX_MAP_FIXED_NOREPLACE) ||
+	    (flags & LINUX_MAP_FIXED &&
+	     flags & LINUX_MAP_FIXED_NOREPLACE))
 		return -LINUX_EINVAL;
-	if ((flags & LINUX_MAP_FIXED) && address % PGSIZE)
+	if (mmap_protection_wx(protection))
+		return -LINUX_EPERM;
+	if ((flags & (LINUX_MAP_FIXED | LINUX_MAP_FIXED_NOREPLACE)) &&
+	    address % PGSIZE)
 		return -LINUX_EINVAL;
 	if (flags & LINUX_MAP_ANONYMOUS) {
 		origin = VMA_ANONYMOUS;
@@ -434,7 +467,7 @@ uint64 sys_linux_mmap(void)
 	}
 
 	sleeplock_acquire(&process->mmap_lock);
-	if (flags & LINUX_MAP_FIXED) {
+	if (flags & (LINUX_MAP_FIXED | LINUX_MAP_FIXED_NOREPLACE)) {
 		start = address;
 		if (start < PGSIZE || start % PGSIZE ||
 		    start > USER_MMAP_TOP || length > USER_MMAP_TOP - start) {
@@ -442,11 +475,17 @@ uint64 sys_linux_mmap(void)
 			goto out_unlock;
 		}
 		end = start + length;
-		if (vma_unmap(&process->vmas, start, end) < 0) {
+		if (flags & LINUX_MAP_FIXED_NOREPLACE) {
+			if (!vma_range_free(&process->vmas, start, end)) {
+				result = -LINUX_EEXIST;
+				goto out_unlock;
+			}
+		} else if (vma_unmap(&process->vmas, start, end) < 0) {
 			result = -LINUX_ENOMEM;
 			goto out_unlock;
+		} else {
+			vm_unmap_range(process->pagetable, start, length);
 		}
-		vm_unmap_range(process->pagetable, start, length);
 	} else {
 		uint64 low = PGROUNDUP(process->brk);
 
@@ -472,6 +511,7 @@ uint64 sys_linux_mmap(void)
 		       origin, VMA_MMAP, file, offset) < 0)
 		goto out_unlock;
 	result = start;
+	populate = !!(flags & LINUX_MAP_POPULATE);
 	goto out_unlock;
 out_unlock:
 	sleeplock_release(&process->mmap_lock);
@@ -480,6 +520,8 @@ out_file:
 		backing->put(backing);
 	if (file)
 		vfs_file_put(file);
+	if (populate)
+		mmap_populate(process, start, length, protection);
 	return result;
 }
 
@@ -515,6 +557,8 @@ uint64 sys_linux_mprotect(void)
 	argint(2, &protection);
 	if (!mmap_protection_valid(protection) || address % PGSIZE)
 		return -LINUX_EINVAL;
+	if (mmap_protection_wx(protection))
+		return -LINUX_EPERM;
 	if (!length)
 		return 0;
 	if (mmap_round_length(length, &length) < 0 ||
