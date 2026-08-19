@@ -281,6 +281,15 @@ expect {
 	eof { abort_test "QEMU exited during read copy-fault test" }
 }
 expect {
+	-re {\r?\nVM_SHARED_READ_OK} {}
+	-re {VM_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "shared file read test reported failure"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in shared file read test" }
+	timeout { abort_test "shared file read test timeout" }
+	eof { abort_test "QEMU exited during shared file read test" }
+}
+expect {
 	-re {\r?\nVM_RUNTIME_OK} {}
 	-re {VM_RUNTIME_FAIL[^\r\n]*} {
 		abort_test "virtual memory test reported failure"

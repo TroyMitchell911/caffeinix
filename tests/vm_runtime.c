@@ -11,6 +11,9 @@
 
 #define PAGE_SIZE 4096UL
 #define FILE_PATH "/tmp/vm-runtime.bin"
+#define SHARED_READ_PATH "/vm-shared-read.bin"
+#define SHARED_READ_START "/tmp/vm-shared-read-start"
+#define SHARED_READ_CHILDREN 8
 #define HINT_ADDRESS ((void *)0x20000000UL)
 
 #define CHECK(condition, name) do { \
@@ -113,6 +116,74 @@ static void test_read_copy_faults(void)
 
 	CHECK(munmap(destination, PAGE_SIZE) == 0, "read fault munmap");
 	puts("VM_READ_FAULT_OK");
+}
+
+static void shared_read_child(int fd)
+{
+	unsigned char buffer[PAGE_SIZE];
+	unsigned int index, page;
+
+	while (access(SHARED_READ_START, F_OK) < 0) {
+		if (errno != ENOENT)
+			_exit(1);
+	}
+	if (read(fd, buffer, sizeof(buffer)) != sizeof(buffer))
+		_exit(1);
+	for (page = 0; page < SHARED_READ_CHILDREN; page++) {
+		if (buffer[0] == pattern(page, 0))
+			break;
+	}
+	if (page == SHARED_READ_CHILDREN)
+		_exit(1);
+	for (index = 0; index < PAGE_SIZE; index++) {
+		if (buffer[index] != pattern(page, index))
+			_exit(1);
+	}
+	_exit(16 + page);
+}
+
+static void test_shared_file_reads(void)
+{
+	unsigned char buffer[PAGE_SIZE];
+	pid_t children[SHARED_READ_CHILDREN];
+	unsigned char seen[SHARED_READ_CHILDREN] = { 0 };
+	unsigned int index;
+	int fd, start_fd, status;
+
+	fd = open(SHARED_READ_PATH, O_CREAT | O_TRUNC | O_RDWR, 0600);
+	CHECK(fd >= 0, "shared read open");
+	for (index = 0; index < SHARED_READ_CHILDREN; index++) {
+		fill_page(buffer, index);
+		write_all(fd, buffer, sizeof(buffer));
+	}
+	CHECK(lseek(fd, 0, SEEK_SET) == 0, "shared read seek");
+	unlink(SHARED_READ_START);
+	for (index = 0; index < SHARED_READ_CHILDREN; index++) {
+		children[index] = fork();
+		CHECK(children[index] >= 0, "shared read fork");
+		if (!children[index])
+			shared_read_child(fd);
+	}
+	start_fd = open(SHARED_READ_START, O_CREAT | O_TRUNC | O_WRONLY,
+			0600);
+	CHECK(start_fd >= 0, "shared read barrier");
+	CHECK(close(start_fd) == 0, "shared read barrier close");
+	for (index = 0; index < SHARED_READ_CHILDREN; index++) {
+		int page;
+
+		CHECK(waitpid(children[index], &status, 0) == children[index],
+		      "shared read wait");
+		CHECK(WIFEXITED(status), "shared read child exit");
+		page = WEXITSTATUS(status) - 16;
+		CHECK(page >= 0 && page < SHARED_READ_CHILDREN,
+		      "shared read child status");
+		CHECK(!seen[page], "shared read duplicate page");
+		seen[page] = 1;
+	}
+	CHECK(close(fd) == 0, "shared read close");
+	CHECK(unlink(SHARED_READ_START) == 0, "shared read barrier unlink");
+	CHECK(unlink(SHARED_READ_PATH) == 0, "shared read unlink");
+	puts("VM_SHARED_READ_OK");
 }
 
 static void test_file_mapping(unsigned char **mapping_out)
@@ -316,6 +387,7 @@ int main(void)
 
 	create_fixture();
 	test_read_copy_faults();
+	test_shared_file_reads();
 	test_file_mapping(&file_mapping);
 	anonymous = test_anonymous_mapping();
 	test_hint_and_fixed();
