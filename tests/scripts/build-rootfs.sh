@@ -455,6 +455,12 @@ done
 "$musl_cc" \
 	-static -march=rv64gc -mabi=lp64d \
 	-O2 -Wall -Wextra -Werror \
+	"$tests_dir/job_control_runtime.c" \
+	-o "$staging/bin/job-control-runtime"
+
+"$musl_cc" \
+	-static -march=rv64gc -mabi=lp64d \
+	-O2 -Wall -Wextra -Werror \
 	"$tests_dir/scheduler_runtime.c" \
 	-o "$staging/bin/scheduler-runtime"
 

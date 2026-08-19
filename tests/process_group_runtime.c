@@ -1,4 +1,5 @@
 #include <errno.h>
+#include <poll.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -8,6 +9,8 @@
 
 static int signal_fd = -1;
 static volatile sig_atomic_t signal_seen;
+static volatile sig_atomic_t orphan_cont_seen;
+static volatile sig_atomic_t orphan_hup_seen;
 
 static int fail(const char *operation)
 {
@@ -37,6 +40,39 @@ static void user_signal(int signal)
 	signal_seen = 1;
 	if (signal_fd >= 0)
 		(void)write(signal_fd, &marker, 1);
+}
+
+static void orphan_signal(int signal)
+{
+	char marker = signal == SIGHUP ? 'H' : 'C';
+
+	if (signal == SIGHUP)
+		orphan_hup_seen = 1;
+	else if (signal == SIGCONT)
+		orphan_cont_seen = 1;
+	if (signal_fd >= 0)
+		(void)write(signal_fd, &marker, 1);
+}
+
+static int read_events(int fd, char *events, size_t count)
+{
+	struct pollfd poll_fd = {
+		.fd = fd,
+		.events = POLLIN,
+	};
+	size_t total = 0;
+
+	while (total < count) {
+		int result = poll(&poll_fd, 1, 2000);
+
+		if (result != 1 || !(poll_fd.revents & POLLIN))
+			return -1;
+		result = read(fd, events + total, count - total);
+		if (result <= 0)
+			return -1;
+		total += result;
+	}
+	return 0;
 }
 
 static int test_session(void)
@@ -186,6 +222,79 @@ static int test_group_stop(void)
 	return 0;
 }
 
+static void orphaned_job(int ready_fd, int event_fd)
+{
+	struct sigaction action;
+
+	memset(&action, 0, sizeof(action));
+	action.sa_handler = orphan_signal;
+	sigemptyset(&action.sa_mask);
+	signal_fd = event_fd;
+	orphan_cont_seen = 0;
+	orphan_hup_seen = 0;
+	if (setpgid(0, 0) || sigaction(SIGHUP, &action, NULL) ||
+	    sigaction(SIGCONT, &action, NULL) ||
+	    write(ready_fd, "R", 1) != 1)
+		_exit(31);
+	while (!orphan_hup_seen || !orphan_cont_seen)
+		pause();
+	(void)write(event_fd, "D", 1);
+	_exit(0);
+}
+
+static int test_orphaned_stopped_group(void)
+{
+	char events[3], ready_marker;
+	int event_pipe[2], job_pipe[2], ready[2], status;
+	pid_t job = -1, shell;
+
+	if (pipe(event_pipe) || pipe(job_pipe) || pipe(ready))
+		return fail("orphan-pipe");
+	shell = fork();
+	if (shell < 0)
+		return fail("orphan-shell-fork");
+	if (!shell) {
+		close(event_pipe[0]);
+		close(job_pipe[0]);
+		if (setsid() < 0)
+			_exit(32);
+		job = fork();
+		if (job < 0)
+			_exit(33);
+		if (!job)
+			orphaned_job(ready[1], event_pipe[1]);
+		close(ready[1]);
+		if (setpgid(job, job) ||
+		    write(job_pipe[1], &job, sizeof(job)) !=
+			    (ssize_t)sizeof(job) ||
+		    read_bytes(ready[0], &ready_marker, 1) ||
+		    kill(-job, SIGSTOP) ||
+		    waitpid(job, &status, WUNTRACED) != job ||
+		    !WIFSTOPPED(status))
+			_exit(34);
+		_exit(0);
+	}
+	close(event_pipe[1]);
+	close(job_pipe[1]);
+	close(ready[0]);
+	close(ready[1]);
+	if (read_bytes(job_pipe[0], (char *)&job, sizeof(job)) ||
+	    waitpid(shell, &status, 0) != shell || !WIFEXITED(status) ||
+	    WEXITSTATUS(status) || read_events(event_pipe[0], events,
+						  sizeof(events))) {
+		if (job > 0)
+			(void)kill(-job, SIGKILL);
+		return fail("orphan-result");
+	}
+	close(event_pipe[0]);
+	close(job_pipe[0]);
+	if (!memchr(events, 'H', sizeof(events)) ||
+	    !memchr(events, 'C', sizeof(events)) ||
+	    !memchr(events, 'D', sizeof(events)))
+		return fail("orphan-signals");
+	return 0;
+}
+
 static int test_wait_current_group(void)
 {
 	int status;
@@ -329,7 +438,8 @@ int main(int argc, char **argv)
 	if (kill(-2147483647, 0) != -1 || errno != ESRCH)
 		return fail("missing-group");
 	if (test_session() || test_group_signal_and_wait() ||
-	    test_group_stop() || test_wait_current_group() ||
+	    test_group_stop() || test_orphaned_stopped_group() ||
+	    test_wait_current_group() ||
 	    test_zombie_queries() ||
 	    test_exec_restriction(argv[0]) ||
 	    test_kill_all_excludes_caller())

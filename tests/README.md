@@ -131,12 +131,16 @@ The guest selftest covers:
 - concurrent CFS nice classes, ext4, tmpfs, FAT, and four TCP bulk clients;
 - multiple TTY sleepers and repeated wake-all/requeue behavior;
 - devfs character devices and device numbers;
-- `/dev/ttyS0` metadata, `/dev/tty` error semantics, and terminal ioctls;
+- `/dev/ttyS0` metadata, controlling `/dev/tty`, foreground-group and session
+  ioctls, and background terminal access;
 - termios set/get state, canonical echo and erase, raw input, CR/NL handling,
-  blocking wakeups, and UART output larger than the transmit queue;
+  `ISIG` control characters, `NOFLSH`, blocking wakeups, and UART output
+  larger than the transmit queue;
 - dynamic BusyBox ash startup, core applets, repeated process startup, Tab
   completion, command history, cursor editing, and cancellation of a partial
-  command with Ctrl-C, plus execution of the static recovery binary;
+  command with Ctrl-C, foreground pipeline interruption, stopped and resumed
+  jobs, background terminal reads, plus execution of the static recovery
+  binary;
 - ext4 and tmpfs links, sparse files, rename, directory iteration, truncate,
   fsync, and open-unlink lifetime rules;
 - symlink metadata through `lstat`;

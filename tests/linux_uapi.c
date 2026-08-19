@@ -105,6 +105,7 @@ _Static_assert(LINUX_RWF_NOAPPEND == RWF_NOAPPEND,
 #endif
 _Static_assert(LINUX_O_NONBLOCK == O_NONBLOCK, "O_NONBLOCK value");
 _Static_assert(LINUX_O_CLOEXEC == O_CLOEXEC, "O_CLOEXEC value");
+_Static_assert(LINUX_O_NOCTTY == O_NOCTTY, "O_NOCTTY value");
 
 _Static_assert(sizeof(struct linux_stat) == sizeof(struct stat),
 	       "stat size");
@@ -170,6 +171,14 @@ _Static_assert(LINUX_TCSETS == TCSETS, "TCSETS value");
 _Static_assert(LINUX_TCSETSW == TCSETSW, "TCSETSW value");
 _Static_assert(LINUX_TCSETSF == TCSETSF, "TCSETSF value");
 _Static_assert(LINUX_TIOCGWINSZ == TIOCGWINSZ, "TIOCGWINSZ value");
+_Static_assert(LINUX_TIOCGPGRP == TIOCGPGRP, "TIOCGPGRP value");
+_Static_assert(LINUX_TIOCSPGRP == TIOCSPGRP, "TIOCSPGRP value");
+_Static_assert(LINUX_TIOCGSID == TIOCGSID, "TIOCGSID value");
+_Static_assert(LINUX_ISIG == ISIG, "ISIG value");
+_Static_assert(LINUX_NOFLSH == NOFLSH, "NOFLSH value");
+_Static_assert(LINUX_TOSTOP == TOSTOP, "TOSTOP value");
+_Static_assert(LINUX_VQUIT == VQUIT, "VQUIT index");
+_Static_assert(LINUX_VSUSP == VSUSP, "VSUSP index");
 _Static_assert(LINUX_PROT_NONE == PROT_NONE, "PROT_NONE value");
 _Static_assert(LINUX_PROT_READ == PROT_READ, "PROT_READ value");
 _Static_assert(LINUX_PROT_WRITE == PROT_WRITE, "PROT_WRITE value");

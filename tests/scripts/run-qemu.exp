@@ -15,6 +15,55 @@ proc expect_prompt {} {
 	}
 }
 
+proc test_background_ioctl {mode ready result} {
+	send -- "/bin/job-control-runtime $mode &\r"
+	expect {
+		-re $ready {}
+		-re {JOB_CONTROL_FAIL[^\r\n]*} {
+			abort_test "background terminal ioctl setup failed"
+		}
+		-re {\[PANIC\]} {
+			abort_test "kernel panic in background terminal ioctl"
+		}
+		timeout { abort_test "background terminal ioctl setup timeout" }
+		eof { abort_test "QEMU exited during background terminal ioctl" }
+	}
+	after 250
+	send -- "jobs\r"
+	expect {
+		-re "Stopped \\(tty output\\).*job-control-runtime $mode" {}
+		-re "Running.*job-control-runtime $mode" {
+			abort_test "background terminal ioctl did not stop"
+		}
+		-re {\[PANIC\]} {
+			abort_test "kernel panic after background terminal ioctl"
+		}
+		timeout { abort_test "background terminal ioctl stop timeout" }
+		eof { abort_test "QEMU exited after background terminal ioctl" }
+	}
+	expect_prompt
+	send -- "fg\r"
+	expect {
+		-re {JOB_CONTINUED} {}
+		-re {\[PANIC\]} {
+			abort_test "kernel panic resuming terminal ioctl"
+		}
+		timeout { abort_test "terminal ioctl resume timeout" }
+		eof { abort_test "QEMU exited resuming terminal ioctl" }
+	}
+	expect {
+		-re $result {}
+		-re {JOB_CONTROL_FAIL[^\r\n]*} {
+			abort_test "restarted terminal ioctl failed"
+		}
+		-re {\[PANIC\]} {
+			abort_test "kernel panic in restarted terminal ioctl"
+		}
+		timeout { abort_test "restarted terminal ioctl timeout" }
+		eof { abort_test "QEMU exited during restarted terminal ioctl" }
+	}
+	expect_prompt
+}
 foreach variable {
 	MAKE_COMMAND TEST_TOPDIR QEMU SBI_FIRMWARE ROOT_IMAGE FAT_IMAGE QEMU_LOG
 	QEMU_CPUS QEMU_MEMORY
@@ -55,6 +104,9 @@ set command [list \
 spawn -noecho {*}$command
 
 expect {
+	-re {job control turned off} {
+		abort_test "BusyBox ash disabled job control"
+	}
 	-re {\[PANIC\]} { abort_test "kernel panic before shell startup" }
 	-re {\r?\n# $} {}
 	timeout { abort_test "shell prompt timeout" }
@@ -141,12 +193,194 @@ expect {
 }
 expect_prompt
 
+send -- "/bin/job-control-runtime foreground\r"
+expect {
+	-re {JOB_FOREGROUND_READY} {}
+	-re {JOB_CONTROL_FAIL[^\r\n]*} {
+		abort_test "foreground job setup failed"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in foreground job" }
+	timeout { abort_test "foreground job timeout" }
+	eof { abort_test "QEMU exited during foreground job" }
+}
+after 100
+send -- "\003"
+expect_prompt
+send -- "echo JOB_FOREGROUND_STATUS=\$?\r"
+expect {
+	-re {\r?\nJOB_FOREGROUND_STATUS=130} {}
+	-re {\[PANIC\]} { abort_test "kernel panic after foreground Ctrl-C" }
+	timeout { abort_test "foreground Ctrl-C status timeout" }
+	eof { abort_test "QEMU exited after foreground Ctrl-C" }
+}
+expect_prompt
+
+send -- "/bin/job-control-runtime stop\r"
+expect {
+	-re {JOB_STOP_READY} {}
+	-re {JOB_CONTROL_FAIL[^\r\n]*} {
+		abort_test "stoppable job setup failed"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic before foreground stop" }
+	timeout { abort_test "stoppable job timeout" }
+	eof { abort_test "QEMU exited before foreground stop" }
+}
+after 100
+send -- "\032"
+expect {
+	-re {Stopped[^\r\n]*job-control-runtime stop} {}
+	-re {\[PANIC\]} { abort_test "kernel panic after foreground stop" }
+	timeout { abort_test "foreground stop report timeout" }
+	eof { abort_test "QEMU exited after foreground stop" }
+}
+expect_prompt
+send -- "jobs\r"
+expect {
+	-re {Stopped[^\r\n]*job-control-runtime stop} {}
+	-re {\[PANIC\]} { abort_test "kernel panic while listing stopped job" }
+	timeout { abort_test "stopped jobs listing timeout" }
+	eof { abort_test "QEMU exited while listing stopped job" }
+}
+expect_prompt
+send -- "echo JOB_STOPPED_OK\r"
+expect -re {\r?\nJOB_STOPPED_OK}
+expect_prompt
+send -- "bg\r"
+expect {
+	-re {JOB_CONTINUED} {}
+	-re {\[PANIC\]} { abort_test "kernel panic while resuming background job" }
+	timeout { abort_test "background resume timeout" }
+	eof { abort_test "QEMU exited while resuming background job" }
+}
+expect_prompt
+send -- "jobs\r"
+expect {
+	-re {Running[^\r\n]*job-control-runtime stop} {}
+	-re {\[PANIC\]} { abort_test "kernel panic while listing running job" }
+	timeout { abort_test "running jobs listing timeout" }
+	eof { abort_test "QEMU exited while listing running job" }
+}
+expect_prompt
+send -- "echo JOB_BACKGROUND_OK\r"
+expect -re {\r?\nJOB_BACKGROUND_OK}
+expect_prompt
+send -- "fg\r"
+expect {
+	-re {JOB_CONTINUED} {}
+	-re {\[PANIC\]} { abort_test "kernel panic while foregrounding job" }
+	timeout { abort_test "foreground resume timeout" }
+	eof { abort_test "QEMU exited while foregrounding job" }
+}
+after 100
+send -- "\003"
+expect_prompt
+send -- "echo JOB_FG_STATUS=\$?\r"
+expect {
+	-re {\r?\nJOB_FG_STATUS=130} {}
+	-re {\[PANIC\]} { abort_test "kernel panic after resumed job Ctrl-C" }
+	timeout { abort_test "resumed job Ctrl-C status timeout" }
+	eof { abort_test "QEMU exited after resumed job Ctrl-C" }
+}
+expect_prompt
+
+send -- "/bin/job-control-runtime read &\r"
+expect {
+	-re {JOB_BACKGROUND_READ_READY} {}
+	-re {JOB_CONTROL_FAIL[^\r\n]*} {
+		abort_test "background terminal reader setup failed"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in background reader" }
+	timeout { abort_test "background reader setup timeout" }
+	eof { abort_test "QEMU exited during background reader setup" }
+}
+after 250
+send -- "jobs\r"
+expect {
+	-re {Stopped \(tty input\)[^\r\n]*job-control-runtime read} {}
+	-re {Running[^\r\n]*job-control-runtime read} {
+		abort_test "background terminal read did not stop"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic after background read" }
+	timeout { abort_test "background reader stop timeout" }
+	eof { abort_test "QEMU exited after background read" }
+}
+expect_prompt
+send -- "fg\r"
+expect {
+	-re {JOB_CONTINUED} {}
+	-re {\[PANIC\]} { abort_test "kernel panic foregrounding reader" }
+	timeout { abort_test "foreground reader resume timeout" }
+	eof { abort_test "QEMU exited foregrounding reader" }
+}
+after 100
+send -- "job-input\r"
+expect {
+	-re {JOB_BACKGROUND_READ_OK} {}
+	-re {JOB_CONTROL_FAIL[^\r\n]*} {
+		abort_test "foregrounded terminal read failed"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in foregrounded reader" }
+	timeout { abort_test "foregrounded reader timeout" }
+	eof { abort_test "QEMU exited during foregrounded reader" }
+}
+expect_prompt
+
+test_background_ioctl ioctl-pgrp JOB_PGRP_IOCTL_READY JOB_PGRP_IOCTL_OK
+test_background_ioctl ioctl-termios \
+	JOB_TERMIOS_IOCTL_READY JOB_TERMIOS_IOCTL_OK
+
+send -- "/bin/job-control-runtime orphan-read\r"
+expect {
+	-re {JOB_ORPHAN_READ_OK} {}
+	-re {JOB_CONTROL_FAIL[^\r\n]*} {
+		abort_test "orphaned terminal read failed"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in orphaned reader" }
+	timeout { abort_test "orphaned terminal read timeout" }
+	eof { abort_test "QEMU exited during orphaned terminal read" }
+}
+expect_prompt
+
+send -- "/bin/job-control-runtime orphan-write\r"
+expect {
+	-re {JOB_ORPHAN_WRITE_OK} {}
+	-re {JOB_CONTROL_FAIL[^\r\n]*} {
+		abort_test "orphaned terminal write failed"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in orphaned writer" }
+	timeout { abort_test "orphaned terminal write timeout" }
+	eof { abort_test "QEMU exited during orphaned terminal write" }
+}
+expect_prompt
+
 send -- "printf 'PIPELINE_OK\\n' | cat\r"
 expect {
 	-re {\r?\nPIPELINE_OK} {}
 	-re {\[PANIC\]} { abort_test "kernel panic in shell pipeline" }
 	timeout { abort_test "BusyBox shell pipeline timeout" }
 	eof { abort_test "QEMU exited during shell pipeline" }
+}
+expect_prompt
+
+send -- "/bin/job-control-runtime foreground | cat\r"
+expect {
+	-re {JOB_FOREGROUND_READY} {}
+	-re {JOB_CONTROL_FAIL[^\r\n]*} {
+		abort_test "foreground pipeline setup failed"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in foreground pipeline" }
+	timeout { abort_test "foreground pipeline timeout" }
+	eof { abort_test "QEMU exited during foreground pipeline" }
+}
+after 100
+send -- "\003"
+expect_prompt
+send -- "echo JOB_PIPELINE_STATUS=\$?\r"
+expect {
+	-re {\r?\nJOB_PIPELINE_STATUS=130} {}
+	-re {\[PANIC\]} { abort_test "kernel panic after pipeline Ctrl-C" }
+	timeout { abort_test "pipeline Ctrl-C status timeout" }
+	eof { abort_test "QEMU exited after pipeline Ctrl-C" }
 }
 expect_prompt
 
@@ -739,6 +973,104 @@ expect {
 }
 expect_prompt
 
+send -- "/bin/tty-runtime signals\r"
+expect {
+	-re {\r?\nTTY_SIGNAL_FLUSH_READY} {}
+	-re {TTY_RUNTIME_FAIL=[^\r\n]*} {
+		abort_test "TTY signal setup failed"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic before TTY signal test" }
+	timeout { abort_test "TTY signal setup timeout" }
+	eof { abort_test "QEMU exited before TTY signal test" }
+}
+after 250
+send -- "discarded"
+after 50
+send -- "\003"
+expect {
+	-re {TTY_SIGNAL_FLUSH_OK} {}
+	-re {TTY_RUNTIME_FAIL=[^\r\n]*} {
+		abort_test "TTY signal flush failed"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in TTY signal flush" }
+	timeout { abort_test "TTY signal flush timeout" }
+	eof { abort_test "QEMU exited during TTY signal flush" }
+}
+expect {
+	-re {TTY_NOFLSH_READY} {}
+	-re {TTY_RUNTIME_FAIL=[^\r\n]*} {
+		abort_test "TTY NOFLSH setup failed"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic before TTY NOFLSH test" }
+	timeout { abort_test "TTY NOFLSH setup timeout" }
+	eof { abort_test "QEMU exited before TTY NOFLSH test" }
+}
+after 250
+send -- "kept"
+after 50
+send -- "\003"
+expect {
+	-re {TTY_NOFLSH_LINE_READY} {}
+	-re {TTY_RUNTIME_FAIL=[^\r\n]*} {
+		abort_test "TTY NOFLSH interrupt failed"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in TTY NOFLSH interrupt" }
+	timeout { abort_test "TTY NOFLSH interrupt timeout" }
+	eof { abort_test "QEMU exited during TTY NOFLSH interrupt" }
+}
+after 100
+send -- "\r"
+expect {
+	-re {TTY_NOFLSH_OK} {}
+	-re {TTY_RUNTIME_FAIL=[^\r\n]*} {
+		abort_test "TTY NOFLSH preservation failed"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in TTY NOFLSH test" }
+	timeout { abort_test "TTY NOFLSH preservation timeout" }
+	eof { abort_test "QEMU exited during TTY NOFLSH test" }
+}
+expect {
+	-re {TTY_QUIT_READY} {}
+	-re {TTY_RUNTIME_FAIL=[^\r\n]*} {
+		abort_test "TTY quit signal setup failed"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic before TTY quit signal" }
+	timeout { abort_test "TTY quit signal setup timeout" }
+	eof { abort_test "QEMU exited before TTY quit signal" }
+}
+after 250
+send -- "\034"
+expect {
+	-re {TTY_QUIT_OK} {}
+	-re {TTY_RUNTIME_FAIL=[^\r\n]*} {
+		abort_test "TTY quit signal failed"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in TTY quit signal" }
+	timeout { abort_test "TTY quit signal timeout" }
+	eof { abort_test "QEMU exited during TTY quit signal" }
+}
+expect {
+	-re {TTY_SUSPEND_READY} {}
+	-re {TTY_RUNTIME_FAIL=[^\r\n]*} {
+		abort_test "TTY suspend signal setup failed"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic before TTY suspend signal" }
+	timeout { abort_test "TTY suspend signal setup timeout" }
+	eof { abort_test "QEMU exited before TTY suspend signal" }
+}
+after 250
+send -- "\032"
+expect {
+	-re {TTY_SUSPEND_OK} {}
+	-re {TTY_RUNTIME_FAIL=[^\r\n]*} {
+		abort_test "TTY suspend signal failed"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in TTY suspend signal" }
+	timeout { abort_test "TTY suspend signal timeout" }
+	eof { abort_test "QEMU exited during TTY suspend signal" }
+}
+expect_prompt
+
 send -- "/bin/tty-runtime raw\r"
 expect {
 	-re {\r?\nTTY_RAW_READY} {}
@@ -805,6 +1137,17 @@ expect {
 	-re {\r?\n# $} {}
 	timeout { abort_test "sync timeout" }
 	eof { abort_test "QEMU exited during sync" }
+}
+
+send -- "exec /bin/job-control-runtime hangup\r"
+expect {
+	-re {JOB_HANGUP_OK} {}
+	-re {JOB_CONTROL_FAIL[^\r\n]*} {
+		abort_test "session leader hangup failed"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in session hangup" }
+	timeout { abort_test "session leader hangup timeout" }
+	eof { abort_test "QEMU exited during session hangup" }
 }
 
 send -- "\001x"
