@@ -305,11 +305,13 @@ static int elf_image_map(struct elf_image *image, pagedir_t pgdir,
 
 static int build_linux_stack(pagedir_t pgdir, uint64 stack_top,
 			     uint64 stack_base, char **argv, char **envp,
+			     const char *execfn,
 			     const struct linux_exec_layout *exec,
 			     uint64 *new_sp)
 {
 	uint64 argv_address[MAXARG];
 	uint64 envp_address[MAXARG];
+	uint64 execfn_address;
 	uint64 words[4 * MAXARG + 32];
 	uint8 random[16];
 	uint64 sp = stack_top;
@@ -336,6 +338,12 @@ static int build_linux_stack(pagedir_t pgdir, uint64 stack_top,
 			return -1;
 		envp_address[envc] = sp;
 	}
+	length = strlen(execfn) + 1;
+	sp -= length;
+	if (sp < stack_base ||
+	    copyout(pgdir, sp, (char *)execfn, length) < 0)
+		return -1;
+	execfn_address = sp;
 
 	if (get_random_bytes(random, sizeof(random)) < 0)
 		return -1;
@@ -372,7 +380,7 @@ static int build_linux_stack(pagedir_t pgdir, uint64 stack_top,
 	AUX(LINUX_AT_EGID, 0);
 	AUX(LINUX_AT_SECURE, 0);
 	AUX(LINUX_AT_RANDOM, length);
-	AUX(LINUX_AT_EXECFN, argc ? argv_address[0] : 0);
+	AUX(LINUX_AT_EXECFN, execfn_address);
 	AUX(LINUX_AT_NULL, 0);
 #undef AUX
 
@@ -385,7 +393,7 @@ static int build_linux_stack(pagedir_t pgdir, uint64 stack_top,
 	return argc;
 }
 
-int exec_linux(char *path, char **argv, char **envp)
+static int exec_elf(char *path, const char *execfn, char **argv, char **envp)
 {
 	struct elf_image executable = {0}, interpreter = {0};
 	struct exec_aslr_layout aslr;
@@ -396,7 +404,7 @@ int exec_linux(char *path, char **argv, char **envp)
 	process_t process = cur_proc();
 	thread_t current = cur_thread();
 	uint64 brk_start, entry, oldsz, sp, stack_base, sz = 0;
-	char *name, *path_p;
+	const char *name, *path_p;
 	int argc, error = -LINUX_ENOEXEC, stack_permissions = PTE_W;
 	uint32 stack_protection = LINUX_PROT_READ | LINUX_PROT_WRITE;
 
@@ -468,7 +476,7 @@ int exec_linux(char *path, char **argv, char **envp)
 	}
 	sp = aslr.stack_top;
 	argc = build_linux_stack(pgdir, aslr.stack_top, stack_base,
-				 argv, envp, &exec, &sp);
+				 argv, envp, execfn, &exec, &sp);
 	if (argc < 0) {
 		error = -LINUX_E2BIG;
 		goto fail;
@@ -505,7 +513,7 @@ int exec_linux(char *path, char **argv, char **envp)
 	                 __ATOMIC_RELEASE);
 	signal_process_exec(process, current);
 
-	for (name = path_p = path; *path_p; path_p++) {
+	for (name = path_p = execfn; *path_p; path_p++) {
 		if (*path_p == '/')
 			name = path_p + 1;
 	}
@@ -523,4 +531,100 @@ fail:
 	vma_set_destroy(&new_vmas);
 	process_exec_end(process);
 	return error;
+}
+
+#define EXEC_SCRIPT_BUFFER_SIZE 256
+#define EXEC_SCRIPT_MAX_DEPTH   4
+
+static int exec_script_or_elf(char *path, const char *execfn, char **argv,
+			      char **envp, int depth);
+
+static int exec_script(char *path, const char *execfn, char **argv,
+		       char **envp, int depth)
+{
+	char buffer[EXEC_SCRIPT_BUFFER_SIZE + 1];
+	char *interpreter, *optional, *separator;
+	char *script_argv[MAXARG];
+	file_t file = 0;
+	int64 length;
+	int input = 1, output = 0;
+
+	length = vfs_open_file(path, VFS_OPEN_READ, 0, &file);
+	if (length < 0)
+		return linux_error(length);
+	length = vfs_file_pread(file, 0, (uint64)buffer,
+				EXEC_SCRIPT_BUFFER_SIZE, 0);
+	vfs_file_put(file);
+	if (length < 0)
+		return linux_error(length);
+	if (length < 2 || buffer[0] != '#' || buffer[1] != '!')
+		return -LINUX_ENOEXEC;
+	buffer[length] = 0;
+
+	separator = buffer + 2;
+	while (*separator == ' ' || *separator == '\t')
+		separator++;
+	interpreter = separator;
+	while (*separator && *separator != '\n' &&
+	       *separator != ' ' && *separator != '\t')
+		separator++;
+	if (separator == interpreter)
+		return -LINUX_ENOEXEC;
+	if (!*separator && length == EXEC_SCRIPT_BUFFER_SIZE)
+		return -LINUX_ENOEXEC;
+	if (*separator && *separator != '\n') {
+		*separator++ = 0;
+		while (*separator == ' ' || *separator == '\t')
+			separator++;
+		optional = separator;
+	} else {
+		optional = 0;
+		if (*separator)
+			*separator = 0;
+	}
+
+	if (optional) {
+		char *end = optional;
+
+		while (*end && *end != '\n')
+			end++;
+		while (end > optional &&
+		       (end[-1] == ' ' || end[-1] == '\t'))
+			end--;
+		*end = 0;
+		if (!*optional)
+			optional = 0;
+	}
+	if (strlen(interpreter) >= MAXPATH)
+		return -LINUX_ENOEXEC;
+	if (depth >= EXEC_SCRIPT_MAX_DEPTH)
+		return -LINUX_ELOOP;
+
+	script_argv[output++] = interpreter;
+	if (optional)
+		script_argv[output++] = optional;
+	script_argv[output++] = path;
+	while (argv[input]) {
+		if (output >= MAXARG - 1)
+			return -LINUX_E2BIG;
+		script_argv[output++] = argv[input++];
+	}
+	script_argv[output] = 0;
+	return exec_script_or_elf(interpreter, execfn, script_argv, envp,
+				  depth + 1);
+}
+
+static int exec_script_or_elf(char *path, const char *execfn, char **argv,
+			      char **envp, int depth)
+{
+	int result = exec_elf(path, execfn, argv, envp);
+
+	if (result != -LINUX_ENOEXEC)
+		return result;
+	return exec_script(path, execfn, argv, envp, depth);
+}
+
+int exec_linux(char *path, char **argv, char **envp)
+{
+	return exec_script_or_elf(path, path, argv, envp, 0);
 }
