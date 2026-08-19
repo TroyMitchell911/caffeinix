@@ -666,6 +666,9 @@ static void process_release_resources(process_t p)
 
 	sleeplock_acquire(&p->mmap_lock);
 	vma_set_destroy(&p->vmas);
+	if (vm_mapped(p->pagetable, USER_SIGRETURN))
+		vm_unmap(p->pagetable, USER_SIGRETURN, 1, 0);
+	vm_free_user(p->pagetable);
 	sleeplock_release(&p->mmap_lock);
 	spinlock_acquire(&p->files_lock);
 	for (fd = 0; fd < NOFILE; fd++) {
