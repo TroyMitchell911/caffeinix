@@ -47,11 +47,13 @@ through its serial monitor. Finally, a test-only kernel deliberately crosses
 an unmapped kernel-stack guard and must report the overflow from its per-CPU
 emergency stack.
 
-The dynamic ELF handoff tests use minimal relocation-free ET_DYN and ET_EXEC
-interpreters. One main image starts at a high virtual address and requires
-2 MiB PT_LOAD alignment. Permission fixtures exercise an executable stack and
-a permissionless guard segment. The tests validate the kernel-to-loader
-contract only; they are not a replacement for an upstream musl runtime linker.
+The low-level dynamic ELF handoff tests retain minimal relocation-free ET_DYN
+and ET_EXEC interpreters. One main image starts at a high virtual address and
+requires 2 MiB PT_LOAD alignment. Permission fixtures exercise an executable
+stack and a permissionless guard segment. In addition, the image contains the
+unmodified musl 1.2.6 runtime linker and shared libc, dynamically linked test
+programs, shared-object fixtures, a dynamic BusyBox, and a static recovery
+BusyBox.
 
 Each boot requires one SBI BASE report and exactly one online and timer marker
 per logical CPU. A static check rejects machine-mode CSR operations, direct
@@ -80,6 +82,9 @@ The guest selftest covers:
   and large-alignment placement, fixed-address interpreter loading,
   executable stacks, permissionless load segments, transfer to the
   main-program entry, and repeated atomic rejection of a missing interpreter;
+- upstream musl relocation, `DT_NEEDED` lookup, constructors, destructors,
+  initial-exec TLS, RELRO, `dlopen`, `dlsym`, `dlclose`, `pread64`,
+  close-on-exec, and concurrent dynamic fork/exec;
 - anonymous and private file mappings, address hints, fixed replacement,
   partial protection and removal, child fault isolation, fork isolation, and
   mapping lifetime, including kernel copies honoring mapping permissions;
@@ -93,8 +98,9 @@ The guest selftest covers:
 - `/dev/ttyS0` metadata, `/dev/tty` error semantics, and terminal ioctls;
 - termios set/get state, canonical echo and erase, raw input, CR/NL handling,
   blocking wakeups, and UART output larger than the transmit queue;
-- BusyBox ash Tab completion, command history, cursor editing, and cancellation
-  of a partial command with Ctrl-C;
+- dynamic BusyBox ash startup, core applets, repeated process startup, Tab
+  completion, command history, cursor editing, and cancellation of a partial
+  command with Ctrl-C, plus execution of the static recovery binary;
 - ext4 and tmpfs links, sparse files, rename, directory iteration, truncate,
   fsync, and open-unlink lifetime rules;
 - symlink metadata through `lstat`;
@@ -105,10 +111,13 @@ The guest selftest covers:
 - BusyBox `nc` and `wget`, including a 32 KiB transfer across packet,
   socket, pbuf, and virtqueue buffer boundaries.
 
-The one-, two-, four-, and eight-hart smoke boots omit the NIC and exercise
-UDP loopback. A separate two-hart boot places an unsupported VirtIO device
-before the root disk and uses a socket-backed NIC without DHCP; it must still
-reach the shell and pass loopback.
+Every smoke boot runs a dynamically linked hello program and concurrent
+dynamic fork/exec pressure. The one-, two-, four-, and eight-hart cases cover
+the supported SMP configurations; three- and nine-hart cases cover dynamic
+CPU discovery. These boots omit the NIC and exercise UDP loopback. A separate
+two-hart boot places an unsupported VirtIO device before the root disk and
+uses a socket-backed NIC without DHCP; it must still reach the shell and pass
+loopback.
 
 After QEMU exits, the host harness recovers and checks ext4 with `e2fsck`,
 checks FAT32 with `fsck.fat`, reads persistent values from both images, and
