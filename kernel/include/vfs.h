@@ -168,7 +168,10 @@ struct vfs_inode_operations {
 	int (*getattr)(struct vfs_inode *inode, struct vfs_stat *stat);
 };
 
+#define VFS_FILE_CAN_PREAD (1U << 0)
+
 struct vfs_file_operations {
+	uint32 flags;
 	int (*open)(struct vfs_inode *inode, struct vfs_file *file);
 	void (*release)(struct vfs_file *file);
 	int64 (*read)(struct vfs_file *file, int user_destination,
@@ -254,6 +257,7 @@ struct vfs_file {
 	int ref;
 	struct vfs_path path;
 	const struct vfs_file_operations *operations;
+	uint32 capabilities;
 	uint64 position;
 	uint32 flags;
 	void *private;

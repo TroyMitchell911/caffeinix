@@ -2,12 +2,13 @@
 
 Caffeinix is a small Unix-like RISC-V operating system, written with an
 Americano close at hand. The kernel keeps its own internal design while
-exposing the Linux RISC-V userspace ABI needed by static musl programs.
+exposing the Linux RISC-V userspace ABI needed by musl programs.
 
 The current milestone boots an unmodified static BusyBox from an ext4 root
-filesystem on QEMU `virt`. The kernel mounts devfs at `/dev`, tmpfs at `/tmp`,
-can mount a second FAT16 or FAT32 disk at `/mnt/fat`, and can run IPv4 over a
-modern VirtIO network device through lwIP.
+filesystem on QEMU `virt` and can run programs through the upstream musl
+runtime linker. The kernel mounts devfs at `/dev`, tmpfs at `/tmp`, can mount
+a second FAT16 or FAT32 disk at `/mnt/fat`, and can run IPv4 over a modern
+VirtIO network device through lwIP.
 
 ## Supported target
 
@@ -15,7 +16,7 @@ modern VirtIO network device through lwIP.
 - ISA and ABI: RV64GC with LP64D
 - Machine: QEMU `virt`, one, two, four, and eight harts tested
 - Firmware: OpenSBI with SBI v0.2 or newer, TIME, HSM, and IPI for SMP
-- Userspace: static non-PIE musl ELF executables
+- Userspace: dynamically linked and static musl ELF executables
 - Root filesystem: ext4 with 1 KiB filesystem blocks
 - Optional data filesystem: FAT16 or FAT32
 - Serial console: DT-discovered NS16550A at `/dev/ttyS0` (device 4:64)
@@ -87,7 +88,7 @@ make -C "$CAFFEINIX_DIR" clean
 make -C "$CAFFEINIX_DIR" -j"$(nproc)" PAGE_POISONING=1
 ```
 
-## Build a static musl toolchain
+## Build a musl sysroot
 
 Download and unpack upstream musl 1.2.6 anywhere outside the kernel tree,
 then choose independent build and install directories:
@@ -103,18 +104,24 @@ cd "$MUSL_BUILD_DIR"
 "$MUSL_SOURCE_DIR/configure" \
   --target=riscv64-linux-musl \
   --prefix="$MUSL_SYSROOT" \
-  --disable-shared \
+  --syslibdir="$MUSL_SYSROOT/lib" \
   --enable-wrapper=gcc \
   'CFLAGS=-march=rv64gc -mabi=lp64d' \
   CROSS_COMPILE=riscv64-linux-gnu-
 
 make -j"$(nproc)"
 make install
+
+sed -i \
+  "s|$MUSL_SYSROOT/lib/ld-musl-riscv64.so.1|/lib/ld-musl-riscv64.so.1|" \
+  "$MUSL_SYSROOT/lib/musl-gcc.specs"
 ```
 
 The resulting `$MUSL_SYSROOT/bin/musl-gcc` wrapper selects musl headers,
-startup objects, and static libraries. This sysroot is a userspace build
-input; do not pass it to the kernel Makefile.
+startup objects, and shared or static libraries. `--syslibdir` keeps the
+installation out of the host's `/lib`; the `sed` command gives generated
+programs the runtime-linker path used inside Caffeinix. This sysroot is a
+userspace build input; do not pass it to the kernel Makefile.
 
 ## Build BusyBox
 
@@ -143,7 +150,7 @@ make -C "$BUSYBOX_DIR" -j"$(nproc)" \
   CC="$MUSL_SYSROOT/bin/musl-gcc"
 ```
 
-The output must be an RV64, statically linked executable:
+The output must be an RV64 statically linked executable:
 
 ```bash
 file "$BUSYBOX_DIR/busybox"
@@ -155,8 +162,9 @@ riscv64-linux-gnu-readelf -l "$BUSYBOX_DIR/busybox"
 ## Create the ext4 root filesystem
 
 Choose an empty staging directory and an output image path. BusyBox installs
-its binary and applet symlinks into the staging tree; no Caffeinix-specific
-userspace source is needed.
+its static binary and applet symlinks into the staging tree. Copy the external
+musl runtime into `/lib` for dynamically linked programs; no
+Caffeinix-specific userspace source is needed.
 
 ```bash
 export ROOTFS_STAGING=/absolute/path/to/rootfs-staging
@@ -172,10 +180,16 @@ make -C "$BUSYBOX_DIR" \
 
 install -d \
   "$ROOTFS_STAGING/dev" \
+  "$ROOTFS_STAGING/lib" \
   "$ROOTFS_STAGING/tmp" \
   "$ROOTFS_STAGING/mnt/fat" \
   "$ROOTFS_STAGING/proc" \
   "$ROOTFS_STAGING/sys"
+
+install -m 755 \
+  "$MUSL_SYSROOT/lib/libc.so" \
+  "$ROOTFS_STAGING/lib/libc.so"
+ln -s libc.so "$ROOTFS_STAGING/lib/ld-musl-riscv64.so.1"
 
 truncate -s 64M "$FS_IMG"
 EXT4_FEATURES=none,has_journal,extent,filetype,dir_index
@@ -313,8 +327,8 @@ make -C "$CAFFEINIX_DIR" qemu \
 
 Networking initializes asynchronously and never blocks the local shell when
 the NIC, link, or DHCP server is absent. The initial stack supports Ethernet,
-ARP, IPv4, ICMP, raw ICMP, DHCP, DNS, UDP, and TCP. Static musl programs use
-Linux RISC-V IPv4 socket calls through ordinary VFS descriptors. See the
+ARP, IPv4, ICMP, raw ICMP, DHCP, DNS, UDP, and TCP. musl programs use Linux
+RISC-V IPv4 socket calls through ordinary VFS descriptors. See the
 [`lwIP port`](Documentation/networking/lwip.md),
 [`VirtIO contracts`](Documentation/networking/virtio.md), and
 [`socket UAPI`](Documentation/networking/socket-uapi.md) documents.
@@ -393,7 +407,9 @@ the kernel. No separate rootfs repository or private compiler is required.
 
 - Only a Linux RISC-V UAPI subset is implemented.
 - Pipelines, job control, and real signal delivery are not ready.
-- Dynamic ELF loading, shared libraries, and userspace threads are not ready.
+- Dynamic musl executables and shared libraries use eager private mappings;
+  demand paging, shared clean pages, copy-on-write, and ASLR are not ready.
+- Userspace threads are not ready.
 - Networking is IPv4-only and omits interface configuration, AF_UNIX,
   netlink, namespaces, firewalling, and the wider Linux socket option set.
 - VirtIO currently uses modern MMIO split rings without packed rings,

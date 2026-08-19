@@ -641,7 +641,7 @@ static int64 tmpfs_read(struct vfs_file *file, int user_destination,
 			(char *)tmpfs_zero_page + offset;
 		if (either_copyout(user_destination, destination + total,
 		                   (void *)source, chunk) < 0) {
-			total = total ? total : VFS_ERR_IO;
+			total = total ? total : VFS_ERR_FAULT;
 			goto out;
 		}
 		*position += chunk;
@@ -695,6 +695,7 @@ static int tmpfs_file_sync(struct vfs_file *file)
 }
 
 static const struct vfs_file_operations tmpfs_file_operations = {
+	.flags = VFS_FILE_CAN_PREAD,
 	.read = tmpfs_read,
 	.write = tmpfs_write,
 	.fsync = tmpfs_file_sync,

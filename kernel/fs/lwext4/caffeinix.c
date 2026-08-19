@@ -878,26 +878,37 @@ static int64 ext4fs_read(struct vfs_file *file, int user_destination,
 	uint64 total = 0;
 	size_t transferred;
 	uint32 chunk;
+	int64 status;
 	int result;
 
+	ext4fs_lock_mount();
 	result = ext4_fseek(&handle->file, *position, SEEK_SET);
-	if (result != EOK)
-		return ext4fs_result(result);
+	if (result != EOK) {
+		status = ext4fs_result(result);
+		goto out;
+	}
 	while (total < count) {
 		chunk = count - total > PGSIZE ? PGSIZE : count - total;
 		result = ext4_fread(&handle->file, handle->buffer, chunk,
 		                    &transferred);
-		if (result != EOK)
-			return total ? total : ext4fs_result(result);
+		if (result != EOK) {
+			status = total ? total : ext4fs_result(result);
+			goto out;
+		}
 		if (either_copyout(user_destination, destination + total,
-		                   handle->buffer, transferred) < 0)
-			return total ? total : VFS_ERR_IO;
+		                   handle->buffer, transferred) < 0) {
+			status = total ? total : VFS_ERR_FAULT;
+			goto out;
+		}
 		total += transferred;
 		if (transferred != chunk)
 			break;
 	}
 	*position += total;
-	return total;
+	status = total;
+out:
+	ext4fs_unlock_mount();
+	return status;
 }
 
 static int64 ext4fs_write(struct vfs_file *file, int user_source,
@@ -907,27 +918,38 @@ static int64 ext4fs_write(struct vfs_file *file, int user_source,
 	uint64 total = 0;
 	size_t transferred;
 	uint32 chunk;
+	int64 status;
 	int result;
 
+	ext4fs_lock_mount();
 	result = ext4_fseek(&handle->file, *position, SEEK_SET);
-	if (result != EOK)
-		return ext4fs_result(result);
+	if (result != EOK) {
+		status = ext4fs_result(result);
+		goto out;
+	}
 	while (total < count) {
 		chunk = count - total > PGSIZE ? PGSIZE : count - total;
 		if (either_copyin(handle->buffer, user_source, source + total,
-		                  chunk) < 0)
-			return total ? total : VFS_ERR_IO;
+		                  chunk) < 0) {
+			status = total ? total : VFS_ERR_IO;
+			goto out;
+		}
 		result = ext4_fwrite(&handle->file, handle->buffer, chunk,
 		                     &transferred);
-		if (result != EOK)
-			return total ? total : ext4fs_result(result);
+		if (result != EOK) {
+			status = total ? total : ext4fs_result(result);
+			goto out;
+		}
 		total += transferred;
 		if (transferred != chunk)
 			break;
 	}
 	*position += total;
 	ext4fs_refresh(file->path.dentry->inode);
-	return total;
+	status = total;
+out:
+	ext4fs_unlock_mount();
+	return status;
 }
 
 static int ext4fs_file_sync(struct vfs_file *file)
@@ -1014,6 +1036,7 @@ static int ext4fs_readdir(struct vfs_file *file,
 }
 
 static const struct vfs_file_operations ext4fs_file_operations = {
+	.flags = VFS_FILE_CAN_PREAD,
 	.open = ext4fs_file_open,
 	.release = ext4fs_file_release,
 	.read = ext4fs_read,

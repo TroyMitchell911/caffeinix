@@ -49,6 +49,44 @@ expect {
 	eof { abort_test "QEMU exited before shell startup" }
 }
 
+send -- "/bin/dynamic-hello\r"
+expect {
+	-re {\r?\nDYNAMIC_HELLO_OK} {}
+	-re {not found|Bad system call|DYNAMIC_RUNTIME_FAIL} {
+		abort_test "dynamic musl hello failed"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in dynamic musl hello" }
+	timeout { abort_test "dynamic musl hello timeout" }
+	eof { abort_test "QEMU exited during dynamic musl hello" }
+}
+expect {
+	-re {\r?\n# $} {}
+	-re {\[PANIC\]} { abort_test "kernel panic after dynamic musl hello" }
+	timeout { abort_test "shell prompt timeout" }
+	eof { abort_test "QEMU exited after dynamic musl hello" }
+}
+
+send -- "/bin/dynamic-runtime pressure\r"
+expect {
+	-re {\r?\nDYNAMIC_EXEC_PRESSURE_OK} {}
+	-re {DYNAMIC_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "dynamic exec pressure test failed"
+	}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic in dynamic exec pressure test"
+	}
+	timeout { abort_test "dynamic exec pressure test timeout" }
+	eof { abort_test "QEMU exited during dynamic exec pressure test" }
+}
+expect {
+	-re {\r?\n# $} {}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic after dynamic exec pressure test"
+	}
+	timeout { abort_test "shell prompt timeout" }
+	eof { abort_test "QEMU exited after dynamic exec pressure test" }
+}
+
 send -- "/bin/scheduler-runtime smoke\r"
 expect {
 	-re {\r?\nSCHED_SMOKE_OK} {}

@@ -6,6 +6,7 @@
 
 #define CHAR_DEVICE_NAME_MAX 31
 #define CHAR_DEVICE_TERMINAL (1U << 0)
+#define CHAR_DEVICE_CAN_PREAD (1U << 1)
 
 struct char_device;
 

@@ -24,6 +24,7 @@ _Static_assert(LINUX_SYS_linkat == __NR_linkat, "linkat number");
 _Static_assert(LINUX_SYS_ftruncate == __NR_ftruncate,
 	       "ftruncate number");
 _Static_assert(LINUX_SYS_ppoll == __NR_ppoll, "ppoll number");
+_Static_assert(LINUX_SYS_pread64 == __NR_pread64, "pread64 number");
 _Static_assert(LINUX_SYS_socket == __NR_socket, "socket number");
 _Static_assert(LINUX_SYS_accept4 == __NR_accept4, "accept4 number");
 _Static_assert(LINUX_SYS_getdents64 == __NR_getdents64,

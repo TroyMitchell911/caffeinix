@@ -274,6 +274,16 @@ run_boot_smoke()
 		echo "OpenSBI BusyBox smoke marker is missing" >&2
 		exit 1
 	fi
+	if [ "$(awk '$0 == "DYNAMIC_HELLO_OK" { count++ }
+		END { print count + 0 }' "$clean")" -ne 1 ]; then
+		echo "dynamic musl smoke marker is missing" >&2
+		exit 1
+	fi
+	if [ "$(awk '$0 == "DYNAMIC_EXEC_PRESSURE_OK" { count++ }
+		END { print count + 0 }' "$clean")" -ne 1 ]; then
+		echo "dynamic exec pressure marker is missing" >&2
+		exit 1
+	fi
 	if [ "$(awk '$0 == "SCHED_SMOKE_OK" { count++ }
 		END { print count + 0 }' "$clean")" -ne 1 ]; then
 		echo "scheduler smoke marker is missing" >&2
@@ -349,6 +359,17 @@ check_boot_log "$clean_log" "$QEMU_CPUS" 2
 
 for marker in \
 	BUSYBOX_SHELL_OK \
+	DYNAMIC_HELLO_OK \
+	DYNAMIC_CONSTRUCTOR_OK \
+	DYNAMIC_NEEDED_OK \
+	DYNAMIC_TLS_OK \
+	DYNAMIC_DLOPEN_OK \
+	DYNAMIC_PREAD_OK \
+	DYNAMIC_RELRO_OK \
+	DYNAMIC_EXEC_OK \
+	DYNAMIC_EXEC_PRESSURE_OK \
+	DYNAMIC_RUNTIME_OK \
+	DYNAMIC_DESTRUCTOR_OK \
 	ELF_INTERP_OK \
 	ELF_MAIN_ENTRY_OK \
 	ELF_HIGH_BASE_OK \
@@ -362,6 +383,9 @@ for marker in \
 	BUSYBOX_ARROW_ABCD \
 	BUSYBOX_CTRL_C_STATUS=130 \
 	BUSYBOX_CTRL_C_OK \
+	VM_READ_FAULT_OK \
+	VM_SHARED_READ_OK \
+	VM_PREAD_OK \
 	BUSYBOX_NC_OK \
 	BUSYBOX_WGET_OK \
 	SCHED_EXEC_OK \

@@ -485,6 +485,7 @@ static int64 fatfs_read(struct vfs_file *file, int user_destination,
 	UINT transferred;
 	uint32 chunk;
 	FRESULT result;
+	int copy_error = VFS_OK;
 
 	if (*position > 0xffffffffULL)
 		return 0;
@@ -498,7 +499,7 @@ static int64 fatfs_read(struct vfs_file *file, int user_destination,
 			break;
 		if (either_copyout(user_destination, destination + total,
 		                   handle->buffer, transferred) < 0) {
-			result = FR_INT_ERR;
+			copy_error = VFS_ERR_FAULT;
 			break;
 		}
 		total += transferred;
@@ -507,7 +508,11 @@ static int64 fatfs_read(struct vfs_file *file, int user_destination,
 	}
 	*position += total;
 	sleeplock_release(&fatfs_port.lock);
-	return (result == FR_OK || total) ? total : fatfs_result(result);
+	if (total)
+		return total;
+	if (copy_error < 0)
+		return copy_error;
+	return result == FR_OK ? 0 : fatfs_result(result);
 }
 
 static int64 fatfs_write(struct vfs_file *file, int user_source,
@@ -561,6 +566,7 @@ static int fatfs_file_sync(struct vfs_file *file)
 }
 
 static const struct vfs_file_operations fatfs_file_operations = {
+	.flags = VFS_FILE_CAN_PREAD,
 	.open = fatfs_file_open,
 	.release = fatfs_file_release,
 	.read = fatfs_read,
