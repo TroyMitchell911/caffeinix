@@ -343,7 +343,7 @@ void vm_unmap_range(pagedir_t pgdir, uint64 va, uint64 size)
 		*pte = 0;
 		pfree((void *)pa);
 	}
-	sfence_vma();
+	cpu_tlb_flush_all();
 }
 
 /* Free page-table from oldsz to newsz */
