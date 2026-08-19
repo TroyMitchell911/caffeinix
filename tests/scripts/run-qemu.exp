@@ -70,6 +70,130 @@ expect {
 }
 expect_prompt
 
+send -- "/bin/dynamic-hello\r"
+expect {
+	-re {\r?\nDYNAMIC_HELLO_OK} {}
+	-re {DYNAMIC_RUNTIME_FAIL|not found|Bad system call} {
+		abort_test "dynamic musl hello failed"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in dynamic musl hello" }
+	timeout { abort_test "dynamic musl hello timeout" }
+	eof { abort_test "QEMU exited during dynamic musl hello" }
+}
+expect_prompt
+
+send -- "/bin/dynamic-runtime\r"
+foreach marker {
+	DYNAMIC_CONSTRUCTOR_OK
+	DYNAMIC_NEEDED_OK
+	DYNAMIC_TLS_OK
+	DYNAMIC_DLOPEN_OK
+	DYNAMIC_PREAD_OK
+	DYNAMIC_RELRO_OK
+	DYNAMIC_EXEC_OK
+	DYNAMIC_EXEC_PRESSURE_OK
+	DYNAMIC_RUNTIME_OK
+	DYNAMIC_DESTRUCTOR_OK
+} {
+	expect {
+		-re "\\r?\\n$marker" {}
+		-re {DYNAMIC_RUNTIME_FAIL[^\r\n]*} {
+			abort_test "dynamic musl runtime test failed"
+		}
+		-re {\[PANIC\]} {
+			abort_test "kernel panic in dynamic musl runtime test"
+		}
+		timeout { abort_test "dynamic musl runtime test timeout" }
+		eof { abort_test "QEMU exited during dynamic musl runtime test" }
+	}
+}
+expect_prompt
+
+send -- "/bin/busybox echo DYNAMIC_BUSYBOX_OK\r"
+expect {
+	-re {\r?\nDYNAMIC_BUSYBOX_OK} {}
+	-re {not found|Bad system call} {
+		abort_test "dynamic BusyBox execution failed"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in dynamic BusyBox" }
+	timeout { abort_test "dynamic BusyBox timeout" }
+	eof { abort_test "QEMU exited during dynamic BusyBox" }
+}
+expect_prompt
+
+send -- "/bin/mkdir /tmp/dyn-bb && "
+send -- "/bin/echo dynamic-data > /tmp/dyn-bb/source\r"
+expect_prompt
+
+send -- "/bin/cp /tmp/dyn-bb/source /tmp/dyn-bb/copy && "
+send -- "/bin/cat /tmp/dyn-bb/copy\r"
+expect {
+	-re {\r?\ndynamic-data} {}
+	-re {not found|Bad system call} {
+		abort_test "dynamic BusyBox applet test failed"
+	}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic in dynamic BusyBox applet test"
+	}
+	timeout { abort_test "dynamic BusyBox applet test timeout" }
+	eof { abort_test "QEMU exited during dynamic BusyBox applet test" }
+}
+expect_prompt
+
+send -- "/bin/ls /tmp/dyn-bb\r"
+expect {
+	-re {\r?\n(source[[:space:]]+copy|copy[[:space:]]+source)} {}
+	-re {not found|Bad system call} {
+		abort_test "dynamic BusyBox ls failed"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in dynamic BusyBox ls" }
+	timeout { abort_test "dynamic BusyBox ls timeout" }
+	eof { abort_test "QEMU exited during dynamic BusyBox ls" }
+}
+expect_prompt
+
+send -- "/bin/rm -r /tmp/dyn-bb && echo DYNAMIC_BUSYBOX_APPLETS_OK\r"
+expect {
+	-re {\r?\nDYNAMIC_BUSYBOX_APPLETS_OK} {}
+	-re {not found|Bad system call} {
+		abort_test "dynamic BusyBox applet chain failed"
+	}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic after dynamic BusyBox applet test"
+	}
+	timeout { abort_test "dynamic BusyBox applet marker timeout" }
+	eof { abort_test "QEMU exited after dynamic BusyBox applet test" }
+}
+expect_prompt
+
+send -- "for i in 1 2 3 4 5 6 7 8; do "
+send -- "/bin/busybox echo dynamic >/dev/null || exit; done; "
+send -- "echo DYNAMIC_BUSYBOX_PRESSURE_OK\r"
+expect {
+	-re {\r?\nDYNAMIC_BUSYBOX_PRESSURE_OK} {}
+	-re {not found|Bad system call} {
+		abort_test "dynamic BusyBox pressure test failed"
+	}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic in dynamic BusyBox pressure test"
+	}
+	timeout { abort_test "dynamic BusyBox pressure test timeout" }
+	eof { abort_test "QEMU exited during dynamic BusyBox pressure test" }
+}
+expect_prompt
+
+send -- "/bin/busybox-static echo STATIC_RECOVERY_OK\r"
+expect {
+	-re {\r?\nSTATIC_RECOVERY_OK} {}
+	-re {not found|Bad system call} {
+		abort_test "static recovery BusyBox failed"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in recovery BusyBox" }
+	timeout { abort_test "static recovery BusyBox timeout" }
+	eof { abort_test "QEMU exited during recovery BusyBox" }
+}
+expect_prompt
+
 send -- "/bin/elf-interp\r"
 expect {
 	-re {\r?\nELF_INTERP_OK} {}
@@ -271,6 +395,15 @@ expect {
 expect_prompt
 
 send -- "/bin/vm-runtime\r"
+expect {
+	-re {\r?\nVM_PREAD_OK} {}
+	-re {VM_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "pread64 runtime test reported failure"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in pread64 runtime test" }
+	timeout { abort_test "pread64 runtime test timeout" }
+	eof { abort_test "QEMU exited during pread64 runtime test" }
+}
 expect {
 	-re {\r?\nVM_RUNTIME_OK} {}
 	-re {VM_RUNTIME_FAIL[^\r\n]*} {
