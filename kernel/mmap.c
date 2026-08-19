@@ -1,4 +1,5 @@
 #include <debug.h>
+#include <anon_mapping.h>
 #include <linux_uapi.h>
 #include <mem_layout.h>
 #include <mmap.h>
@@ -306,6 +307,11 @@ enum mmap_fault_result mmap_handle_fault(process_t process, uint64 address,
 	}
 	if (area->origin == VMA_FILE_BACKED)
 		result = mmap_file_fault(area, page_address, &page, &cached);
+	else if (area->backing)
+		result = anon_mapping_get_page(
+			area->backing,
+			area->offset + page_address - area->start, &page) == 0 ?
+			MMAP_FAULT_OK : MMAP_FAULT_NOMEM;
 	else {
 		page = palloc_zero();
 		if (!page && page_cache_reclaim(1))
@@ -383,6 +389,7 @@ out:
 uint64 sys_linux_mmap(void)
 {
 	process_t process = cur_proc();
+	struct vma_backing *backing = 0;
 	struct vfs_file *file = 0;
 	struct vfs_stat stat;
 	uint64 address, end, hint, length, offset, start = 0;
@@ -403,13 +410,16 @@ uint64 sys_linux_mmap(void)
 	    flags & ~(LINUX_MAP_SHARED | LINUX_MAP_PRIVATE | LINUX_MAP_FIXED |
 		      LINUX_MAP_ANONYMOUS))
 		return -LINUX_EINVAL;
-	if ((flags & LINUX_MAP_ANONYMOUS) &&
-	    (flags & 0xf) == LINUX_MAP_SHARED)
-		return -LINUX_EINVAL;
 	if ((flags & LINUX_MAP_FIXED) && address % PGSIZE)
 		return -LINUX_EINVAL;
 	if (flags & LINUX_MAP_ANONYMOUS) {
 		origin = VMA_ANONYMOUS;
+		if ((flags & 0xf) == LINUX_MAP_SHARED) {
+			backing = anon_mapping_create();
+			if (!backing)
+				return -LINUX_ENOMEM;
+			offset = 0;
+		}
 	} else {
 		origin = VMA_FILE_BACKED;
 		if (vfs_get_file_fd(fd, &file) < 0)
@@ -449,7 +459,10 @@ uint64 sys_linux_mmap(void)
 			goto out_unlock;
 		end = start + length;
 	}
-	if (vma_insert(&process->vmas, start, end, protection, flags & 0xf,
+	if (backing ?
+	    vma_insert_backed(&process->vmas, start, end, protection,
+			      flags & 0xf, VMA_MMAP, backing, offset) < 0 :
+	    vma_insert(&process->vmas, start, end, protection, flags & 0xf,
 		       origin, VMA_MMAP, file, offset) < 0)
 		goto out_unlock;
 	result = start;
@@ -457,6 +470,8 @@ uint64 sys_linux_mmap(void)
 out_unlock:
 	sleeplock_release(&process->mmap_lock);
 out_file:
+	if (backing)
+		backing->put(backing);
 	if (file)
 		vfs_file_put(file);
 	return result;
