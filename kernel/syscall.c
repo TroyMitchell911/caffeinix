@@ -85,6 +85,7 @@ extern uint64 sys_linux_munmap(void);
 extern uint64 sys_linux_newfstatat(void);
 extern uint64 sys_linux_openat(void);
 extern uint64 sys_linux_prctl(void);
+extern uint64 sys_linux_pread64(void);
 extern uint64 sys_linux_read(void);
 extern uint64 sys_linux_readlinkat(void);
 extern uint64 sys_linux_renameat2(void);
@@ -144,6 +145,7 @@ static syscall_t linux_syscalls[LINUX_SYS_renameat2 + 1] = {
 	[LINUX_SYS_read] = sys_linux_read,
 	[LINUX_SYS_write] = sys_linux_write,
 	[LINUX_SYS_writev] = sys_linux_writev,
+	[LINUX_SYS_pread64] = sys_linux_pread64,
 	[LINUX_SYS_ppoll] = sys_linux_ppoll,
 	[LINUX_SYS_readlinkat] = sys_linux_readlinkat,
 	[LINUX_SYS_newfstatat] = sys_linux_newfstatat,

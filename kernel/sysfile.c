@@ -293,6 +293,26 @@ uint64 sys_linux_write(void)
 	return result < 0 ? linux_error(result) : result;
 }
 
+uint64 sys_linux_pread64(void)
+{
+	struct vfs_file *file;
+	uint64 address, count, offset;
+	int fd;
+	int64 result;
+
+	argint(0, &fd);
+	argaddr(1, &address);
+	argaddr(2, &count);
+	argaddr(3, &offset);
+	if ((int64)offset < 0)
+		return -LINUX_EINVAL;
+	if (vfs_get_file_fd(fd, &file) < 0)
+		return -LINUX_EBADF;
+	result = vfs_file_pread(file, 1, address, count, offset);
+	vfs_file_put(file);
+	return result < 0 ? linux_error(result) : result;
+}
+
 uint64 sys_linux_lseek(void)
 {
 	uint64 result;
