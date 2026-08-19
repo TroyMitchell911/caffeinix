@@ -491,6 +491,12 @@ done
 "$musl_cc" \
 	-static -march=rv64gc -mabi=lp64d \
 	-O2 -Wall -Wextra -Werror \
+	"$tests_dir/pipe_runtime.c" \
+	-o "$staging/bin/pipe-runtime"
+
+"$musl_cc" \
+	-static -march=rv64gc -mabi=lp64d \
+	-O2 -Wall -Wextra -Werror \
 	"$tests_dir/memory_runtime.c" \
 	-o "$staging/bin/memory-static"
 
@@ -576,6 +582,12 @@ fi
 if "${cross_compile}readelf" -l "$staging/bin/io-runtime" |
 	grep -q INTERP; then
 	echo "I/O selftest must be statically linked" >&2
+	exit 1
+fi
+
+if "${cross_compile}readelf" -l "$staging/bin/pipe-runtime" |
+	grep -q INTERP; then
+	echo "pipe selftest must be statically linked" >&2
 	exit 1
 fi
 

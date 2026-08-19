@@ -117,6 +117,36 @@ foreach marker {
 }
 expect_prompt
 
+send -- "/bin/pipe-runtime\r"
+expect {
+	-re {\r?\nPIPE_RUNTIME_OK} {}
+	-re {PIPE_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "pipe runtime test reported failure"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in pipe runtime test" }
+	timeout { abort_test "pipe runtime test timeout" }
+	eof { abort_test "QEMU exited during pipe runtime test" }
+}
+expect_prompt
+
+send -- "printf 'PIPELINE_OK\\n' | cat\r"
+expect {
+	-re {\r?\nPIPELINE_OK} {}
+	-re {\[PANIC\]} { abort_test "kernel panic in shell pipeline" }
+	timeout { abort_test "BusyBox shell pipeline timeout" }
+	eof { abort_test "QEMU exited during shell pipeline" }
+}
+expect_prompt
+
+send -- "echo SUBSTITUTION_\$(printf OK)\r"
+expect {
+	-re {\r?\nSUBSTITUTION_OK} {}
+	-re {\[PANIC\]} { abort_test "kernel panic in command substitution" }
+	timeout { abort_test "BusyBox command substitution timeout" }
+	eof { abort_test "QEMU exited during command substitution" }
+}
+expect_prompt
+
 send -- "/bin/dynamic-hello\r"
 expect {
 	-re {\r?\nDYNAMIC_HELLO_OK} {}

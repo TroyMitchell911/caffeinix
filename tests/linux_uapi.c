@@ -12,6 +12,7 @@
 #include <asm/unistd.h>
 #include <asm/ucontext.h>
 #include <asm-generic/poll.h>
+#include <asm-generic/fcntl.h>
 #include <asm-generic/siginfo.h>
 #include <asm-generic/socket.h>
 #include <asm-generic/termios.h>
@@ -27,6 +28,7 @@
 
 _Static_assert(LINUX_SYS_getcwd == __NR_getcwd, "getcwd number");
 _Static_assert(LINUX_SYS_openat == __NR_openat, "openat number");
+_Static_assert(LINUX_SYS_pipe2 == __NR_pipe2, "pipe2 number");
 _Static_assert(LINUX_SYS_symlinkat == __NR_symlinkat,
 	       "symlinkat number");
 _Static_assert(LINUX_SYS_linkat == __NR_linkat, "linkat number");
@@ -97,6 +99,8 @@ _Static_assert(LINUX_SYS_getrandom == __NR_getrandom,
 _Static_assert(LINUX_RWF_NOAPPEND == RWF_NOAPPEND,
 	       "RWF_NOAPPEND value");
 #endif
+_Static_assert(LINUX_O_NONBLOCK == O_NONBLOCK, "O_NONBLOCK value");
+_Static_assert(LINUX_O_CLOEXEC == O_CLOEXEC, "O_CLOEXEC value");
 
 _Static_assert(sizeof(struct linux_stat) == sizeof(struct stat),
 	       "stat size");
@@ -124,6 +128,7 @@ _Static_assert(offsetof(struct linux_ucontext, mcontext) ==
 _Static_assert(LINUX_SIGHUP == SIGHUP, "SIGHUP value");
 _Static_assert(LINUX_SIGKILL == SIGKILL, "SIGKILL value");
 _Static_assert(LINUX_SIGCHLD == SIGCHLD, "SIGCHLD value");
+_Static_assert(LINUX_SIGPIPE == SIGPIPE, "SIGPIPE value");
 _Static_assert(LINUX_SIGRTMIN == SIGRTMIN, "SIGRTMIN value");
 _Static_assert(LINUX_SIGRTMAX == SIGRTMAX, "SIGRTMAX value");
 _Static_assert(LINUX_SA_NOCLDSTOP == SA_NOCLDSTOP,
