@@ -234,6 +234,7 @@ struct linux_linger {
 #define LINUX_O_RDWR            00000002
 #define LINUX_O_CREAT           00000100
 #define LINUX_O_EXCL            00000200
+#define LINUX_O_NOCTTY          00000400
 #define LINUX_O_TRUNC           00001000
 #define LINUX_O_APPEND          00002000
 #define LINUX_O_NONBLOCK        00004000
@@ -331,21 +332,29 @@ struct linux_linger {
 #define LINUX_TCSETS              0x5402
 #define LINUX_TCSETSW             0x5403
 #define LINUX_TCSETSF             0x5404
+#define LINUX_TIOCGPGRP           0x540f
+#define LINUX_TIOCSPGRP           0x5410
 #define LINUX_TIOCGWINSZ          0x5413
+#define LINUX_TIOCGSID            0x5429
 
 #define LINUX_ICRNL                0x100
 #define LINUX_B38400                 0xf
 #define LINUX_CS8                   0x30
 #define LINUX_CREAD                 0x80
 #define LINUX_CLOCAL               0x800
+#define LINUX_ISIG                   0x1
 #define LINUX_ICANON                 0x2
 #define LINUX_ECHO                   0x8
 #define LINUX_ECHOE                 0x10
 #define LINUX_ECHOK                 0x20
+#define LINUX_NOFLSH                0x80
+#define LINUX_TOSTOP               0x100
 #define LINUX_VINTR                    0
+#define LINUX_VQUIT                    1
 #define LINUX_VERASE                   2
 #define LINUX_VEOF                     4
 #define LINUX_VMIN                     6
+#define LINUX_VSUSP                   10
 
 #define LINUX_SIG_BLOCK                0
 #define LINUX_SIG_UNBLOCK              1

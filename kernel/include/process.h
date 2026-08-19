@@ -20,6 +20,8 @@
 #include <wait.h>
 #include <signal.h>
 
+struct tty;
+
 typedef enum process_state{
 	PROCESS_EMBRYO,
         PROCESS_LIVE,
@@ -75,7 +77,9 @@ typedef struct process{
 	struct signal_pending *signal_pending;
 	struct process_signal_action signal_actions[64];
 	struct wait_queue signal_wait;
+	struct tty *controlling_tty;
         struct process *parent;
+	uint8 adopted_by_init;
         struct wait_queue child_wait;
 	struct wait_queue thread_reap_wait;
         int tnums;
@@ -104,6 +108,15 @@ int process_setpgid(int pid, int pgid);
 int process_getpgid(int pid);
 int process_getsid(int pid);
 int process_setsid(void);
+struct tty *process_controlling_tty(void);
+int process_tty_open(struct tty *tty, int no_ctty);
+int process_tty_busy(struct tty *tty);
+int process_tty_get_foreground(struct tty *tty, int *pgid);
+int process_tty_set_foreground(struct tty *tty, int pgid);
+int process_tty_get_session(struct tty *tty, int *sid);
+int process_tty_check_read(struct tty *tty);
+int process_tty_check_write(struct tty *tty, int force);
+int process_tty_signal_foreground(struct tty *tty, int signal);
 int process_set_nice(int pid, int nice);
 int process_get_nice(int pid, int *nice);
 

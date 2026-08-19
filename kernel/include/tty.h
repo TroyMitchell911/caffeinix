@@ -28,6 +28,9 @@ struct tty {
 	uint64 commit_position;
 	uint64 edit_position;
 	int eof_pending;
+	/* Process job-control state is protected by the process table lock. */
+	int session_id;
+	int foreground_pgid;
 	struct linux_termios termios;
 	struct linux_winsize winsize;
 	const struct tty_operations *operations;

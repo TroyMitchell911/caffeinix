@@ -22,6 +22,7 @@
 #include <linux_uapi.h>
 #include <futex.h>
 #include <mmap.h>
+#include <tty.h>
 
 #define PROCESS_CHILD_EVENT_NONE       0
 #define PROCESS_CHILD_EVENT_STOPPED    1
@@ -40,6 +41,10 @@ static process_t first;
 
 static void process_notify_parent_locked(process_t child, int code,
 					 int status);
+static int process_signal_group_locked(
+	int pgid, int signal, const struct signal_info *information);
+static int process_group_orphaned_locked(int pgid, int sid);
+static int process_group_stopped_locked(int pgid, int sid);
 
 static int process_parent_auto_reaps_locked(process_t child)
 {
@@ -119,24 +124,42 @@ static void mount_fat_device(struct block_device *root)
 
 static void reparent(process_t p)
 {
-        process_t pp;
-        list_t l;
+	process_t child;
+	list_t entry;
 
-        for(l = proc.next; l != &proc; l = l->next) {
-                pp = list_entry(l, struct process, all_tag);
-                if(!pp)
-                        continue;
-                if(pp != p) {
-                        spinlock_acquire(&pp->lock);
-                        if(pp->parent == p) {
-                                pp->parent = first;
-                                spinlock_release(&pp->lock);
-                                wait_queue_wake_all(&first->child_wait);
-                                continue;
-                        }  
-                        spinlock_release(&pp->lock);
-                }
-        }
+	for (entry = proc.next; entry != &proc; entry = entry->next) {
+		struct signal_info information = {
+			.signal = LINUX_SIGHUP,
+			.code = LINUX_SI_KERNEL,
+		};
+		int orphaned, pgid, reparented = 0, sid;
+
+		child = list_entry(entry, struct process, all_tag);
+		if (!child || child == p || child->parent != p)
+			continue;
+		pgid = child->pgid;
+		sid = child->sid;
+		orphaned = process_group_orphaned_locked(pgid, sid);
+		spinlock_acquire(&child->lock);
+		if (child->parent == p) {
+			child->parent = first;
+			child->adopted_by_init = 1;
+			reparented = 1;
+		}
+		spinlock_release(&child->lock);
+		if (!reparented)
+			continue;
+		wait_queue_wake_all(&first->child_wait);
+		if (orphaned ||
+		    !process_group_orphaned_locked(pgid, sid) ||
+		    !process_group_stopped_locked(pgid, sid))
+			continue;
+		(void)process_signal_group_locked(pgid, LINUX_SIGHUP,
+					  &information);
+		information.signal = LINUX_SIGCONT;
+		(void)process_signal_group_locked(pgid, LINUX_SIGCONT,
+					  &information);
+	}
 }
 
 pagedir_t process_pagedir(process_t p, thread_t thread)
@@ -480,8 +503,10 @@ int process_fork(uint64 child_stack)
 	spinlock_acquire(&wait_lock);
 	spinlock_acquire(&newp->lock);
 	newp->parent = oldp;
+	newp->adopted_by_init = 0;
 	newp->pgid = oldp->pgid;
 	newp->sid = oldp->sid;
+	newp->controlling_tty = oldp->controlling_tty;
 	newp->did_exec = 0;
 	newp->state = PROCESS_LIVE;
 	spinlock_release(&newp->lock);
@@ -743,6 +768,32 @@ void process_thread_exit(int cause, int group)
 
 	process_release_resources(p);
 	spinlock_acquire(&wait_lock);
+	if (p->sid == p->pid && p->controlling_tty) {
+		process_t member;
+		list_t entry;
+		struct tty *tty = p->controlling_tty;
+		struct signal_info information = {
+			.signal = LINUX_SIGHUP,
+			.code = LINUX_SI_KERNEL,
+		};
+		int foreground_pgid = tty->foreground_pgid;
+
+		if (foreground_pgid) {
+			(void)process_signal_group_locked(
+				foreground_pgid, LINUX_SIGHUP, &information);
+			information.signal = LINUX_SIGCONT;
+			(void)process_signal_group_locked(
+				foreground_pgid, LINUX_SIGCONT, &information);
+		}
+		tty->session_id = 0;
+		tty->foreground_pgid = 0;
+		for (entry = proc.next; entry != &proc; entry = entry->next) {
+			member = list_entry(entry, struct process, all_tag);
+			if (member->sid == p->sid &&
+			    member->controlling_tty == tty)
+				member->controlling_tty = 0;
+		}
+	}
 	reparent(p);
 	auto_reap = process_parent_auto_reaps_locked(p);
 	spinlock_acquire(&p->lock);
@@ -1028,8 +1079,227 @@ int process_setsid(void)
 	} else {
 		caller->sid = caller->pid;
 		caller->pgid = caller->pid;
+		caller->controlling_tty = 0;
 		result = caller->sid;
 	}
+	spinlock_release(&wait_lock);
+	return result;
+}
+
+struct tty *process_controlling_tty(void)
+{
+	struct tty *tty;
+
+	spinlock_acquire(&wait_lock);
+	tty = cur_proc()->controlling_tty;
+	spinlock_release(&wait_lock);
+	return tty;
+}
+
+int process_tty_open(struct tty *tty, int no_ctty)
+{
+	process_t caller = cur_proc();
+	process_t member;
+	list_t entry;
+
+	if (!tty)
+		return VFS_ERR_NODEV;
+	spinlock_acquire(&wait_lock);
+	if (!no_ctty && caller->sid == caller->pid &&
+	    !caller->controlling_tty && !tty->session_id) {
+		tty->session_id = caller->sid;
+		tty->foreground_pgid = caller->pgid;
+		for (entry = proc.next; entry != &proc; entry = entry->next) {
+			member = list_entry(entry, struct process, all_tag);
+			if (member->sid == caller->sid)
+				member->controlling_tty = tty;
+		}
+	} else if (tty->session_id == caller->sid &&
+		   !caller->controlling_tty) {
+		caller->controlling_tty = tty;
+	}
+	spinlock_release(&wait_lock);
+	return VFS_OK;
+}
+
+int process_tty_busy(struct tty *tty)
+{
+	int busy;
+
+	spinlock_acquire(&wait_lock);
+	busy = tty && tty->session_id;
+	spinlock_release(&wait_lock);
+	return busy;
+}
+
+static int process_tty_owned_locked(process_t process, struct tty *tty)
+{
+	return tty && process->controlling_tty == tty && tty->session_id &&
+	       tty->session_id == process->sid;
+}
+
+static int process_signal_suppressed_locked(process_t process, int signal)
+{
+	thread_t thread = cur_thread();
+	uint64 bit = 1ULL << (signal - 1);
+	int suppressed;
+
+	spinlock_acquire(&process->lock);
+	suppressed = (thread->signal_mask & bit) ||
+		process->signal_actions[signal - 1].handler == LINUX_SIG_IGN;
+	spinlock_release(&process->lock);
+	return suppressed;
+}
+
+static int process_group_orphaned_locked(int pgid, int sid)
+{
+	process_t member;
+	list_t entry;
+
+	if (!spinlock_holding(&wait_lock))
+		PANIC("orphan group check unlocked");
+	for (entry = proc.next; entry != &proc; entry = entry->next) {
+		member = list_entry(entry, struct process, all_tag);
+		if (member->state == PROCESS_EMBRYO || member->pgid != pgid ||
+		    member->sid != sid || !member->parent ||
+		    (member->parent == first && member->adopted_by_init))
+			continue;
+		if (member->parent->sid == sid && member->parent->pgid != pgid)
+			return 0;
+	}
+	return 1;
+}
+
+static int process_group_stopped_locked(int pgid, int sid)
+{
+	process_t member;
+	list_t entry;
+	int stopped;
+
+	if (!spinlock_holding(&wait_lock))
+		PANIC("stopped group check unlocked");
+	for (entry = proc.next; entry != &proc; entry = entry->next) {
+		member = list_entry(entry, struct process, all_tag);
+		if (member->state != PROCESS_LIVE || member->pgid != pgid ||
+		    member->sid != sid)
+			continue;
+		spinlock_acquire(&member->lock);
+		stopped = member->stopped;
+		spinlock_release(&member->lock);
+		if (stopped)
+			return 1;
+	}
+	return 0;
+}
+
+static int process_tty_background_signal_locked(struct tty *tty,
+						 int signal, int blocked_error)
+{
+	process_t caller = cur_proc();
+	struct signal_info information = {
+		.signal = signal,
+		.code = LINUX_SI_KERNEL,
+	};
+
+	if (!process_tty_owned_locked(caller, tty) ||
+	    caller->pgid == tty->foreground_pgid)
+		return VFS_OK;
+	if (process_group_orphaned_locked(caller->pgid, caller->sid))
+		return blocked_error;
+	if (process_signal_suppressed_locked(caller, signal))
+		return blocked_error;
+	(void)process_signal_group_locked(caller->pgid, signal,
+	                                  &information);
+	return VFS_ERR_INTR;
+}
+
+int process_tty_get_foreground(struct tty *tty, int *pgid)
+{
+	process_t caller = cur_proc();
+	int result = VFS_OK;
+
+	spinlock_acquire(&wait_lock);
+	if (!process_tty_owned_locked(caller, tty))
+		result = VFS_ERR_NOTTY;
+	else
+		*pgid = tty->foreground_pgid;
+	spinlock_release(&wait_lock);
+	return result;
+}
+
+int process_tty_set_foreground(struct tty *tty, int pgid)
+{
+	process_t caller = cur_proc();
+	int result = VFS_OK;
+
+	spinlock_acquire(&wait_lock);
+	if (!process_tty_owned_locked(caller, tty)) {
+		result = VFS_ERR_NOTTY;
+		goto out;
+	}
+	if (pgid <= 0 || !process_group_exists_locked(pgid, caller->sid)) {
+		result = VFS_ERR_PERM;
+		goto out;
+	}
+	result = process_tty_background_signal_locked(
+		tty, LINUX_SIGTTOU, VFS_OK);
+	if (result == VFS_OK)
+		tty->foreground_pgid = pgid;
+out:
+	spinlock_release(&wait_lock);
+	return result;
+}
+
+int process_tty_get_session(struct tty *tty, int *sid)
+{
+	process_t caller = cur_proc();
+	int result = VFS_OK;
+
+	spinlock_acquire(&wait_lock);
+	if (!process_tty_owned_locked(caller, tty))
+		result = VFS_ERR_NOTTY;
+	else
+		*sid = tty->session_id;
+	spinlock_release(&wait_lock);
+	return result;
+}
+
+int process_tty_check_read(struct tty *tty)
+{
+	int result;
+
+	spinlock_acquire(&wait_lock);
+	result = process_tty_background_signal_locked(
+		tty, LINUX_SIGTTIN, VFS_ERR_IO);
+	spinlock_release(&wait_lock);
+	return result;
+}
+
+int process_tty_check_write(struct tty *tty, int force)
+{
+	int result;
+
+	if (!force)
+		return VFS_OK;
+	spinlock_acquire(&wait_lock);
+	result = process_tty_background_signal_locked(
+		tty, LINUX_SIGTTOU, VFS_ERR_IO);
+	spinlock_release(&wait_lock);
+	return result;
+}
+
+int process_tty_signal_foreground(struct tty *tty, int signal)
+{
+	struct signal_info information = {
+		.signal = signal,
+		.code = LINUX_SI_KERNEL,
+	};
+	int result = 0;
+
+	spinlock_acquire(&wait_lock);
+	if (tty && tty->session_id && tty->foreground_pgid)
+		result = process_signal_group_locked(
+			tty->foreground_pgid, signal, &information);
 	spinlock_release(&wait_lock);
 	return result;
 }
@@ -1073,6 +1343,42 @@ static void process_continue_event_locked(process_t process, int resumed)
 	                             LINUX_SIGCONT);
 }
 
+static int process_signal_group_locked(
+	int pgid, int signal, const struct signal_info *information)
+{
+	process_t process;
+	list_t entry;
+	int delivered = 0, full = 0;
+
+	if (!spinlock_holding(&wait_lock))
+		PANIC("process group signal unlocked");
+	for (entry = proc.next; entry != &proc; entry = entry->next) {
+		int result, resumed = 0;
+
+		process = list_entry(entry, struct process, all_tag);
+		if (process->state != PROCESS_LIVE || process->pgid != pgid)
+			continue;
+		spinlock_acquire(&process->lock);
+		if (!signal)
+			result = 0;
+		else
+			result = resumed = signal_queue_process_locked(
+				process, signal, information);
+		spinlock_release(&process->lock);
+		if (result == SIGNAL_QUEUE_FULL) {
+			full = 1;
+			continue;
+		}
+		if (result < 0)
+			continue;
+		delivered = 1;
+		process_continue_event_locked(process, resumed);
+	}
+	if (delivered)
+		return 0;
+	return full ? SIGNAL_QUEUE_FULL : -1;
+}
+
 int signal_send_process(int pid, int signal,
 			const struct signal_info *information)
 {
@@ -1103,13 +1409,21 @@ int signal_send_processes(int selector, int signal,
 	process_t process;
 	list_t entry;
 	int delivered = 0, full = 0;
-	int64 group = selector < -1 ? -(int64)selector : 0;
+	int result;
 
 	if (selector > 0)
 		return signal_send_process(selector, signal, information);
 	spinlock_acquire(&wait_lock);
+	if (selector < -1) {
+		int64 group = -(int64)selector;
+
+		result = group <= 0x7fffffff ?
+			process_signal_group_locked(group, signal, information) : -1;
+		spinlock_release(&wait_lock);
+		return result;
+	}
 	for (entry = proc.next; entry != &proc; entry = entry->next) {
-		int result, resumed = 0;
+		int resumed = 0;
 
 		process = list_entry(entry, struct process, all_tag);
 		if (process->state != PROCESS_LIVE)
@@ -1117,8 +1431,6 @@ int signal_send_processes(int selector, int signal,
 		if (!selector && process->pgid != caller->pgid)
 			continue;
 		if (selector == -1 && (process == first || process == caller))
-			continue;
-		if (selector < -1 && (int64)process->pgid != group)
 			continue;
 		spinlock_acquire(&process->lock);
 		if (!signal)

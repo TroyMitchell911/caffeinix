@@ -16,6 +16,7 @@
 #define VFS_OPEN_DIRECTORY  (1U << 5)
 #define VFS_OPEN_APPEND     (1U << 6)
 #define VFS_OPEN_NONBLOCK   (1U << 7)
+#define VFS_OPEN_NOCTTY     (1U << 8)
 
 #define VFS_WRITE_NOAPPEND  (1U << 0)
 
@@ -271,6 +272,7 @@ struct vfs_file {
 	uint64 position;
 	uint32 flags;
 	void *private;
+	void *device_private;
 };
 
 void vfs_init(void);

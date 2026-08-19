@@ -65,6 +65,8 @@ static int linux_open_flags(int linux_flags, uint32 *vfs_flags)
 		flags |= VFS_OPEN_CREATE;
 	if (linux_flags & LINUX_O_EXCL)
 		flags |= VFS_OPEN_EXCLUSIVE;
+	if (linux_flags & LINUX_O_NOCTTY)
+		flags |= VFS_OPEN_NOCTTY;
 	if (linux_flags & LINUX_O_TRUNC)
 		flags |= VFS_OPEN_TRUNCATE;
 	if (linux_flags & LINUX_O_APPEND)
@@ -685,6 +687,8 @@ uint64 sys_linux_ioctl(void)
 	argint(1, &request);
 	argaddr(2, &address);
 	result = vfs_ioctl(fd, request, address);
+	if (result == VFS_ERR_INTR)
+		return -SIGNAL_RESTART_SYS;
 	return result < 0 ? linux_error(result) : result;
 }
 
