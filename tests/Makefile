@@ -96,8 +96,14 @@ printk:
 qemu-args:
 	$(CURDIR)/scripts/check-qemu-args.sh
 
+.PHONY: user-trapframe
+user-trapframe:
+	$(MAKE) -C $(TOPDIR) -j$(JOBS)
+	$(CURDIR)/scripts/check-user-trapframe.sh
+
 .PHONY: qemu
-qemu: printk memrange buddy sv39 rbtree vma elf virtqueue qemu-args
+qemu: printk memrange buddy sv39 rbtree vma elf virtqueue qemu-args \
+	user-trapframe
 	TEST_OUTPUT="$(TEST_OUTPUT)" JOBS="$(JOBS)" \
 		$(CURDIR)/scripts/run-qemu.sh
 
