@@ -70,6 +70,18 @@ expect {
 }
 expect_prompt
 
+send -- "/bin/exec-runtime\r"
+expect {
+	-re {\r?\nEXEC_ERRNO_OK} {}
+	-re {EXEC_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "exec errno test reported failure"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in exec errno test" }
+	timeout { abort_test "exec errno test timeout" }
+	eof { abort_test "QEMU exited during exec errno test" }
+}
+expect_prompt
+
 send -- "/bin/dynamic-hello\r"
 expect {
 	-re {\r?\nDYNAMIC_HELLO_OK} {}
