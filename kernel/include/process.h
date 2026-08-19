@@ -74,6 +74,8 @@ typedef struct process{
 	int child_event_signal;
 	uint8 auto_reap;
 	uint8 membarrier_private_expedited;
+	uint64 real_timer_deadline;
+	uint64 real_timer_interval;
 	struct signal_pending *signal_pending;
 	struct process_signal_action signal_actions[64];
 	struct wait_queue signal_wait;
@@ -121,6 +123,7 @@ int process_tty_check_write(struct tty *tty, int force);
 int process_tty_signal_foreground(struct tty *tty, int signal);
 int process_set_nice(int pid, int nice);
 int process_get_nice(int pid, int *nice);
+void process_expire_timers(uint64 now);
 
 int either_copyout(int user_dst, uint64 dst, void* src, uint64 len);
 int either_copyin(void *dst, int user_src, uint64 src, uint64 len);

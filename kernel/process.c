@@ -451,6 +451,50 @@ int either_copyin(void *dst, int user_src, uint64 src, uint64 len)
         }
 }
 
+void process_expire_timers(uint64 now)
+{
+	struct signal_info information = {
+		.signal = LINUX_SIGALRM,
+		.code = LINUX_SI_KERNEL,
+	};
+	process_t process;
+	list_t entry;
+
+	spinlock_acquire(&wait_lock);
+	for (entry = proc.next; entry != &proc; entry = entry->next) {
+		uint64 interval, missed, next;
+
+		process = list_entry(entry, struct process, all_tag);
+		spinlock_acquire(&process->lock);
+		if (process->state != PROCESS_LIVE ||
+		    !process->real_timer_deadline ||
+		    process->real_timer_deadline > now) {
+			spinlock_release(&process->lock);
+			continue;
+		}
+		interval = process->real_timer_interval;
+		if (!interval) {
+			process->real_timer_deadline = 0;
+		} else {
+			missed = (now - process->real_timer_deadline) /
+				 interval + 1;
+			if (missed > (~(uint64)0 -
+			    process->real_timer_deadline) / interval) {
+				process->real_timer_deadline = 0;
+				process->real_timer_interval = 0;
+			} else {
+				next = process->real_timer_deadline +
+				       missed * interval;
+				process->real_timer_deadline = next;
+			}
+		}
+		(void)signal_queue_process_locked(process, LINUX_SIGALRM,
+		                                  &information);
+		spinlock_release(&process->lock);
+	}
+	spinlock_release(&wait_lock);
+}
+
 int process_fork(uint64 child_stack)
 {
         int pid, i;

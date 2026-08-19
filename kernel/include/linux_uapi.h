@@ -45,6 +45,8 @@
 #define LINUX_SYS_set_robust_list    99
 #define LINUX_SYS_get_robust_list   100
 #define LINUX_SYS_nanosleep         101
+#define LINUX_SYS_getitimer         102
+#define LINUX_SYS_setitimer         103
 #define LINUX_SYS_clock_gettime     113
 #define LINUX_SYS_clock_getres      114
 #define LINUX_SYS_clock_nanosleep   115
@@ -192,6 +194,11 @@ struct linux_timeval {
 struct linux_timezone {
 	int32 minutes_west;
 	int32 dst_time;
+};
+
+struct linux_itimerval {
+	struct linux_timeval interval;
+	struct linux_timeval value;
 };
 
 struct linux_pollfd {
@@ -474,6 +481,7 @@ struct linux_linger {
 #define LINUX_CLOCK_MONOTONIC            1
 #define LINUX_CLOCK_BOOTTIME             7
 #define LINUX_TIMER_ABSTIME            0x1
+#define LINUX_ITIMER_REAL                0
 
 #define LINUX_PRIO_PROCESS               0
 

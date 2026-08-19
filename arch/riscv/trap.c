@@ -58,6 +58,7 @@ static int dev_intr(uint64 scause)
 		timer_interrupt();
 		wait_queue_expire(time_r());
                 if(cpuid() == 0) {
+			process_expire_timers(time_r());
                         tick_intr();
 		}
                 return 2;

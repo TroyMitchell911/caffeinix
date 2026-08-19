@@ -25,6 +25,45 @@ static int linux_timespec_to_ns(const struct linux_timespec *time,
 	return 0;
 }
 
+static int linux_timeval_to_ticks(const struct linux_timeval *time,
+				  uint64 *ticks)
+{
+	uint64 nanoseconds;
+
+	if (time->seconds < 0 || time->microseconds < 0 ||
+	    time->microseconds >= 1000000)
+		return -LINUX_EINVAL;
+	if ((uint64)time->seconds >
+	    (~(uint64)0 - (uint64)time->microseconds * 1000) /
+	    NSEC_PER_SEC)
+		return -LINUX_EINVAL;
+	nanoseconds = (uint64)time->seconds * NSEC_PER_SEC +
+		      (uint64)time->microseconds * 1000;
+	*ticks = ktime_ns_to_ticks(nanoseconds);
+	return 0;
+}
+
+static void linux_ticks_to_timeval(uint64 ticks,
+				   struct linux_timeval *time)
+{
+	uint64 nanoseconds = ktime_ticks_to_ns(ticks, timer_frequency());
+
+	time->seconds = nanoseconds / NSEC_PER_SEC;
+	time->microseconds = nanoseconds % NSEC_PER_SEC / 1000;
+}
+
+static void linux_getitimer_locked(process_t process,
+				   struct linux_itimerval *timer,
+				   uint64 now)
+{
+	uint64 remaining = process->real_timer_deadline > now ?
+		process->real_timer_deadline - now : 0;
+
+	linux_ticks_to_timeval(process->real_timer_interval,
+			       &timer->interval);
+	linux_ticks_to_timeval(remaining, &timer->value);
+}
+
 static int linux_clock_now(int clock, uint64 *nanoseconds)
 {
 	switch (clock) {
@@ -131,6 +170,65 @@ uint64 sys_linux_nanosleep(void)
 	if (deadline < now)
 		deadline = ~(uint64)0;
 	return linux_sleep_until(deadline, remaining_address, 1);
+}
+
+uint64 sys_linux_getitimer(void)
+{
+	struct linux_itimerval timer;
+	process_t process = cur_proc();
+	uint64 address;
+	int which;
+
+	argint(0, &which);
+	argaddr(1, &address);
+	if (which != LINUX_ITIMER_REAL)
+		return -LINUX_EINVAL;
+	spinlock_acquire(&process->lock);
+	linux_getitimer_locked(process, &timer, ktime_get_ticks());
+	spinlock_release(&process->lock);
+	if (copyout(process->pagetable, address, (char *)&timer,
+	            sizeof(timer)) < 0)
+		return -LINUX_EFAULT;
+	return 0;
+}
+
+uint64 sys_linux_setitimer(void)
+{
+	struct linux_itimerval requested = { 0 }, previous;
+	process_t process = cur_proc();
+	uint64 requested_address, previous_address;
+	uint64 interval, value, now, deadline;
+	int result, which;
+
+	argint(0, &which);
+	argaddr(1, &requested_address);
+	argaddr(2, &previous_address);
+	if (which != LINUX_ITIMER_REAL)
+		return -LINUX_EINVAL;
+	if (requested_address &&
+	    copyin(process->pagetable, (char *)&requested,
+	           requested_address, sizeof(requested)) < 0)
+		return -LINUX_EFAULT;
+	result = linux_timeval_to_ticks(&requested.interval, &interval);
+	if (result < 0)
+		return result;
+	result = linux_timeval_to_ticks(&requested.value, &value);
+	if (result < 0)
+		return result;
+	now = ktime_get_ticks();
+	deadline = now + value;
+	if (value && deadline < now)
+		deadline = ~(uint64)0;
+	spinlock_acquire(&process->lock);
+	linux_getitimer_locked(process, &previous, now);
+	process->real_timer_interval = interval;
+	process->real_timer_deadline = value ? deadline : 0;
+	spinlock_release(&process->lock);
+	if (previous_address &&
+	    copyout(process->pagetable, previous_address, (char *)&previous,
+	            sizeof(previous)) < 0)
+		return -LINUX_EFAULT;
+	return 0;
 }
 
 uint64 sys_linux_clock_nanosleep(void)

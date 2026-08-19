@@ -259,6 +259,8 @@ extern uint64 sys_linux_clock_gettime(void);
 extern uint64 sys_linux_clock_getres(void);
 extern uint64 sys_linux_clock_nanosleep(void);
 extern uint64 sys_linux_nanosleep(void);
+extern uint64 sys_linux_getitimer(void);
+extern uint64 sys_linux_setitimer(void);
 extern uint64 sys_linux_gettimeofday(void);
 extern uint64 sys_linux_kill(void);
 extern uint64 sys_linux_tkill(void);
@@ -348,6 +350,8 @@ static syscall_t linux_syscalls[LINUX_SYS_pwritev2 + 1] = {
 	[LINUX_SYS_set_robust_list] = sys_linux_set_robust_list,
 	[LINUX_SYS_get_robust_list] = sys_linux_get_robust_list,
 	[LINUX_SYS_nanosleep] = sys_linux_nanosleep,
+	[LINUX_SYS_getitimer] = sys_linux_getitimer,
+	[LINUX_SYS_setitimer] = sys_linux_setitimer,
 	[LINUX_SYS_set_tid_address] = sys_linux_set_tid_address,
 	[LINUX_SYS_clock_gettime] = sys_linux_clock_gettime,
 	[LINUX_SYS_clock_getres] = sys_linux_clock_getres,
