@@ -1,0 +1,104 @@
+#!/usr/bin/expect -f
+
+proc abort_test {message} {
+	puts stderr "kernel state dump test failed: $message"
+	catch {send -- "\001x"}
+	set saved_timeout $::timeout
+	set ::timeout 5
+	catch {expect eof}
+	set ::timeout $saved_timeout
+	catch {close}
+	exit 1
+}
+
+foreach variable {
+	MAKE_COMMAND TEST_TOPDIR QEMU SBI_FIRMWARE ROOT_IMAGE FAT_IMAGE QEMU_LOG
+} {
+	if {![info exists env($variable)] || $env($variable) eq ""} {
+		puts stderr "missing environment variable: $variable"
+		exit 1
+	}
+}
+
+set timeout 30
+log_file -noappend $env(QEMU_LOG)
+set command [list \
+	$env(MAKE_COMMAND) \
+	--silent \
+	--no-print-directory \
+	-C $env(TEST_TOPDIR) \
+	QEMU=$env(QEMU) \
+	SBI_FIRMWARE=$env(SBI_FIRMWARE) \
+	FS_IMG=$env(ROOT_IMAGE) \
+	FAT_IMG=$env(FAT_IMAGE) \
+	CPUS=3 \
+	MEMORY=96M \
+	ROOT_BUS=virtio-mmio-bus.0 \
+	FAT_BUS=virtio-mmio-bus.1 \
+	NET_BACKEND= \
+	NET_OPTIONS= \
+	QEMU_SNAPSHOT=1 \
+	QEMU_EXTRA_OPTS= \
+	QEMU_PREBUILT=1 \
+	qemu]
+
+spawn -noecho {*}$command
+expect {
+	-re {\[PANIC\]} { abort_test "kernel panic before shell startup" }
+	-re {\r?\n# $} {}
+	timeout { abort_test "shell prompt timeout" }
+	eof { abort_test "QEMU exited before shell startup" }
+}
+
+send -- "\001b"
+expect {
+	-re {DEBUG_STATE_BEGIN cpu=[0-9]+ tp=0x[0-9a-f]+} {}
+	timeout { abort_test "state dump start timeout" }
+	eof { abort_test "QEMU exited before state dump" }
+}
+expect {
+	-re {cpu=0 hart=0x[0-9a-f]+ current=0x[0-9a-f]+ tid=-?[0-9]+} {}
+	timeout { abort_test "CPU state timeout" }
+	eof { abort_test "QEMU exited during CPU state" }
+}
+expect {
+	-re {thread=[0-9]+ tid=[0-9]+ name=.* wait=0x[0-9a-f]+ timeout=[01]} {}
+	timeout { abort_test "thread state timeout" }
+	eof { abort_test "QEMU exited during thread state" }
+}
+expect {
+	-re {ext4 locked=[01] owner=0x[0-9a-f]+ owner_tid=-?[0-9]+} {}
+	timeout { abort_test "ext4 state timeout" }
+	eof { abort_test "QEMU exited during ext4 state" }
+}
+expect {
+	-re {virtio-blk[0-9]+ avail=[0-9]+ .* used=[0-9]+ .* size=[0-9]+} {}
+	timeout { abort_test "virtio-blk state timeout" }
+	eof { abort_test "QEMU exited during virtio-blk state" }
+}
+expect {
+	-re {virtio-blk[0-9]+ avail=[0-9]+ .* used=[0-9]+ .* size=[0-9]+} {}
+	timeout { abort_test "second virtio-blk state timeout" }
+	eof { abort_test "QEMU exited during virtio-blk state" }
+}
+expect {
+	-re {DEBUG_STATE_END} {}
+	timeout { abort_test "state dump end timeout" }
+	eof { abort_test "QEMU exited before state dump completed" }
+}
+
+send -- "echo DEBUG_STATE_RETURN_OK\r"
+expect {
+	-re {\r?\nDEBUG_STATE_RETURN_OK} {}
+	-re {\[PANIC\]} { abort_test "kernel panic after state dump" }
+	timeout { abort_test "shell did not resume after state dump" }
+	eof { abort_test "QEMU exited after state dump" }
+}
+
+send -- "\001x"
+expect {
+	eof {}
+	timeout { abort_test "QEMU exit timeout" }
+}
+
+puts "KERNEL_STATE_DUMP_OK"

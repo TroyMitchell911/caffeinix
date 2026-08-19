@@ -284,6 +284,15 @@ int uart_core_selftest(void)
 	    ports[0].tty.commit_position != 1 ||
 	    ports[1].tty.commit_position != 0)
 		goto fail;
+	if (tty_get_console() == &ports[1].tty)
+		goto fail;
+	states[1].receive = UART_RX_BREAK;
+	states[1].receive_pending = 1;
+	if (uart_handle_irq(&ports[1]) != IRQ_HANDLED ||
+	    ports[1].tty.edit_position != 1 ||
+	    ports[1].tty.commit_position != 0 ||
+	    ports[1].tty.input[0] != '\0')
+		goto fail;
 	uart_remove_one_port(&ports[1]);
 	uart_remove_one_port(&ports[0]);
 	if (tty_get(first_line) || tty_get(second_line) ||

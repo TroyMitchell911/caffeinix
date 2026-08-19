@@ -2,8 +2,22 @@
 
 proc abort_test {message} {
 	puts stderr "OpenSBI boot test failed: $message"
+	catch {send -- "\001x"}
+	set saved_timeout $::timeout
+	set ::timeout 5
+	catch {expect eof}
+	set ::timeout $saved_timeout
 	catch {close}
 	exit 1
+}
+
+proc abort_with_dump {message} {
+	set saved_timeout $::timeout
+	catch {send -- "\001b"}
+	set ::timeout 5
+	catch {expect -re {DEBUG_STATE_END}}
+	set ::timeout $saved_timeout
+	abort_test $message
 }
 
 foreach variable {
@@ -80,7 +94,7 @@ expect {
 	-re {\[PANIC\]} {
 		abort_test "kernel panic in dynamic exec pressure test"
 	}
-	timeout { abort_test "dynamic exec pressure test timeout" }
+	timeout { abort_with_dump "dynamic exec pressure test timeout" }
 	eof { abort_test "QEMU exited during dynamic exec pressure test" }
 }
 expect {

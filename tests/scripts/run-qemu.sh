@@ -319,6 +319,9 @@ run_boot_smoke 1 "$large_memory"
 check_boot_memory_latency \
 	"$test_output/qemu-smp1-$large_memory.clean.log.timestamped" 10000000
 
+export QEMU_LOG=$test_output/qemu-debug-state.log
+expect "$script_dir/run-debug-dump.exp"
+
 export QEMU_CPUS=2
 export QEMU_MEMORY=128M
 export QEMU_LOG=$test_output/qemu-network-offline.log
