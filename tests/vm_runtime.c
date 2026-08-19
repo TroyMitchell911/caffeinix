@@ -71,6 +71,31 @@ static void create_fixture(void)
 	CHECK(close(fd) == 0, "close fixture");
 }
 
+static void test_pread(void)
+{
+	unsigned char buffer[32];
+	off_t position = 17;
+	int fd;
+
+	fd = open(FILE_PATH, O_RDONLY);
+	CHECK(fd >= 0, "pread open");
+	CHECK(lseek(fd, position, SEEK_SET) == position, "pread seek");
+	CHECK(pread(fd, buffer, sizeof(buffer), PAGE_SIZE + 19) ==
+	      (ssize_t)sizeof(buffer), "pread data");
+	for (size_t index = 0; index < sizeof(buffer); index++)
+		CHECK(buffer[index] == pattern(1, index + 19),
+		      "pread contents");
+	CHECK(lseek(fd, 0, SEEK_CUR) == position, "pread position");
+	errno = 0;
+	CHECK(pread(fd, buffer, sizeof(buffer), -1) == -1 &&
+	      errno == EINVAL, "pread negative offset");
+	CHECK(close(fd) == 0, "pread close");
+	errno = 0;
+	CHECK(pread(fd, buffer, sizeof(buffer), 0) == -1 && errno == EBADF,
+	      "pread closed descriptor");
+	puts("VM_PREAD_OK");
+}
+
 static void test_file_mapping(unsigned char **mapping_out)
 {
 	unsigned char buffer[PAGE_SIZE];
@@ -271,6 +296,7 @@ int main(void)
 	unsigned char *anonymous, *file_mapping;
 
 	create_fixture();
+	test_pread();
 	test_file_mapping(&file_mapping);
 	anonymous = test_anonymous_mapping();
 	test_hint_and_fixed();
