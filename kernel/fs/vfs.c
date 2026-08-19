@@ -1381,35 +1381,47 @@ static sleeplock_t vfs_regular_write_lock(file_t file)
 	return vfs_inode_write_lock(file->path.dentry->inode);
 }
 
-int vfs_write(int fd, uint64 address, int length)
+int64 vfs_file_write_current(struct vfs_file *file, int user_source,
+			     uint64 source, uint64 count)
 {
 	sleeplock_t lock;
-	file_t file;
 	uint64 old_size = 0, start = 0;
 	int64 result;
 
+	if (!file)
+		return VFS_ERR_BADF;
+	if (count > 0x7fffffff)
+		return VFS_ERR_INVAL;
+	lock = vfs_regular_write_lock(file);
+	if (lock)
+		sleeplock_acquire(lock);
+	result = vfs_prepare_write(file, &old_size);
+	if (result >= 0) {
+		start = file->position;
+		result = file_write(file, user_source, source, count,
+				    &file->position);
+		if (result > 0 && lock)
+			page_cache_refresh(file, user_source, source, start, result,
+					   old_size);
+	}
+	if (lock)
+		sleeplock_release(lock);
+	return result > 0x7fffffff ? VFS_ERR_INVAL : result;
+}
+
+int vfs_write(int fd, uint64 address, int length)
+{
+	file_t file;
+	int result;
+
 	if (fd_get(fd, &file) != VFS_OK)
 		return VFS_ERR_BADF;
-	if (length < 0) {
+	if (length < 0)
 		result = VFS_ERR_INVAL;
-	} else {
-		lock = vfs_regular_write_lock(file);
-		if (lock)
-			sleeplock_acquire(lock);
-		result = vfs_prepare_write(file, &old_size);
-		if (result >= 0) {
-			start = file->position;
-			result = file_write(file, 1, address, length,
-					    &file->position);
-			if (result > 0 && lock)
-				page_cache_refresh(file, 1, address, start,
-						   result, old_size);
-		}
-		if (lock)
-			sleeplock_release(lock);
-	}
+	else
+		result = vfs_file_write_current(file, 1, address, length);
 	vfs_file_put(file);
-	return result > 0x7fffffff ? VFS_ERR_INVAL : result;
+	return result;
 }
 
 int64 vfs_writev(int fd, int user_source,

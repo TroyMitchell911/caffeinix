@@ -775,6 +775,95 @@ uint64 sys_linux_writev(void)
 	return result < 0 ? linux_error(result) : result;
 }
 
+uint64 sys_linux_sendfile(void)
+{
+	process_t process = cur_proc();
+	file_t input = 0, output = 0;
+	uint64 buffer_address, count, offset_address;
+	uint64 chunk, offset, total = 0;
+	char *buffer;
+	int input_fd, output_fd, position_locked = 0;
+	int64 read_result = 0, write_result;
+
+	argint(0, &output_fd);
+	argint(1, &input_fd);
+	argaddr(2, &offset_address);
+	argaddr(3, &count);
+	if (count > 0x7fffffff)
+		count = 0x7fffffff;
+	if (vfs_get_file_fd(input_fd, &input) < 0 ||
+	    vfs_get_file_fd(output_fd, &output) < 0) {
+		read_result = -LINUX_EBADF;
+		goto out;
+	}
+	if (offset_address) {
+		if (copyin(process->pagetable, (char *)&offset,
+		           offset_address, sizeof(offset)) < 0) {
+			read_result = -LINUX_EFAULT;
+			goto out;
+		}
+		if ((int64)offset < 0) {
+			read_result = -LINUX_EINVAL;
+			goto out;
+		}
+	} else {
+		sleeplock_acquire(&input->position_lock);
+		position_locked = 1;
+		offset = input->position;
+	}
+	if (output->flags & VFS_OPEN_APPEND) {
+		read_result = -LINUX_EINVAL;
+		goto out;
+	}
+	buffer = alloc_pages(0, 0);
+	if (!buffer) {
+		read_result = -LINUX_ENOMEM;
+		goto out;
+	}
+	buffer_address = (uint64)buffer;
+	while (total < count) {
+		chunk = count - total;
+		if (chunk > PGSIZE)
+			chunk = PGSIZE;
+		read_result = vfs_file_pread(input, 0, buffer_address,
+					chunk, offset);
+		if (read_result <= 0)
+			break;
+		write_result = vfs_file_write_current(output, 0,
+					      buffer_address, read_result);
+		if (write_result <= 0) {
+			read_result = write_result;
+			break;
+		}
+		offset += write_result;
+		total += write_result;
+		if (write_result != read_result)
+			break;
+	}
+	free_pages(buffer, 0);
+	if (!offset_address)
+		input->position = offset;
+	else if (copyout(process->pagetable, offset_address,
+	                 (char *)&offset, sizeof(offset)) < 0) {
+		read_result = -LINUX_EFAULT;
+		goto out;
+	}
+	if (total)
+		read_result = total;
+	else if (read_result == VFS_ERR_INTR)
+		read_result = -SIGNAL_RESTART_SYS;
+	else if (read_result < 0)
+		read_result = linux_error(read_result);
+out:
+	if (position_locked)
+		sleeplock_release(&input->position_lock);
+	if (output)
+		vfs_file_put(output);
+	if (input)
+		vfs_file_put(input);
+	return read_result;
+}
+
 uint64 sys_linux_execve(void)
 {
 	char path[MAXPATH], *argv[MAXARG], *envp[MAXARG];

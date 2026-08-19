@@ -251,6 +251,7 @@ extern uint64 sys_linux_read(void);
 extern uint64 sys_linux_readv(void);
 extern uint64 sys_linux_readlinkat(void);
 extern uint64 sys_linux_renameat2(void);
+extern uint64 sys_linux_sendfile(void);
 extern uint64 sys_linux_set_tid_address(void);
 extern uint64 sys_linux_clone(void);
 extern uint64 sys_linux_clock_gettime(void);
@@ -322,6 +323,7 @@ static syscall_t linux_syscalls[LINUX_SYS_pwritev2 + 1] = {
 	[LINUX_SYS_pwrite64] = sys_linux_pwrite64,
 	[LINUX_SYS_preadv] = sys_linux_preadv,
 	[LINUX_SYS_pwritev] = sys_linux_pwritev,
+	[LINUX_SYS_sendfile] = sys_linux_sendfile,
 	[LINUX_SYS_ppoll] = sys_linux_ppoll,
 	[LINUX_SYS_readlinkat] = sys_linux_readlinkat,
 	[LINUX_SYS_newfstatat] = sys_linux_newfstatat,

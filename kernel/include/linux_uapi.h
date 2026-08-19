@@ -29,6 +29,7 @@
 #define LINUX_SYS_pwrite64           68
 #define LINUX_SYS_preadv             69
 #define LINUX_SYS_pwritev            70
+#define LINUX_SYS_sendfile           71
 #define LINUX_SYS_ppoll              73
 #define LINUX_SYS_readlinkat         78
 #define LINUX_SYS_newfstatat         79
