@@ -433,8 +433,9 @@ the kernel. No separate rootfs repository or private compiler is required.
 - Only a Linux RISC-V UAPI subset is implemented.
 - Pipelines, process groups, job control, and terminal-generated signals are
   not ready. The underlying thread and signal core is available.
-- Dynamic musl executables and shared libraries use eager private mappings;
-  demand paging, shared clean pages, copy-on-write, and ASLR are not ready.
+- Userspace uses demand paging, shared clean file pages, copy-on-write, and
+  ASLR. Reclaim currently discards clean file and private anonymous pages;
+  swap and background writeback of dirty pages are not implemented.
 - Networking is IPv4-only and omits interface configuration, AF_UNIX,
   netlink, namespaces, firewalling, and the wider Linux socket option set.
 - VirtIO currently uses modern MMIO split rings without packed rings,
