@@ -21,6 +21,7 @@
 #include <vfs.h>
 #include <linux_uapi.h>
 #include <futex.h>
+#include <mmap.h>
 
 #define PROCESS_CHILD_EVENT_NONE       0
 #define PROCESS_CHILD_EVENT_STOPPED    1
@@ -273,13 +274,14 @@ static process_t process_alloc(void)
 	}
 	signal_process_init(p);
 	p->umask = 0022;
-	p->state = PROCESS_LIVE;
+	p->state = PROCESS_EMBRYO;
 	wait_queue_init(&p->child_wait, "child wait");
 	wait_queue_init(&p->thread_reap_wait, "thread reap");
 	wait_queue_init(&p->signal_wait, "signal wait");
 	sleeplock_init(&p->mmap_lock, "process mmap");
 	spinlock_init(&p->files_lock, "process files");
 	vma_set_init(&p->vmas);
+	list_init(&p->mmap_tag);
         
         spinlock_init(&p->lock, "process");
         spinlock_acquire(&p->lock);
@@ -377,7 +379,6 @@ void userinit(void)
 	if (!p)
                 PANIC("userinit");
 	t = p->thread[0];
-	scheduler_make_runnable(t);
 	p->sz = 0;
 	p->brk = 0;
 	p->brk_start = 0;
@@ -385,9 +386,15 @@ void userinit(void)
 	safe_strncpy(p->name, "kernel-init", MAXNAME);
         first = p;
 
-        /* The lock will be held in process_alloc */
-        spinlock_release(&p->lock);
-        spinlock_release(&t->lock);
+	spinlock_release(&t->lock);
+	spinlock_release(&p->lock);
+	mmap_process_register(p);
+	spinlock_acquire(&p->lock);
+	p->state = PROCESS_LIVE;
+	spinlock_release(&p->lock);
+	spinlock_acquire(&t->lock);
+	scheduler_make_runnable(t);
+	spinlock_release(&t->lock);
 }
 
 int either_copyout(int user_dst, uint64 dst, void* src, uint64 len)
@@ -428,22 +435,15 @@ int process_fork(uint64 child_stack)
         oldt = cur_thread();
         newt = newp->thread[0];
 	scheduler_inherit(newt, oldt);
+	spinlock_release(&newt->lock);
+	spinlock_release(&newp->lock);
 
-	sleeplock_acquire(&oldp->mmap_lock);
-	if (vm_copy(oldp->pagetable, newp->pagetable, &oldp->vmas) != 0 ||
-	    vma_set_clone(&newp->vmas, &oldp->vmas) < 0) {
-		sleeplock_release(&oldp->mmap_lock);
-		spinlock_release(&newt->lock);
-		spinlock_release(&newp->lock);
+	if (mmap_process_fork(oldp, newp) < 0) {
 		spinlock_acquire(&wait_lock);
 		process_free(newp);
 		spinlock_release(&wait_lock);
 		return -1;
 	}
-	newp->sz = oldp->sz;
-	newp->brk = oldp->brk;
-	newp->brk_start = oldp->brk_start;
-	sleeplock_release(&oldp->mmap_lock);
 
 	newp->umask = oldp->umask;
 	newp->membarrier_private_expedited =
@@ -467,21 +467,22 @@ int process_fork(uint64 child_stack)
 	vfs_path_copy(&newp->cwd, &oldp->cwd);
         /* Copy the process name into newp */
 	safe_strncpy(newp->name, oldp->name, MAXNAME);
+	spinlock_acquire(&newp->lock);
 	spinlock_acquire(&oldp->lock);
 	signal_thread_fork(newt, oldt);
 	signal_process_fork(newp, oldp);
 	spinlock_release(&oldp->lock);
+	spinlock_release(&newp->lock);
 
-        spinlock_release(&newp->lock);
-        spinlock_release(&newt->lock);
-
-        spinlock_acquire(&wait_lock);
-        newp->parent = oldp;
-        spinlock_release(&wait_lock);
-
-        spinlock_acquire(&newt->lock);
-        scheduler_make_runnable(newt);
-        spinlock_release(&newt->lock);
+	spinlock_acquire(&wait_lock);
+	spinlock_acquire(&newp->lock);
+	newp->parent = oldp;
+	newp->state = PROCESS_LIVE;
+	spinlock_release(&newp->lock);
+	spinlock_acquire(&newt->lock);
+	scheduler_make_runnable(newt);
+	spinlock_release(&newt->lock);
+	spinlock_release(&wait_lock);
 
         /* Return for parent process */
         return pid;
@@ -664,6 +665,7 @@ static void process_release_resources(process_t p)
 	file_t files[NOFILE];
 	int count = 0, fd;
 
+	mmap_process_unregister(p);
 	sleeplock_acquire(&p->mmap_lock);
 	vma_set_destroy(&p->vmas);
 	if (vm_mapped(p->pagetable, USER_SIGRETURN))

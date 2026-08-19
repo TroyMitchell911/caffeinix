@@ -47,6 +47,7 @@
 #include <network_stack.h>
 #include <futex.h>
 #include <page_cache.h>
+#include <mmap.h>
 
 volatile static uint8 start = 0;
 extern char end[];
@@ -160,6 +161,7 @@ void main(void)
 	file_init();
 	vfs_init();
 	page_cache_init();
+	mmap_init();
 		irq_init();
 		plic_init();
 		plic_init_hart();

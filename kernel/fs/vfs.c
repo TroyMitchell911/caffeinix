@@ -3,6 +3,8 @@
 #include <file.h>
 #include <ktime.h>
 #include <mystring.h>
+#include <mmap.h>
+#include <page_cache.h>
 #include <palloc.h>
 #include <printk.h>
 #include <process.h>
@@ -843,8 +845,18 @@ int vfs_open_file(const char *name, uint32 flags, uint32 mode,
 		lock = vfs_inode_write_lock(path.dentry->inode);
 		if (lock)
 			sleeplock_acquire(lock);
-		status = path.dentry->inode->operations->truncate(
-			path.dentry->inode, 0);
+		status = vfs_inode_stat(path.dentry->inode, &stat);
+		if (status < 0)
+			status = VFS_ERR_IO;
+		else if (page_cache_writeback_inode_locked(
+				 path.dentry->inode) < 0)
+			status = VFS_ERR_IO;
+		else
+			status = path.dentry->inode->operations->truncate(
+				path.dentry->inode, 0);
+		if (status >= 0 &&
+		    mmap_file_truncate(path.dentry->inode, stat.size, 0) < 0)
+			status = VFS_ERR_IO;
 		if (lock)
 			sleeplock_release(lock);
 		if (status < 0)
@@ -886,8 +898,8 @@ void vfs_file_put(struct vfs_file *file)
 	file_close(file);
 }
 
-int64 vfs_file_pread(struct vfs_file *file, int user_destination,
-		     uint64 destination, uint64 count, uint64 offset)
+int64 vfs_file_pread_raw(struct vfs_file *file, int user_destination,
+			 uint64 destination, uint64 count, uint64 offset)
 {
 	if (file && file->path.dentry && file->path.dentry->inode &&
 	    file->path.dentry->inode->type == VFS_INODE_DIRECTORY)
@@ -896,6 +908,27 @@ int64 vfs_file_pread(struct vfs_file *file, int user_destination,
 	    !(file->capabilities & VFS_FILE_CAN_PREAD))
 		return VFS_ERR_SPIPE;
 	return file_read(file, user_destination, destination, count, &offset);
+}
+
+int64 vfs_file_pread(struct vfs_file *file, int user_destination,
+		     uint64 destination, uint64 count, uint64 offset)
+{
+	if (page_cache_writeback_file(file) < 0)
+		return VFS_ERR_IO;
+	return vfs_file_pread_raw(file, user_destination, destination,
+				  count, offset);
+}
+
+int64 vfs_file_pwrite_raw(struct vfs_file *file, int user_source,
+			  uint64 source, uint64 count, uint64 offset)
+{
+	if (file && file->path.dentry && file->path.dentry->inode &&
+	    file->path.dentry->inode->type == VFS_INODE_DIRECTORY)
+		return VFS_ERR_ISDIR;
+	if (!file || !file->operations ||
+	    !(file->capabilities & VFS_FILE_CAN_PREAD))
+		return VFS_ERR_SPIPE;
+	return file_write(file, user_source, source, count, &offset);
 }
 
 int vfs_open(const char *path, uint32 flags, uint32 mode, int *fd_out)
@@ -1134,23 +1167,31 @@ int vfs_read(int fd, uint64 address, int length)
 		return VFS_ERR_BADF;
 	if (length < 0)
 		result = VFS_ERR_INVAL;
+	else if (page_cache_writeback_file(file) < 0)
+		result = VFS_ERR_IO;
 	else
 		result = file_read(file, 1, address, length, &file->position);
 	vfs_file_put(file);
 	return result > 0x7fffffff ? VFS_ERR_INVAL : result;
 }
 
-static int vfs_prepare_append(file_t file)
+static int vfs_prepare_write(file_t file, uint64 *old_size)
 {
+	struct vfs_inode *inode;
 	struct vfs_stat stat;
 	int result;
 
-	if (!(file->flags & VFS_OPEN_APPEND) || !file->path.dentry)
+	*old_size = 0;
+	if (!file->path.dentry ||
+	    !(inode = file->path.dentry->inode) ||
+	    inode->type != VFS_INODE_REGULAR)
 		return VFS_OK;
-	result = vfs_inode_stat(file->path.dentry->inode, &stat);
+	result = vfs_inode_stat(inode, &stat);
 	if (result < 0)
 		return result;
-	file->position = stat.size;
+	*old_size = stat.size;
+	if (file->flags & VFS_OPEN_APPEND)
+		file->position = stat.size;
 	return VFS_OK;
 }
 
@@ -1165,6 +1206,7 @@ int vfs_write(int fd, uint64 address, int length)
 {
 	sleeplock_t lock;
 	file_t file;
+	uint64 old_size = 0, start = 0;
 	int64 result;
 
 	if (fd_get(fd, &file) != VFS_OK)
@@ -1175,10 +1217,15 @@ int vfs_write(int fd, uint64 address, int length)
 		lock = vfs_regular_write_lock(file);
 		if (lock)
 			sleeplock_acquire(lock);
-		result = vfs_prepare_append(file);
-		if (result >= 0)
+		result = vfs_prepare_write(file, &old_size);
+		if (result >= 0) {
+			start = file->position;
 			result = file_write(file, 1, address, length,
 					    &file->position);
+			if (result > 0 && lock)
+				page_cache_refresh(file, 1, address, start,
+						   result, old_size);
+		}
 		if (lock)
 			sleeplock_release(lock);
 	}
@@ -1191,7 +1238,7 @@ int64 vfs_writev(int fd, int user_source,
 {
 	sleeplock_t lock;
 	file_t file;
-	uint64 total = 0;
+	uint64 old_size = 0, start, total = 0;
 	uint32 index;
 	int64 result;
 
@@ -1215,16 +1262,22 @@ int64 vfs_writev(int fd, int user_source,
 						  count);
 		goto out;
 	}
-	result = vfs_prepare_append(file);
+	result = vfs_prepare_write(file, &old_size);
 	if (result < 0)
 		goto out;
 	for (index = 0; index < count; index++) {
+		start = file->position;
 		result = file_write(file, user_source, iovecs[index].base,
 				    iovecs[index].length, &file->position);
 		if (result < 0) {
 			result = total ? total : result;
 			goto out;
 		}
+		if (result > 0 && lock)
+			page_cache_refresh(file, user_source, iovecs[index].base,
+					   start, result, old_size);
+		if (file->position > old_size)
+			old_size = file->position;
 		total += result;
 		if ((uint64)result != iovecs[index].length)
 			break;
@@ -1241,6 +1294,7 @@ out_file:
 int vfs_ftruncate(int fd, uint64 size)
 {
 	struct vfs_inode *inode;
+	struct vfs_stat stat;
 	sleeplock_t lock;
 	file_t file;
 	int result;
@@ -1262,7 +1316,14 @@ int vfs_ftruncate(int fd, uint64 size)
 	lock = vfs_regular_write_lock(file);
 	if (lock)
 		sleeplock_acquire(lock);
-	result = inode->operations->truncate(inode, size);
+	if (vfs_inode_stat(inode, &stat) < 0)
+		result = VFS_ERR_IO;
+	else if (page_cache_writeback_inode_locked(inode) < 0)
+		result = VFS_ERR_IO;
+	else
+		result = inode->operations->truncate(inode, size);
+	if (result >= 0 && mmap_file_truncate(inode, stat.size, size) < 0)
+		result = VFS_ERR_IO;
 	if (lock)
 		sleeplock_release(lock);
 out:
@@ -1591,6 +1652,8 @@ int vfs_fsync(int fd)
 		return VFS_ERR_BADF;
 	if (!file->operations || !file->operations->fsync)
 		result = VFS_ERR_INVAL;
+	else if (page_cache_writeback_file(file) < 0)
+		result = VFS_ERR_IO;
 	else
 		result = file->operations->fsync(file);
 	vfs_file_put(file);
@@ -1612,6 +1675,9 @@ int vfs_sync(void)
 	spinlock_release(&vfs.lock);
 	for (int i = 0; i < count; i++) {
 		superblock = superblocks[i];
+		if (page_cache_writeback_super(superblock) < 0 &&
+		    first_error == VFS_OK)
+			first_error = VFS_ERR_IO;
 		if (!superblock->operations || !superblock->operations->sync)
 			continue;
 		status = superblock->operations->sync(superblock);

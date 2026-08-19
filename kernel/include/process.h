@@ -21,6 +21,7 @@
 #include <signal.h>
 
 typedef enum process_state{
+	PROCESS_EMBRYO,
         PROCESS_LIVE,
         PROCESS_ZOMBIE,
 }process_state_t;
@@ -47,6 +48,8 @@ typedef struct process{
         pagedir_t pagetable;
 	struct sleeplock mmap_lock;
 	struct vma_set vmas;
+	struct list mmap_tag;
+	uint8 mmap_registered;
 	struct vfs_path root;
 	struct vfs_path cwd;
 	uint32 umask;

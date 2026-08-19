@@ -85,6 +85,7 @@ extern uint64 sys_linux_lseek(void);
 extern uint64 sys_linux_mkdirat(void);
 extern uint64 sys_linux_mmap(void);
 extern uint64 sys_linux_mprotect(void);
+extern uint64 sys_linux_msync(void);
 extern uint64 sys_linux_membarrier(void);
 extern uint64 sys_linux_munmap(void);
 extern uint64 sys_linux_newfstatat(void);
@@ -216,6 +217,7 @@ static syscall_t linux_syscalls[LINUX_SYS_membarrier + 1] = {
 	[LINUX_SYS_execve] = sys_linux_execve,
 	[LINUX_SYS_mmap] = sys_linux_mmap,
 	[LINUX_SYS_mprotect] = sys_linux_mprotect,
+	[LINUX_SYS_msync] = sys_linux_msync,
 	[LINUX_SYS_accept4] = sys_linux_accept4,
 	[LINUX_SYS_wait4] = sys_linux_wait4,
 	[LINUX_SYS_renameat2] = sys_linux_renameat2,
