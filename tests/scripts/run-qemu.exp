@@ -129,6 +129,18 @@ expect {
 }
 expect_prompt
 
+send -- "/bin/process-group-runtime\r"
+expect {
+	-re {\r?\nPROCESS_GROUP_OK} {}
+	-re {PROCESS_GROUP_FAIL[^\r\n]*} {
+		abort_test "process-group runtime test reported failure"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in process-group test" }
+	timeout { abort_test "process-group runtime test timeout" }
+	eof { abort_test "QEMU exited during process-group runtime test" }
+}
+expect_prompt
+
 send -- "printf 'PIPELINE_OK\\n' | cat\r"
 expect {
 	-re {\r?\nPIPELINE_OK} {}

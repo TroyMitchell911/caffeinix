@@ -75,6 +75,10 @@ _Static_assert(LINUX_SYS_setpriority == __NR_setpriority,
 	       "setpriority number");
 _Static_assert(LINUX_SYS_getpriority == __NR_getpriority,
 	       "getpriority number");
+_Static_assert(LINUX_SYS_setpgid == __NR_setpgid, "setpgid number");
+_Static_assert(LINUX_SYS_getpgid == __NR_getpgid, "getpgid number");
+_Static_assert(LINUX_SYS_getsid == __NR_getsid, "getsid number");
+_Static_assert(LINUX_SYS_setsid == __NR_setsid, "setsid number");
 _Static_assert(LINUX_SYS_clock_gettime == __NR_clock_gettime,
 	       "clock_gettime number");
 _Static_assert(LINUX_SYS_clone == __NR_clone, "clone number");
