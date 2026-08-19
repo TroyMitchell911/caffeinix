@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -59,6 +60,10 @@ static unsigned char *cow_mapping;
 static volatile int cow_ready;
 static volatile int cow_go;
 static volatile int cow_done;
+
+static unsigned char *unmap_mapping;
+static volatile int unmap_ready;
+static volatile int unmap_go;
 
 static int fail(const char *reason, int error)
 {
@@ -439,6 +444,68 @@ static int test_remote_cow_tlb(void)
 	return 0;
 }
 
+static void *unmap_worker(void *argument)
+{
+	volatile unsigned char value;
+
+	(void)argument;
+	value = unmap_mapping[0];
+	(void)value;
+	__atomic_add_fetch(&unmap_ready, 1, __ATOMIC_RELEASE);
+	while (!__atomic_load_n(&unmap_go, __ATOMIC_ACQUIRE))
+		;
+	value = unmap_mapping[0];
+	return (void *)(uintptr_t)(value == 0x5a);
+}
+
+static void remote_unmap_child(void)
+{
+	pthread_t threads[COW_WORKERS];
+	unsigned long spins;
+	int error, i;
+
+	unmap_ready = 0;
+	unmap_go = 0;
+	unmap_mapping = mmap(0, COW_PAGE_SIZE, PROT_READ | PROT_WRITE,
+			     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	if (unmap_mapping == MAP_FAILED)
+		_exit(2);
+	unmap_mapping[0] = 0x5a;
+	for (i = 0; i < COW_WORKERS; i++) {
+		error = pthread_create(&threads[i], 0, unmap_worker, 0);
+		if (error)
+			_exit(3);
+	}
+	for (spins = 0; spins < 100000000UL &&
+	     __atomic_load_n(&unmap_ready, __ATOMIC_ACQUIRE) != COW_WORKERS;
+	     spins++)
+		;
+	if (unmap_ready != COW_WORKERS ||
+	    munmap(unmap_mapping, COW_PAGE_SIZE) < 0)
+		_exit(4);
+	__atomic_store_n(&unmap_go, 1, __ATOMIC_RELEASE);
+	for (i = 0; i < COW_WORKERS; i++) {
+		if (pthread_join(threads[i], 0))
+			_exit(5);
+	}
+	_exit(EXIT_SUCCESS);
+}
+
+static int test_remote_unmap_tlb(void)
+{
+	pid_t child = fork();
+	int status;
+
+	if (child < 0)
+		return fail("unmap fork", errno);
+	if (!child)
+		remote_unmap_child();
+	if (waitpid(child, &status, 0) != child || !WIFSIGNALED(status) ||
+	    WTERMSIG(status) != SIGSEGV)
+		return fail("remote unmap signal", status);
+	return 0;
+}
+
 int main(void)
 {
 	pthread_t threads[WORKERS];
@@ -561,6 +628,8 @@ int main(void)
 	if (test_copy_unmap_race())
 		return 1;
 	if (test_remote_cow_tlb())
+		return 1;
+	if (test_remote_unmap_tlb())
 		return 1;
 
 	puts("PTHREAD_RUNTIME_OK");

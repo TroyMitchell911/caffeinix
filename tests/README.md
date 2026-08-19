@@ -103,6 +103,7 @@ The guest selftest covers:
 - copy-on-write isolation for anonymous and cached private mappings, kernel
   copies into child memory, fork under resident-memory pressure, and stale
   writable-TLB rejection while sibling threads run on other harts;
+- remote TLB invalidation after a sibling thread removes a user mapping;
 - read and positional-read copy faults through ext4, tmpfs, FAT, and
   character devices, plus concurrent reads through one ext4 file handle;
 - CFS runqueue progress with 24 runnable processes, timer preemption,
