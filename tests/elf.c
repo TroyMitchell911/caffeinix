@@ -238,6 +238,12 @@ static void test_load_permissions(void)
 	CHECK(elf_image_layout_add(&image, &header, &program) == 0);
 	CHECK(elf_image_layout_finish(&image) == 0);
 	CHECK(image.stack_executable);
+
+	CHECK(elf_image_layout_init(&image, &header) == 0);
+	program = load_program(0, 0, 0x800, 0x1000,
+			       ELF_PROG_FLAG_READ | ELF_PROG_FLAG_WRITE |
+			       ELF_PROG_FLAG_EXEC);
+	CHECK(elf_image_layout_add(&image, &header, &program) < 0);
 }
 
 static void test_interpreter_paths(void)

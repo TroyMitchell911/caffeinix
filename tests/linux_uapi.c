@@ -163,6 +163,13 @@ _Static_assert(LINUX_MAP_PRIVATE == MAP_PRIVATE, "MAP_PRIVATE value");
 _Static_assert(LINUX_MAP_FIXED == MAP_FIXED, "MAP_FIXED value");
 _Static_assert(LINUX_MAP_ANONYMOUS == MAP_ANONYMOUS,
 	       "MAP_ANONYMOUS value");
+_Static_assert(LINUX_MAP_NORESERVE == MAP_NORESERVE,
+	       "MAP_NORESERVE value");
+_Static_assert(LINUX_MAP_POPULATE == MAP_POPULATE,
+	       "MAP_POPULATE value");
+_Static_assert(LINUX_MAP_STACK == MAP_STACK, "MAP_STACK value");
+_Static_assert(LINUX_MAP_FIXED_NOREPLACE == MAP_FIXED_NOREPLACE,
+	       "MAP_FIXED_NOREPLACE value");
 _Static_assert(LINUX_CLONE_VM == CLONE_VM, "CLONE_VM value");
 _Static_assert(LINUX_CLONE_THREAD == CLONE_THREAD,
 	       "CLONE_THREAD value");

@@ -113,6 +113,9 @@ The guest selftest covers:
   explicitly warned no-device fallback;
 - independently randomized PIE, interpreter, shared-library, anonymous mmap,
   heap, and stack addresses across repeated executions;
+- W^X enforcement for ELF and runtime mappings, explicit executable-stack
+  handling, safe write-to-execute transitions, `MAP_FIXED_NOREPLACE`, and
+  supported stack, reservation, and prefault mapping flags;
 - remote TLB invalidation after a sibling thread removes a user mapping;
 - prompt release of exited processes' user pages while zombies await their
   parent's `wait4`, under memory pressure exceeding available guest RAM;

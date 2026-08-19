@@ -152,25 +152,33 @@ static void test_elf_overlap(void)
 
 	vma_set_init(&set);
 	CHECK(vma_insert_elf(&set, 0x10000, 0x13000,
-			     LINUX_PROT_READ | LINUX_PROT_EXEC,
-			     &files[0], 0) == 0);
+				     LINUX_PROT_READ | LINUX_PROT_EXEC,
+				     &files[0], 0) == 0);
 	CHECK(vma_insert_elf(&set, 0x12000, 0x15000,
-			     LINUX_PROT_READ | LINUX_PROT_WRITE,
-			     &files[0], 0x2000) == 0);
-	CHECK(vma_count(&set) == 3 && file_refs[0] == 3);
-	area = area_at(&set, 1);
-	CHECK(area->start == 0x12000 && area->end == 0x13000);
-	CHECK(area->protection == (LINUX_PROT_READ | LINUX_PROT_WRITE |
-				   LINUX_PROT_EXEC));
-	CHECK(area->origin == VMA_FILE_BACKED && area->offset == 0x2000);
-	CHECK(area->file_length == 0x1000);
+				     LINUX_PROT_READ | LINUX_PROT_WRITE,
+				     &files[0], 0x2000) < 0);
+	CHECK(vma_count(&set) == 1 && file_refs[0] == 1);
 	vma_set_destroy(&set);
 	CHECK(!file_refs[0]);
 
 	vma_set_init(&set);
 	CHECK(vma_insert_elf(&set, 0x10000, 0x13000,
-			     LINUX_PROT_READ | LINUX_PROT_EXEC,
-			     &files[0], 0) == 0);
+				     LINUX_PROT_READ, &files[0], 0) == 0);
+	CHECK(vma_insert_elf(&set, 0x12000, 0x15000,
+				     LINUX_PROT_READ | LINUX_PROT_WRITE,
+			     &files[0], 0x2000) == 0);
+	CHECK(vma_count(&set) == 2 && file_refs[0] == 2);
+	area = area_at(&set, 1);
+	CHECK(area->start == 0x12000 && area->end == 0x15000);
+	CHECK(area->protection == (LINUX_PROT_READ | LINUX_PROT_WRITE));
+	CHECK(area->origin == VMA_FILE_BACKED && area->offset == 0x2000);
+	CHECK(area->file_length == 0x3000);
+	vma_set_destroy(&set);
+	CHECK(!file_refs[0]);
+
+	vma_set_init(&set);
+	CHECK(vma_insert_elf(&set, 0x10000, 0x13000,
+				     LINUX_PROT_READ, &files[0], 0) == 0);
 	CHECK(vma_insert_elf(&set, 0x12000, 0x15000,
 			     LINUX_PROT_READ | LINUX_PROT_WRITE,
 			     &files[0], 0x8000) == 0);
@@ -178,8 +186,7 @@ static void test_elf_overlap(void)
 	area = area_at(&set, 1);
 	CHECK(area->origin == VMA_ANONYMOUS && !area->file);
 	CHECK(!area->file_length);
-	CHECK(area->protection == (LINUX_PROT_READ | LINUX_PROT_WRITE |
-				   LINUX_PROT_EXEC));
+	CHECK(area->protection == (LINUX_PROT_READ | LINUX_PROT_WRITE));
 	vma_set_destroy(&set);
 	CHECK(!file_refs[0]);
 }

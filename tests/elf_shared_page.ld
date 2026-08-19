@@ -2,7 +2,7 @@ PHDRS
 {
 	text PT_LOAD FILEHDR PHDRS FLAGS(5);
 	rodata PT_LOAD FLAGS(4);
-	data PT_LOAD FLAGS(6);
+	data PT_LOAD FLAGS(4);
 }
 
 SECTIONS

@@ -1,3 +1,5 @@
+#define _GNU_SOURCE
+
 #include <errno.h>
 #include <fcntl.h>
 #include <stdint.h>
@@ -1160,6 +1162,64 @@ static void test_kernel_copy_permissions(void)
 	CHECK(munmap(mapping, PAGE_SIZE) == 0, "copy permission munmap");
 }
 
+static void test_mapping_hardening(void)
+{
+	uint32_t *code;
+	unsigned char *mapping;
+	void *exact;
+
+	errno = 0;
+	CHECK(syscall(SYS_mmap, 0, PAGE_SIZE,
+		      PROT_READ | PROT_WRITE | PROT_EXEC,
+		      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0) == -1 &&
+	      errno == EPERM, "raw W^X mmap");
+	errno = 0;
+	CHECK(mmap(0, PAGE_SIZE, PROT_READ | PROT_WRITE | PROT_EXEC,
+		   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0) == MAP_FAILED &&
+	      errno == ENOMEM, "musl W^X mmap");
+	mapping = mmap(0, PAGE_SIZE, PROT_READ | PROT_WRITE,
+		       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	CHECK(mapping != MAP_FAILED, "hardening mmap");
+	mapping[0] = 0x5a;
+	errno = 0;
+	CHECK(mprotect(mapping, PAGE_SIZE,
+		       PROT_READ | PROT_WRITE | PROT_EXEC) == -1 &&
+	      errno == EPERM, "W^X mprotect");
+	CHECK(mapping[0] == 0x5a, "W^X preserved mapping");
+	errno = 0;
+	CHECK(mmap(mapping, PAGE_SIZE, PROT_READ | PROT_WRITE,
+		   MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE,
+		   -1, 0) == MAP_FAILED && errno == EEXIST,
+	      "fixed noreplace collision");
+	CHECK(mapping[0] == 0x5a, "fixed noreplace preserved mapping");
+	CHECK(munmap(mapping, PAGE_SIZE) == 0, "hardening unmap");
+
+	exact = mmap(mapping, PAGE_SIZE, PROT_READ | PROT_WRITE,
+		     MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE,
+		     -1, 0);
+	CHECK(exact == mapping, "fixed noreplace placement");
+	CHECK(munmap(exact, PAGE_SIZE) == 0, "fixed noreplace unmap");
+
+	mapping = mmap(0, PAGE_SIZE, PROT_READ | PROT_WRITE,
+		       MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE |
+		       MAP_POPULATE | MAP_STACK, -1, 0);
+	CHECK(mapping != MAP_FAILED, "mapping compatibility flags");
+	CHECK(mapping[0] == 0, "populated mapping contents");
+	mapping[PAGE_SIZE - 1] = 0xa5;
+	CHECK(munmap(mapping, PAGE_SIZE) == 0, "compatibility flags unmap");
+
+	code = mmap(0, PAGE_SIZE, PROT_READ | PROT_WRITE,
+		    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	CHECK(code != MAP_FAILED, "JIT write mapping");
+	code[0] = 0x02a00513;
+	code[1] = 0x00008067;
+	__builtin___clear_cache((char *)code, (char *)&code[2]);
+	CHECK(mprotect(code, PAGE_SIZE, PROT_READ | PROT_EXEC) == 0,
+	      "JIT W-to-X transition");
+	CHECK(((int (*)(void))code)() == 42, "JIT execute mapping");
+	CHECK(munmap(code, PAGE_SIZE) == 0, "JIT unmap");
+}
+
 int main(void)
 {
 	unsigned char *anonymous, *file_mapping;
@@ -1188,6 +1248,8 @@ int main(void)
 	puts("VM_ZOMBIE_RELEASE_OK");
 	test_mapping_lifetime();
 	test_kernel_copy_permissions();
+	test_mapping_hardening();
+	puts("VM_HARDENING_OK");
 	CHECK(munmap(anonymous, 3 * PAGE_SIZE) == 0, "unmap anonymous");
 	CHECK(munmap(file_mapping, 2 * PAGE_SIZE) == 0, "unmap file");
 	CHECK(unlink(FILE_PATH) == 0, "unlink fixture");

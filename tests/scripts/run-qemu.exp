@@ -487,6 +487,17 @@ expect {
 	eof { abort_test "QEMU exited during zombie memory release test" }
 }
 expect {
+	-re {\r?\nVM_HARDENING_OK} {}
+	-re {VM_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "virtual memory hardening test reported failure"
+	}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic in virtual memory hardening test"
+	}
+	timeout { abort_test "virtual memory hardening test timeout" }
+	eof { abort_test "QEMU exited during virtual memory hardening test" }
+}
+expect {
 	-re {\r?\nVM_RUNTIME_OK} {}
 	-re {VM_RUNTIME_FAIL[^\r\n]*} {
 		abort_test "virtual memory test reported failure"
