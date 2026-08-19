@@ -84,6 +84,7 @@ extern uint64 sys_linux_lseek(void);
 extern uint64 sys_linux_mkdirat(void);
 extern uint64 sys_linux_mmap(void);
 extern uint64 sys_linux_mprotect(void);
+extern uint64 sys_linux_membarrier(void);
 extern uint64 sys_linux_munmap(void);
 extern uint64 sys_linux_newfstatat(void);
 extern uint64 sys_linux_openat(void);
@@ -128,7 +129,7 @@ extern uint64 sys_linux_ftruncate(void);
 
 typedef uint64 (*syscall_t)(void);
 
-static syscall_t linux_syscalls[LINUX_SYS_renameat2 + 1] = {
+static syscall_t linux_syscalls[LINUX_SYS_membarrier + 1] = {
 	[LINUX_SYS_getcwd] = sys_linux_getcwd,
 	[LINUX_SYS_dup] = sys_linux_dup,
 	[LINUX_SYS_dup3] = sys_linux_dup3,
@@ -201,6 +202,7 @@ static syscall_t linux_syscalls[LINUX_SYS_renameat2 + 1] = {
 	[LINUX_SYS_accept4] = sys_linux_accept4,
 	[LINUX_SYS_wait4] = sys_linux_wait4,
 	[LINUX_SYS_renameat2] = sys_linux_renameat2,
+	[LINUX_SYS_membarrier] = sys_linux_membarrier,
 };
 
 void syscall(void)

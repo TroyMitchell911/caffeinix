@@ -8,6 +8,7 @@
 #include <riscv.h>
 #include <sbi.h>
 #include <scheduler.h>
+#include <sleeplock.h>
 #include <timer.h>
 #include <vm.h>
 
@@ -16,6 +17,8 @@
 extern void secondary_entry(void);
 
 static int logical_cpu_count;
+static struct sleeplock membarrier_lock;
+static uint64 membarrier_generation;
 
 /* Used directly by the trap entry before it can safely use a C stack. */
 uint64 *cpu_overflow_stack_tops;
@@ -67,6 +70,57 @@ void cpu_topology_init(uint64 boot_hart_id)
 int cpu_count(void)
 {
 	return logical_cpu_count;
+}
+
+void cpu_membarrier_init(void)
+{
+	sleeplock_init(&membarrier_lock, "CPU membarrier");
+	membarrier_generation = 0;
+}
+
+void cpu_membarrier_interrupt(void)
+{
+	cpu_t cpu = cur_cpu();
+	uint64 request;
+
+	request = __atomic_load_n(&cpu->membarrier_request,
+	                          __ATOMIC_ACQUIRE);
+	if (request == __atomic_load_n(&cpu->membarrier_done,
+	                              __ATOMIC_RELAXED))
+		return;
+	__sync_synchronize();
+	__atomic_store_n(&cpu->membarrier_done, request, __ATOMIC_RELEASE);
+}
+
+void cpu_membarrier(void)
+{
+	uint64 generation;
+	int current, logical;
+
+	sleeplock_acquire(&membarrier_lock);
+	generation = ++membarrier_generation;
+	if (!generation)
+		generation = ++membarrier_generation;
+	current = cpuid();
+	__sync_synchronize();
+	for (logical = 0; logical < logical_cpu_count; logical++) {
+		if (logical == current || !cpus[logical]->online)
+			continue;
+		__atomic_store_n(&cpus[logical]->membarrier_request,
+		                 generation, __ATOMIC_RELEASE);
+		if (sbi_send_ipi(cpu_hart_id(logical)))
+			PANIC("membarrier IPI failed");
+	}
+	__sync_synchronize();
+	for (logical = 0; logical < logical_cpu_count; logical++) {
+		if (logical == current || !cpus[logical]->online)
+			continue;
+		while (__atomic_load_n(&cpus[logical]->membarrier_done,
+		                       __ATOMIC_ACQUIRE) != generation)
+			;
+	}
+	__sync_synchronize();
+	sleeplock_release(&membarrier_lock);
 }
 
 uint64 cpu_hart_id(int logical_id)

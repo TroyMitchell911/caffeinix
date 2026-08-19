@@ -20,6 +20,9 @@ void cpu_secondary_validate(uint64 hart_id, uint64 logical_id,
 void cpu_secondary_boot_stack_release(void);
 void cpu_start_secondary_harts(void);
 void cpu_mark_online(void);
+void cpu_membarrier_init(void);
+void cpu_membarrier_interrupt(void);
+void cpu_membarrier(void);
 void cpu_wait_for_secondary_harts(void);
 
 #endif

@@ -58,6 +58,7 @@ static void main_boot(void)
 {
 	thread_setup();
 	scheduler_init();
+	cpu_membarrier_init();
 	wait_queue_timeout_init();
 	futex_init();
 	workqueue_init();

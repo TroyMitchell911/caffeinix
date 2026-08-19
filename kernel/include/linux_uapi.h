@@ -77,6 +77,7 @@
 #define LINUX_SYS_accept4           242
 #define LINUX_SYS_wait4             260
 #define LINUX_SYS_renameat2         276
+#define LINUX_SYS_membarrier        283
 
 #define LINUX_EPERM                   1
 #define LINUX_ENOENT                  2
@@ -341,6 +342,10 @@ struct linux_linger {
 #define LINUX_FUTEX_BITSET_MATCH_ANY 0xffffffffU
 #define LINUX_FUTEX_WAITERS          0x80000000U
 #define LINUX_FUTEX_OWNER_DIED       0x40000000U
+
+#define LINUX_MEMBARRIER_CMD_QUERY                         0
+#define LINUX_MEMBARRIER_CMD_PRIVATE_EXPEDITED             8
+#define LINUX_MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED   16
 
 #define LINUX_WNOHANG                   1
 

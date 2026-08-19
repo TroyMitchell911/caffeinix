@@ -374,6 +374,8 @@ int exec_linux(char *path, char **argv, char **envp)
 	current->trapframe->epc = entry;
 	memset(current->trapframe->f, 0, sizeof(current->trapframe->f));
 	current->trapframe->fcsr = 0;
+	__atomic_store_n(&process->membarrier_private_expedited, 0,
+	                 __ATOMIC_RELEASE);
 
 	for (name = path_p = path; *path_p; path_p++) {
 		if (*path_p == '/')

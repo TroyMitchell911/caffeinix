@@ -55,6 +55,7 @@ typedef struct process{
 	int group_exit_state;
 	int execing;
 	int live_threads;
+	uint8 membarrier_private_expedited;
 	struct process_signal_action signal_actions[64];
         struct process *parent;
         struct wait_queue child_wait;

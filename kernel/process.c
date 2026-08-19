@@ -392,6 +392,9 @@ int process_fork(uint64 child_stack)
 	newp->brk = oldp->brk;
 	newp->brk_start = oldp->brk_start;
 	newp->umask = oldp->umask;
+	newp->membarrier_private_expedited =
+		__atomic_load_n(&oldp->membarrier_private_expedited,
+		                __ATOMIC_ACQUIRE);
 	*newt->trapframe = *oldt->trapframe;
 	if (child_stack)
 		newt->trapframe->sp = child_stack;

@@ -1,6 +1,7 @@
 #include <trap.h>
 #include <spinlock.h>
 #include <debug.h>
+#include <cpu.h>
 #include <irq.h>
 #include <scheduler.h>
 #include <printf.h>
@@ -34,6 +35,7 @@ static int dev_intr(uint64 scause)
         if((scause & 0x8000000000000000L) &&
            (scause & 0xff) == 1) {
                 sip_clear_ssip();
+		cpu_membarrier_interrupt();
                 return 3;
         }
         /* This is a supervisor external interrupt via PLIC */

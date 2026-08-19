@@ -22,6 +22,8 @@ typedef struct cpu {
 	volatile uint8 online;
 	uint8 idle;
 	volatile uint8 need_resched;
+	volatile uint64 membarrier_request;
+	volatile uint64 membarrier_done;
 }*cpu_t;
 
 extern cpu_t *cpus;
