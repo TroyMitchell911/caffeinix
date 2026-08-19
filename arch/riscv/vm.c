@@ -92,6 +92,29 @@ static uint64 user_va2pa(pagedir_t pgdir, uint64 va, int permissions)
 	       (va & (leaf_size - 1) & ~(PGSIZE - 1));
 }
 
+static uint64 user_copy_va2pa_pinned(pagedir_t pgdir, uint64 va,
+				     int permissions, void **pinned_page)
+{
+	void *page;
+	uint64 physical, validated;
+
+	*pinned_page = 0;
+	for (;;) {
+		physical = user_va2pa(pgdir, va, permissions);
+		if (!physical)
+			return 0;
+		page = (void *)PGROUNDDOWN(physical);
+		if (palloc_get(page) < 0)
+			continue;
+		validated = user_va2pa(pgdir, va, permissions);
+		if (validated == physical) {
+			*pinned_page = page;
+			return physical;
+		}
+		pfree(page);
+	}
+}
+
 uint64 va2pa(pagedir_t pgdir, uint64 va)
 {
 	return user_va2pa(pgdir, va, 0);
@@ -519,17 +542,20 @@ void vm_free_user(pagedir_t pgdir)
 
 int copyout(pagedir_t pgdir, uint64 dstva, char* src, uint64 len)
 {
+	void *pinned_page;
         uint64 n, va0, pa0;
 
         while(len > 0){
                 va0 = PGROUNDDOWN(dstva);
-                pa0 = user_va2pa(pgdir, va0, PTE_W);
+		pa0 = user_copy_va2pa_pinned(pgdir, va0, PTE_W,
+					     &pinned_page);
                 if(pa0 == 0)
                         return -1;
                 n = PGSIZE - (dstva - va0);
                 if(n > len)
                         n = len;
                 memmove((void *)(pa0 + (dstva - va0)), src, n);
+		pfree(pinned_page);
 
                 len -= n;
                 src += n;
@@ -540,17 +566,20 @@ int copyout(pagedir_t pgdir, uint64 dstva, char* src, uint64 len)
 
 int copyin(pagedir_t pgdir, char* dst, uint64 srcva, uint64 len)
 {
+	void *pinned_page;
          uint64 n, va0, pa0;
 
         while(len > 0){
                 va0 = PGROUNDDOWN(srcva);
-                pa0 = user_va2pa(pgdir, va0, PTE_R);
+		pa0 = user_copy_va2pa_pinned(pgdir, va0, PTE_R,
+					     &pinned_page);
                 if(pa0 == 0)
                         return -1;
                 n = PGSIZE - (srcva - va0);
                 if(n > len)
                         n = len;
                 memmove(dst, (void *)(pa0 + (srcva - va0)),n);
+		pfree(pinned_page);
 
                 len -= n;
                 dst += n;
@@ -561,12 +590,14 @@ int copyin(pagedir_t pgdir, char* dst, uint64 srcva, uint64 len)
 
 int copyinstr(pagedir_t pgdir, char *dst, uint64 srcva, uint64 max)
 {
+	void *pinned_page;
         uint64 n, va0, pa0;
         int got_null = 0;
 
         while(got_null == 0 && max > 0) {
                 va0 = PGROUNDDOWN(srcva);
-                pa0 = user_va2pa(pgdir, va0, PTE_R);
+		pa0 = user_copy_va2pa_pinned(pgdir, va0, PTE_R,
+					     &pinned_page);
                 if(pa0 == 0)
                         return -1;
                 n = PGSIZE - (srcva - va0);
@@ -587,6 +618,7 @@ int copyinstr(pagedir_t pgdir, char *dst, uint64 srcva, uint64 max)
                         p++;
                         dst++;
                 }
+		pfree(pinned_page);
 
                 srcva = va0 + PGSIZE;
         }

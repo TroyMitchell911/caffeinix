@@ -27,6 +27,13 @@
 	 ~(MALLOC_ALIGNMENT_BLOCKS - 1))
 #define PAGE_BLOCK                              512
 #define BITMAP_SIZE                             ((4096 - PAGE_BLOCK) / 8)
+#define PAGE_REF_ALIGNMENT                      sizeof(uint32)
+
+struct page_ref_region {
+	uint64 start;
+	uint64 end;
+	uint32 *refs;
+};
 
 
 typedef struct page {
@@ -60,6 +67,8 @@ static struct spinlock page_lock;
 static struct spinlock heap_lock;
 
 static struct memrange_set managed_ranges;
+static struct page_ref_region page_ref_regions[MEMRANGE_MAX];
+static int page_ref_region_count;
 static uint64 heap_start;
 static uint64 usable_bytes;
 
@@ -72,6 +81,29 @@ _Static_assert(PAGE_BLOCK % MALLOC_ALIGNMENT == 0,
 extern char end[];
 
 static void palloc_heap_alignment_selftest(void);
+
+static struct page_ref_region *page_ref_find(uint64 address)
+{
+	int index;
+
+	for (index = 0; index < page_ref_region_count; index++) {
+		struct page_ref_region *region = &page_ref_regions[index];
+
+		if (address >= region->start && address < region->end)
+			return region;
+	}
+	return 0;
+}
+
+static uint32 *page_ref_pointer(void *page)
+{
+	struct page_ref_region *region;
+	uint64 address = (uint64)page;
+
+	if (address % PGSIZE || !(region = page_ref_find(address)))
+		return 0;
+	return &region->refs[(address - region->start) / PGSIZE];
+}
 
 int palloc_managed_range_count(void)
 {
@@ -151,25 +183,40 @@ static void palloc_discover_memory(void)
 /* Init the physical memory */
 void palloc_init(void)
 {
-	uint64 finish, metadata_bytes, pages, start;
+	uint64 finish, metadata_bytes, pages, refs_offset, start;
 	int i;
 
 	spinlock_init(&page_lock, "physical pages");
 	spinlock_init(&heap_lock, "kernel heap");
 	palloc_discover_memory();
 	buddy_init(&page_allocator);
+	page_ref_region_count = 0;
 	usable_bytes = 0;
 	for (i = 0; i < managed_ranges.count; i++) {
 		if (memrange_get(&managed_ranges, i, &start, &finish) < 0)
 			PANIC("managed memory range");
 		pages = (finish - start) / PGSIZE;
-		metadata_bytes = PGROUNDUP(pages);
+		refs_offset = (pages + PAGE_REF_ALIGNMENT - 1) &
+			      ~(PAGE_REF_ALIGNMENT - 1);
+		if (pages > ((uint64)-1 - refs_offset) / sizeof(uint32))
+			PANIC("page metadata overflow");
+		metadata_bytes = PGROUNDUP(refs_offset +
+					     pages * sizeof(uint32));
 		if (metadata_bytes >= finish - start)
 			continue;
 		if (buddy_add_region(&page_allocator, start, finish,
 				     start + metadata_bytes, (uint8 *)start,
 				     pages) < 0)
 			PANIC("initialize page allocator");
+		if (page_ref_region_count >= MEMRANGE_MAX)
+			PANIC("page reference regions");
+		page_ref_regions[page_ref_region_count].start = start;
+		page_ref_regions[page_ref_region_count].end = finish;
+		page_ref_regions[page_ref_region_count].refs =
+			(uint32 *)(start + refs_offset);
+		memset(page_ref_regions[page_ref_region_count].refs, 0,
+		       pages * sizeof(uint32));
+		page_ref_region_count++;
 		usable_bytes += finish - start - metadata_bytes;
 	}
 	if (!usable_bytes)
@@ -181,7 +228,17 @@ void palloc_init(void)
 
 void free_pages(void *p, unsigned int order)
 {
+	uint32 *reference;
+
 	spinlock_acquire(&page_lock);
+	if (!order) {
+		reference = page_ref_pointer(p);
+		if (!reference || *reference != 1) {
+			spinlock_release(&page_lock);
+			PANIC("free referenced page");
+		}
+		*reference = 0;
+	}
 #ifdef CONFIG_PAGE_POISONING
 	if (!buddy_allocated(&page_allocator, (uint64)p, order)) {
 		spinlock_release(&page_lock);
@@ -199,11 +256,20 @@ void free_pages(void *p, unsigned int order)
 void *alloc_pages(unsigned int order, unsigned int flags)
 {
 	void *p;
+	uint32 *reference;
 
 	if (flags & ~PALLOC_ZERO)
 		return 0;
 	spinlock_acquire(&page_lock);
 	p = buddy_alloc(&page_allocator, order);
+	if (p && !order) {
+		reference = page_ref_pointer(p);
+		if (!reference || *reference) {
+			spinlock_release(&page_lock);
+			PANIC("allocate referenced page");
+		}
+		*reference = 1;
+	}
 	spinlock_release(&page_lock);
 	if (p && (flags & PALLOC_ZERO))
 		memset(p, 0, PGSIZE << order);
@@ -212,7 +278,56 @@ void *alloc_pages(unsigned int order, unsigned int flags)
 
 void pfree(void *p)
 {
-	free_pages(p, 0);
+	uint32 *reference;
+	int release = 0;
+
+	spinlock_acquire(&page_lock);
+	reference = page_ref_pointer(p);
+	if (!reference || !*reference ||
+	    !buddy_allocated(&page_allocator, (uint64)p, 0)) {
+		spinlock_release(&page_lock);
+		PANIC("put invalid page");
+	}
+	if (!--*reference)
+		release = 1;
+#ifdef CONFIG_PAGE_POISONING
+	if (release)
+		memset(p, 1, PGSIZE);
+#endif
+	if (release && buddy_free(&page_allocator, p, 0) < 0) {
+		spinlock_release(&page_lock);
+		PANIC("put physical page");
+	}
+	spinlock_release(&page_lock);
+}
+
+int palloc_get(void *p)
+{
+	uint32 *reference;
+	int result = -1;
+
+	spinlock_acquire(&page_lock);
+	reference = page_ref_pointer(p);
+	if (reference && *reference && *reference != ~(uint32)0 &&
+	    buddy_allocated(&page_allocator, (uint64)p, 0)) {
+		(*reference)++;
+		result = 0;
+	}
+	spinlock_release(&page_lock);
+	return result;
+}
+
+uint32 palloc_refcount(void *p)
+{
+	uint32 *reference;
+	uint32 result = 0;
+
+	spinlock_acquire(&page_lock);
+	reference = page_ref_pointer(p);
+	if (reference && buddy_allocated(&page_allocator, (uint64)p, 0))
+		result = *reference;
+	spinlock_release(&page_lock);
+	return result;
 }
 
 void *palloc(void)

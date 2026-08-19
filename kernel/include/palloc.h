@@ -13,6 +13,8 @@ void free_pages(void *p, unsigned int order);
 void pfree(void* p);
 void* palloc(void);
 void *palloc_zero(void);
+int palloc_get(void *p);
+uint32 palloc_refcount(void *p);
 int palloc_managed_range_count(void);
 int palloc_managed_range_get(int index, uint64 *start, uint64 *end);
 uint64 palloc_heap_start(void);
