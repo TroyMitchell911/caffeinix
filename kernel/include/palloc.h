@@ -19,6 +19,7 @@ int palloc_managed_range_count(void);
 int palloc_managed_range_get(int index, uint64 *start, uint64 *end);
 uint64 palloc_heap_start(void);
 uint64 palloc_usable_bytes(void);
+int palloc_reference_selftest(void);
 
 void* malloc(uint64 size);
 void* calloc(size_t count, size_t size);

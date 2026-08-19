@@ -147,6 +147,8 @@ void main(void)
 		pr_info("clocksource: riscv timer at %lu MHz",
 			timer_frequency() / 1000000);
 		palloc_init();
+		if (palloc_reference_selftest() < 0)
+			PANIC("physical page references");
 		cpu_topology_init(boot_hart_id);
 		sbi_init(cpu_count());
 		timer_init();

@@ -5,6 +5,7 @@
 #include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <sys/mman.h>
 #include <sys/resource.h>
 #include <sys/syscall.h>
 #include <time.h>
@@ -15,6 +16,7 @@
 #define CONDITION_WAITERS 8
 #define ITERATIONS 1000
 #define FD_RACE_ROUNDS 32
+#define COPY_PAGE_SIZE 4096UL
 
 static pthread_mutex_t counter_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_barrier_t worker_barrier;
@@ -32,6 +34,10 @@ static volatile int detached_done;
 
 static pthread_barrier_t fd_barrier;
 static int fd_results[FD_WORKERS];
+static volatile int copy_stop;
+static volatile int copy_failure;
+static unsigned char *copy_mapping;
+static int copy_fd;
 static volatile int nice_ready;
 static volatile int nice_done;
 static pid_t nice_tid;
@@ -122,6 +128,60 @@ static int test_shared_fd_table(void)
 				return fail("fd close", errno);
 		pthread_barrier_destroy(&fd_barrier);
 	}
+	return 0;
+}
+
+static void *copy_worker(void *argument)
+{
+	ssize_t result;
+
+	(void)argument;
+	while (!__atomic_load_n(&copy_stop, __ATOMIC_ACQUIRE)) {
+		errno = 0;
+		result = read(copy_fd, copy_mapping, COPY_PAGE_SIZE);
+		if (result != (ssize_t)COPY_PAGE_SIZE &&
+		    !(result == -1 && errno == EFAULT)) {
+			__atomic_store_n(&copy_failure, errno ? errno : 1,
+			                 __ATOMIC_RELEASE);
+			break;
+		}
+	}
+	return 0;
+}
+
+static int test_copy_unmap_race(void)
+{
+	pthread_t thread;
+	void *mapped;
+	int error, iteration;
+
+	copy_mapping = mmap(0, COPY_PAGE_SIZE, PROT_READ | PROT_WRITE,
+			    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	if (copy_mapping == MAP_FAILED)
+		return fail("copy mmap", errno);
+	copy_fd = open("/dev/zero", O_RDONLY);
+	if (copy_fd < 0)
+		return fail("copy open", errno);
+	copy_stop = 0;
+	copy_failure = 0;
+	error = pthread_create(&thread, 0, copy_worker, 0);
+	if (error)
+		return fail("copy create", error);
+	for (iteration = 0; iteration < ITERATIONS; iteration++) {
+		if (munmap(copy_mapping, COPY_PAGE_SIZE))
+			return fail("copy race munmap", errno);
+		mapped = mmap(copy_mapping, COPY_PAGE_SIZE,
+			      PROT_READ | PROT_WRITE,
+			      MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+		if (mapped != copy_mapping)
+			return fail("copy race mmap", errno);
+	}
+	__atomic_store_n(&copy_stop, 1, __ATOMIC_RELEASE);
+	error = pthread_join(thread, 0);
+	if (error || copy_failure)
+		return fail("copy race join", error ? error : copy_failure);
+	if (close(copy_fd) || munmap(copy_mapping, COPY_PAGE_SIZE))
+		return fail("copy race cleanup", errno);
 	return 0;
 }
 
@@ -275,6 +335,8 @@ int main(void)
 	if (!detached_done)
 		return fail("detached timeout", 0);
 	if (test_shared_fd_table() || test_thread_nice())
+		return 1;
+	if (test_copy_unmap_race())
 		return 1;
 
 	puts("PTHREAD_RUNTIME_OK");

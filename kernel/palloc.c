@@ -330,6 +330,31 @@ uint32 palloc_refcount(void *p)
 	return result;
 }
 
+int palloc_reference_selftest(void)
+{
+	uint64 free_before, free_shared, free_after;
+	void *page;
+
+	spinlock_acquire(&page_lock);
+	free_before = buddy_free_page_count(&page_allocator);
+	spinlock_release(&page_lock);
+	page = palloc_zero();
+	if (!page || palloc_refcount(page) != 1 || palloc_get(page) < 0 ||
+	    palloc_refcount(page) != 2)
+		return -1;
+	pfree(page);
+	spinlock_acquire(&page_lock);
+	free_shared = buddy_free_page_count(&page_allocator);
+	spinlock_release(&page_lock);
+	if (palloc_refcount(page) != 1 || free_shared + 1 != free_before)
+		return -1;
+	pfree(page);
+	spinlock_acquire(&page_lock);
+	free_after = buddy_free_page_count(&page_allocator);
+	spinlock_release(&page_lock);
+	return free_after == free_before ? 0 : -1;
+}
+
 void *palloc(void)
 {
 	void *page = alloc_pages(0, 0);
