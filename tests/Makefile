@@ -116,3 +116,13 @@ scheduler-perf:
 	ROOT_IMAGE="$(TEST_OUTPUT)/root.ext4" \
 		$(CURDIR)/scripts/benchmark-scheduler.py \
 		--output "$(TEST_OUTPUT)/scheduler-benchmark.json" --check
+
+.PHONY: memory-perf
+memory-perf:
+	$(MAKE) -C $(TOPDIR) -j$(JOBS)
+	TEST_OUTPUT="$(TEST_OUTPUT)" JOBS="$(JOBS)" \
+		$(CURDIR)/scripts/build-rootfs.sh
+	KERNEL="$(TOPDIR)/output/kernel" \
+	ROOT_IMAGE="$(TEST_OUTPUT)/root.ext4" \
+		$(CURDIR)/scripts/benchmark-memory.py \
+		--output "$(TEST_OUTPUT)/memory-benchmark.json" --check

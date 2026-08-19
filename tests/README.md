@@ -179,6 +179,21 @@ reported rather than used as CI gates because shared-runner timing is noisy.
 Idle QEMU CPU usage is gated because the pre-fix scheduler consistently
 consumed one host CPU per guest CPU while doing no work.
 
+Measure static and dynamic musl startup, resident memory, physical file-page
+sharing, and sequential `fork()` cost with:
+
+```bash
+make -C tests memory-perf
+```
+
+The benchmark runs identical statically and dynamically linked programs in a
+one-CPU, 256 MiB guest. It uses the kernel emergency state dump to compare
+allocator occupancy and page-cache references while processes are alive and
+after they exit. CI applies broad timing limits to catch deadlocks and severe
+regressions while tolerating shared-runner noise. Physical sharing and
+resident-page limits are deterministic gates; twelve concurrent dynamic
+processes must share their musl and executable file pages.
+
 Run the same matrix against an externally built OpenSBI image with:
 
 ```bash

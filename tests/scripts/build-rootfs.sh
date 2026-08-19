@@ -379,11 +379,18 @@ fi
 	-L"$staging/lib" -ldynamic-fixture \
 	-o "$staging/bin/aslr-runtime"
 
+"$musl_cc" \
+	-march=rv64gc -mabi=lp64d \
+	-O2 -Wall -Wextra -Werror \
+	"$tests_dir/memory_runtime.c" \
+	-o "$staging/bin/memory-dynamic"
+
 for program in \
 	"$staging/bin/dynamic-hello" \
 	"$staging/bin/dynamic-child" \
 	"$staging/bin/dynamic-runtime" \
-	"$staging/bin/aslr-runtime"; do
+	"$staging/bin/aslr-runtime" \
+	"$staging/bin/memory-dynamic"; do
 	if ! "${cross_compile}readelf" -l "$program" |
 		grep -q '/lib/ld-musl-riscv64.so.1'; then
 		echo "dynamic fixture has the wrong PT_INTERP: $program" >&2
@@ -472,6 +479,12 @@ done
 "$musl_cc" \
 	-static -march=rv64gc -mabi=lp64d \
 	-O2 -Wall -Wextra -Werror \
+	"$tests_dir/memory_runtime.c" \
+	-o "$staging/bin/memory-static"
+
+"$musl_cc" \
+	-static -march=rv64gc -mabi=lp64d \
+	-O2 -Wall -Wextra -Werror \
 	"$tests_dir/random_runtime.c" \
 	-o "$staging/bin/random-runtime"
 
@@ -539,6 +552,12 @@ fi
 if "${cross_compile}readelf" -l "$staging/bin/vm-runtime" |
 	grep -q INTERP; then
 	echo "VM selftest must be statically linked" >&2
+	exit 1
+fi
+
+if "${cross_compile}readelf" -l "$staging/bin/memory-static" |
+	grep -q INTERP; then
+	echo "static memory benchmark must not contain PT_INTERP" >&2
 	exit 1
 fi
 

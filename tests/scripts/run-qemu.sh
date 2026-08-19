@@ -577,6 +577,13 @@ fi
 	--output "$test_output/scheduler-benchmark.json" \
 	--check
 
+"$script_dir/benchmark-memory.py" \
+	--qemu "$qemu" \
+	--kernel "$KERNEL" \
+	--root-image "$root_image" \
+	--output "$test_output/memory-benchmark.json" \
+	--check
+
 make -C "$topdir" clean
 make -C "$topdir" -j"$jobs" STACK_OVERFLOW_TEST=1
 export QEMU_LOG=$test_output/qemu-stack-overflow.log
