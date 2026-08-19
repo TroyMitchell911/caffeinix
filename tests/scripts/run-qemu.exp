@@ -100,6 +100,22 @@ expect {
 }
 expect_prompt
 
+send -- "/bin/io-runtime\r"
+foreach marker {
+	VECTORED_IO_OK
+} {
+	expect {
+		-re "\\r?\\n$marker" {}
+		-re {IO_RUNTIME_FAIL[^\r\n]*} {
+			abort_test "vectored I/O test reported failure"
+		}
+		-re {\[PANIC\]} { abort_test "kernel panic in I/O test" }
+		timeout { abort_test "vectored I/O test timeout" }
+		eof { abort_test "QEMU exited during vectored I/O test" }
+	}
+}
+expect_prompt
+
 send -- "/bin/dynamic-hello\r"
 expect {
 	-re {\r?\nDYNAMIC_HELLO_OK} {}

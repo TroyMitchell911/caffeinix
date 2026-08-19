@@ -17,6 +17,7 @@
 #include <asm-generic/termios.h>
 #include <linux/in.h>
 #include <linux/futex.h>
+#include <linux/fs.h>
 #include <linux/mman.h>
 #include <linux/membarrier.h>
 #include <linux/random.h>
@@ -32,7 +33,15 @@ _Static_assert(LINUX_SYS_linkat == __NR_linkat, "linkat number");
 _Static_assert(LINUX_SYS_ftruncate == __NR_ftruncate,
 	       "ftruncate number");
 _Static_assert(LINUX_SYS_ppoll == __NR_ppoll, "ppoll number");
+_Static_assert(LINUX_SYS_readv == __NR_readv, "readv number");
+_Static_assert(LINUX_SYS_writev == __NR_writev, "writev number");
 _Static_assert(LINUX_SYS_pread64 == __NR_pread64, "pread64 number");
+_Static_assert(LINUX_SYS_pwrite64 == __NR_pwrite64, "pwrite64 number");
+_Static_assert(LINUX_SYS_preadv == __NR_preadv, "preadv number");
+_Static_assert(LINUX_SYS_pwritev == __NR_pwritev, "pwritev number");
+_Static_assert(LINUX_SYS_preadv2 == __NR_preadv2, "preadv2 number");
+_Static_assert(LINUX_SYS_pwritev2 == __NR_pwritev2,
+	       "pwritev2 number");
 _Static_assert(LINUX_SYS_socket == __NR_socket, "socket number");
 _Static_assert(LINUX_SYS_accept4 == __NR_accept4, "accept4 number");
 _Static_assert(LINUX_SYS_getdents64 == __NR_getdents64,
@@ -83,6 +92,10 @@ _Static_assert(LINUX_SYS_renameat2 == __NR_renameat2,
 	       "renameat2 number");
 _Static_assert(LINUX_SYS_getrandom == __NR_getrandom,
 	       "getrandom number");
+#ifdef RWF_NOAPPEND
+_Static_assert(LINUX_RWF_NOAPPEND == RWF_NOAPPEND,
+	       "RWF_NOAPPEND value");
+#endif
 
 _Static_assert(sizeof(struct linux_stat) == sizeof(struct stat),
 	       "stat size");

@@ -485,6 +485,12 @@ done
 "$musl_cc" \
 	-static -march=rv64gc -mabi=lp64d \
 	-O2 -Wall -Wextra -Werror \
+	"$tests_dir/io_runtime.c" \
+	-o "$staging/bin/io-runtime"
+
+"$musl_cc" \
+	-static -march=rv64gc -mabi=lp64d \
+	-O2 -Wall -Wextra -Werror \
 	"$tests_dir/memory_runtime.c" \
 	-o "$staging/bin/memory-static"
 
@@ -564,6 +570,12 @@ fi
 if "${cross_compile}readelf" -l "$staging/bin/exec-runtime" |
 	grep -q INTERP; then
 	echo "exec selftest must be statically linked" >&2
+	exit 1
+fi
+
+if "${cross_compile}readelf" -l "$staging/bin/io-runtime" |
+	grep -q INTERP; then
+	echo "I/O selftest must be statically linked" >&2
 	exit 1
 fi
 

@@ -52,6 +52,9 @@ def udp_server(server):
         payload, peer = server.recvfrom(4096)
         if payload == b"udp-request":
             server.sendto(b"udp-reply", peer)
+        elif payload == b"udp-readv-large":
+            server.sendto(bytes(index & 0xff for index in range(8192)),
+                          peer)
         elif payload == b"tcp-listen-ready":
             threading.Thread(target=guest_server_client,
                              args=(server, peer), daemon=True).start()
