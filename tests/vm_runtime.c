@@ -9,6 +9,7 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/uio.h>
 #include <sys/wait.h>
@@ -39,6 +40,9 @@
 #define SHARED_ANON_CHILD "/tmp/vm-shared-anon-child"
 #define SHARED_ANON_PARENT "/tmp/vm-shared-anon-parent"
 #define SHARED_ANON_SPLIT "/tmp/vm-shared-anon-split"
+#define RECLAIM_FILE_PATH "/lib/libc.so"
+#define RECLAIM_CLEAN_LENGTH (24 * 1024 * 1024UL)
+#define RECLAIM_DIRTY_LENGTH (36 * 1024 * 1024UL)
 #define HINT_ADDRESS ((void *)0x20000000UL)
 
 #define CHECK(condition, name) do { \
@@ -1220,10 +1224,74 @@ static void test_mapping_hardening(void)
 	CHECK(munmap(code, PAGE_SIZE) == 0, "JIT unmap");
 }
 
-int main(void)
+static uint64_t reclaim_hash(const volatile unsigned char *mapping,
+			     size_t length)
+{
+	uint64_t hash = UINT64_C(14695981039346656037);
+	size_t index;
+
+	for (index = 0; index < length; index++) {
+		hash ^= mapping[index];
+		hash *= UINT64_C(1099511628211);
+	}
+	return hash;
+}
+
+static void test_clean_reclaim(void)
+{
+	volatile unsigned char *clean, *dirty, *file_mapping;
+	struct stat status;
+	uint64_t file_hash;
+	unsigned long page;
+	int fd;
+
+	fd = open(RECLAIM_FILE_PATH, O_RDONLY);
+	CHECK(fd >= 0, "reclaim file open");
+	CHECK(fstat(fd, &status) == 0 && status.st_size > 0,
+	      "reclaim file stat");
+	file_mapping = mmap(0, status.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+	CHECK(file_mapping != MAP_FAILED, "reclaim file mmap");
+	CHECK(close(fd) == 0, "reclaim file close");
+	file_hash = reclaim_hash(file_mapping, status.st_size);
+
+	clean = mmap(0, RECLAIM_CLEAN_LENGTH, PROT_READ,
+		     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	CHECK(clean != MAP_FAILED, "reclaim clean mmap");
+	for (page = 0; page < RECLAIM_CLEAN_LENGTH / PAGE_SIZE; page++)
+		CHECK(clean[page * PAGE_SIZE] == 0, "reclaim clean initial");
+
+	dirty = mmap(0, RECLAIM_DIRTY_LENGTH, PROT_READ | PROT_WRITE,
+		     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	CHECK(dirty != MAP_FAILED, "reclaim dirty mmap");
+	for (page = 0; page < RECLAIM_DIRTY_LENGTH / PAGE_SIZE; page++)
+		dirty[page * PAGE_SIZE] = (unsigned char)(page * 17 + 3);
+
+	CHECK(reclaim_hash(file_mapping, status.st_size) == file_hash,
+	      "reclaim file reload");
+	for (page = 0; page < RECLAIM_CLEAN_LENGTH / PAGE_SIZE; page++)
+		CHECK(clean[page * PAGE_SIZE] == 0, "reclaim clean reload");
+	for (page = 0; page < RECLAIM_DIRTY_LENGTH / PAGE_SIZE; page++)
+		CHECK(dirty[page * PAGE_SIZE] ==
+		      (unsigned char)(page * 17 + 3),
+		      "reclaim dirty preserve");
+
+	CHECK(munmap((void *)dirty, RECLAIM_DIRTY_LENGTH) == 0,
+	      "reclaim dirty munmap");
+	CHECK(munmap((void *)clean, RECLAIM_CLEAN_LENGTH) == 0,
+	      "reclaim clean munmap");
+	CHECK(munmap((void *)file_mapping, status.st_size) == 0,
+	      "reclaim file munmap");
+	puts("VM_RECLAIM_OK");
+}
+
+int main(int argc, char **argv)
 {
 	unsigned char *anonymous, *file_mapping;
 
+	if (argc == 2 && !strcmp(argv[1], "reclaim")) {
+		test_clean_reclaim();
+		return EXIT_SUCCESS;
+	}
 	test_brk_mmap_ceiling();
 	create_fixture();
 	test_read_copy_faults();

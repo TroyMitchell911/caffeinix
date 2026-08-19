@@ -43,6 +43,11 @@ if {[info exists env(DYNAMIC_PRESSURE_ITERATIONS)] &&
     $env(DYNAMIC_PRESSURE_ITERATIONS) ne ""} {
 	set pressure_iterations $env(DYNAMIC_PRESSURE_ITERATIONS)
 }
+set reclaim_test 0
+if {[info exists env(VM_RECLAIM_TEST)] &&
+    $env(VM_RECLAIM_TEST) ne ""} {
+	set reclaim_test $env(VM_RECLAIM_TEST)
+}
 
 log_file -noappend $env(QEMU_LOG)
 set command [list \
@@ -294,6 +299,29 @@ expect {
 	}
 	timeout { abort_test "shell prompt timeout" }
 	eof { abort_test "QEMU exited after network loopback test" }
+}
+
+if {$reclaim_test == 1} {
+	send -- "/bin/vm-runtime reclaim\r"
+	expect {
+		-re {\r?\nVM_RECLAIM_OK} {}
+		-re {VM_RUNTIME_FAIL[^\r\n]*} {
+			abort_test "clean-page reclaim test reported failure"
+		}
+		-re {\[PANIC\]} {
+			abort_test "kernel panic in clean-page reclaim test"
+		}
+		timeout { abort_with_dump "clean-page reclaim test timeout" }
+		eof { abort_test "QEMU exited during clean-page reclaim test" }
+	}
+	expect {
+		-re {\r?\n# $} {}
+		-re {\[PANIC\]} {
+			abort_test "kernel panic after clean-page reclaim test"
+		}
+		timeout { abort_test "shell prompt timeout" }
+		eof { abort_test "QEMU exited after clean-page reclaim test" }
+	}
 }
 
 if {$env(QEMU_CPUS) == 1} {

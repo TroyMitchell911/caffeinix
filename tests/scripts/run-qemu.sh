@@ -273,6 +273,7 @@ run_boot_smoke()
 	local memory=$2
 	local pressure_iterations=${3:-1}
 	local rng_backend=/dev/urandom
+	local reclaim_test=${5:-0}
 	local log=$test_output/qemu-smp${cpus}-${memory}.log
 	local clean=$test_output/qemu-smp${cpus}-${memory}.clean.log
 	local random_marker='random: crng initialized'
@@ -287,6 +288,7 @@ run_boot_smoke()
 	export QEMU_CPUS=$cpus
 	export QEMU_MEMORY=$memory
 	export QEMU_RNG_BACKEND=$rng_backend
+	export VM_RECLAIM_TEST=$reclaim_test
 	export QEMU_LOG=$log
 	export DYNAMIC_PRESSURE_ITERATIONS=$pressure_iterations
 	expect "$script_dir/run-boot.exp"
@@ -356,6 +358,12 @@ run_boot_smoke()
 		echo "network loopback marker is missing" >&2
 		exit 1
 	fi
+	if [ "$reclaim_test" -eq 1 ] &&
+	   [ "$(awk '$0 == "VM_RECLAIM_OK" { count++ }
+		END { print count + 0 }' "$clean")" -ne 1 ]; then
+		echo "clean-page reclaim marker is missing" >&2
+		exit 1
+	fi
 	check_net_device_log "$clean" 0
 	if [ "$cpus" -eq 1 ] &&
 	   [ "$(awk '$0 == "SCHED_CFS_FAIR_OK" { count++ }
@@ -366,7 +374,7 @@ run_boot_smoke()
 	check_boot_log "$clean" "$cpus"
 }
 
-run_boot_smoke 1 64M 1 ""
+run_boot_smoke 1 64M 1 "" 1
 run_boot_smoke 2 192M
 run_boot_smoke 3 96M 32
 run_boot_smoke 4 128M
