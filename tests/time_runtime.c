@@ -13,7 +13,7 @@
 
 #define NSEC_PER_SEC 1000000000LL
 
-static volatile sig_atomic_t signal_seen;
+static volatile sig_atomic_t signal_count;
 
 static void fail(const char *operation)
 {
@@ -40,7 +40,7 @@ static void require_elapsed(const char *operation,
 static void signal_handler(int signal)
 {
 	(void)signal;
-	signal_seen = 1;
+	signal_count++;
 }
 
 static void check_clocks(void)
@@ -126,11 +126,78 @@ static void check_interruption(void)
 	}
 	errno = 0;
 	if (nanosleep(&request, &remaining) != -1 || errno != EINTR ||
-	    !signal_seen || remaining.tv_sec < 1 || remaining.tv_sec > 2)
+	    !signal_count || remaining.tv_sec < 1 || remaining.tv_sec > 2)
 		fail("interrupted nanosleep");
 	if (waitpid(child, &status, 0) != child || !WIFEXITED(status) ||
 	    WEXITSTATUS(status))
 		fail("signal child");
+}
+
+static void check_interval_timers(void)
+{
+	struct sigaction action = { 0 };
+	struct itimerval timer = { 0 };
+	struct itimerval current, previous;
+	struct timespec pause = { .tv_sec = 1 };
+	struct timespec start, now;
+	int count;
+
+	action.sa_handler = signal_handler;
+	sigemptyset(&action.sa_mask);
+	if (sigaction(SIGALRM, &action, 0))
+		fail("SIGALRM action");
+	signal_count = 0;
+	timer.it_value.tv_usec = 150000;
+	if (setitimer(ITIMER_REAL, &timer, 0) ||
+	    getitimer(ITIMER_REAL, &current))
+		fail("one-shot setitimer");
+	if (current.it_value.tv_sec != 0 || current.it_value.tv_usec <= 0 ||
+	    current.it_value.tv_usec > 150000)
+		fail("one-shot getitimer");
+	errno = 0;
+	if (nanosleep(&pause, 0) != -1 || errno != EINTR || signal_count != 1)
+		fail("one-shot SIGALRM");
+	if (getitimer(ITIMER_REAL, &current) || current.it_value.tv_sec ||
+	    current.it_value.tv_usec)
+		fail("one-shot disarm");
+
+	signal_count = 0;
+	timer.it_interval.tv_usec = 50000;
+	timer.it_value.tv_usec = 50000;
+	if (setitimer(ITIMER_REAL, &timer, 0) ||
+	    clock_gettime(CLOCK_MONOTONIC, &start))
+		fail("periodic setitimer");
+	while (signal_count < 3) {
+		pause.tv_sec = 0;
+		pause.tv_nsec = 500000000;
+		(void)nanosleep(&pause, 0);
+		if (clock_gettime(CLOCK_MONOTONIC, &now))
+			fail("periodic clock");
+		if (time_ns(&now) - time_ns(&start) > 2000000000LL)
+			fail("periodic timeout");
+	}
+	memset(&timer, 0, sizeof(timer));
+	if (setitimer(ITIMER_REAL, &timer, &previous))
+		fail("periodic disarm");
+	if (previous.it_interval.tv_usec < 40000 ||
+	    previous.it_interval.tv_usec > 60000)
+		fail("periodic old value");
+	count = signal_count;
+	pause.tv_sec = 0;
+	pause.tv_nsec = 150000000;
+	if (nanosleep(&pause, 0) || signal_count != count)
+		fail("periodic remained armed");
+	memset(&timer, 0, sizeof(timer));
+	timer.it_value.tv_usec = 500000;
+	memset(&previous, 0, sizeof(previous));
+	if (setitimer(ITIMER_REAL, &timer, 0) ||
+	    setitimer(ITIMER_REAL, 0, &previous) ||
+	    previous.it_value.tv_sec != 0 ||
+	    previous.it_value.tv_usec <= 0 ||
+	    previous.it_value.tv_usec > 500000 ||
+	    getitimer(ITIMER_REAL, &current) || current.it_value.tv_sec ||
+	    current.it_value.tv_usec)
+		fail("null setitimer disarm");
 }
 
 static void check_fallback_clock(void)
@@ -190,6 +257,7 @@ int main(int argc, char **argv)
 	check_clocks();
 	check_sleeps();
 	check_interruption();
+	check_interval_timers();
 	puts("TIME_RUNTIME_OK");
 	return 0;
 }

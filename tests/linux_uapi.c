@@ -88,6 +88,10 @@ _Static_assert(LINUX_SYS_clock_nanosleep == __NR_clock_nanosleep,
 	       "clock_nanosleep number");
 _Static_assert(LINUX_SYS_nanosleep == __NR_nanosleep,
 	       "nanosleep number");
+_Static_assert(LINUX_SYS_getitimer == __NR_getitimer,
+	       "getitimer number");
+_Static_assert(LINUX_SYS_setitimer == __NR_setitimer,
+	       "setitimer number");
 _Static_assert(LINUX_SYS_gettimeofday == __NR_gettimeofday,
 	       "gettimeofday number");
 _Static_assert(LINUX_SYS_clone == __NR_clone, "clone number");
@@ -164,6 +168,11 @@ _Static_assert(sizeof(struct linux_timeval) == sizeof(struct timeval),
 	       "timeval size");
 _Static_assert(sizeof(struct linux_timezone) == sizeof(struct timezone),
 	       "timezone size");
+_Static_assert(sizeof(struct linux_itimerval) == sizeof(struct itimerval),
+	       "itimerval size");
+_Static_assert(offsetof(struct linux_itimerval, value) ==
+	       offsetof(struct itimerval, it_value),
+	       "itimerval value offset");
 _Static_assert(LINUX_TIMER_ABSTIME == TIMER_ABSTIME,
 	       "absolute timer flag");
 _Static_assert(sizeof(struct linux_pollfd) == sizeof(struct pollfd),
