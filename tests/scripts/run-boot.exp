@@ -85,6 +85,27 @@ expect {
 	eof { abort_test "QEMU exited after dynamic musl hello" }
 }
 
+send -- "/bin/thread-runtime\r"
+expect {
+	-re {\r?\nTHREAD_CLONE_OK} {}
+	-re {THREAD_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "user thread clone test reported failure"
+	}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic in user thread clone test"
+	}
+	timeout { abort_with_dump "user thread clone test timeout" }
+	eof { abort_test "QEMU exited during user thread clone test" }
+}
+expect {
+	-re {\r?\n# $} {}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic after user thread clone test"
+	}
+	timeout { abort_test "shell prompt timeout" }
+	eof { abort_test "QEMU exited after user thread clone test" }
+}
+
 send -- "/bin/dynamic-runtime pressure $pressure_iterations\r"
 expect {
 	-re {\r?\nDYNAMIC_EXEC_PRESSURE_OK} {}

@@ -13,6 +13,7 @@
 #include <asm-generic/termios.h>
 #include <linux/in.h>
 #include <linux/mman.h>
+#include <linux/sched.h>
 #include <linux/tcp.h>
 #include <linux/time_types.h>
 
@@ -93,3 +94,12 @@ _Static_assert(LINUX_MAP_PRIVATE == MAP_PRIVATE, "MAP_PRIVATE value");
 _Static_assert(LINUX_MAP_FIXED == MAP_FIXED, "MAP_FIXED value");
 _Static_assert(LINUX_MAP_ANONYMOUS == MAP_ANONYMOUS,
 	       "MAP_ANONYMOUS value");
+_Static_assert(LINUX_CLONE_VM == CLONE_VM, "CLONE_VM value");
+_Static_assert(LINUX_CLONE_THREAD == CLONE_THREAD,
+	       "CLONE_THREAD value");
+_Static_assert(LINUX_CLONE_SETTLS == CLONE_SETTLS,
+	       "CLONE_SETTLS value");
+_Static_assert(LINUX_CLONE_PARENT_SETTID == CLONE_PARENT_SETTID,
+	       "CLONE_PARENT_SETTID value");
+_Static_assert(LINUX_CLONE_CHILD_CLEARTID == CLONE_CHILD_CLEARTID,
+	       "CLONE_CHILD_CLEARTID value");

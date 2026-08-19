@@ -281,6 +281,11 @@ run_boot_smoke()
 		echo "dynamic musl smoke marker is missing" >&2
 		exit 1
 	fi
+	if [ "$(awk '$0 == "THREAD_CLONE_OK" { count++ }
+		END { print count + 0 }' "$clean")" -ne 1 ]; then
+		echo "user thread clone marker is missing" >&2
+		exit 1
+	fi
 	if [ "$(awk '$0 == "DYNAMIC_EXEC_PRESSURE_OK" { count++ }
 		END { print count + 0 }' "$clean")" -ne 1 ]; then
 		echo "dynamic exec pressure marker is missing" >&2
