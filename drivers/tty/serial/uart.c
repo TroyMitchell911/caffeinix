@@ -81,8 +81,16 @@ int uart_handle_irq(struct uart_port *port)
 
 	if (!port || !port->registered)
 		return IRQ_NONE;
-	while ((character = port->operations->get_char(port)) >= 0)
-		tty_receive_char(&port->tty, character);
+	while ((character = port->operations->get_char(port)) >= 0) {
+		if (character == UART_RX_BREAK) {
+			if (tty_get_console() == &port->tty)
+				debug_dump_state();
+			else
+				tty_receive_char(&port->tty, '\0');
+		} else {
+			tty_receive_char(&port->tty, character);
+		}
+	}
 	spinlock_acquire(&port->lock);
 	uart_start_transmit_locked(port);
 	spinlock_release(&port->lock);

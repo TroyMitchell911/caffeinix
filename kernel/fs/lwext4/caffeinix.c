@@ -59,6 +59,21 @@ static const struct vfs_inode_operations ext4fs_inode_operations;
 static const struct vfs_file_operations ext4fs_file_operations;
 static const struct vfs_file_operations ext4fs_directory_operations;
 
+void ext4fs_debug_dump(void)
+{
+	thread_t owner = __atomic_load_n(&ext4fs_lock_owner,
+					 __ATOMIC_RELAXED);
+	thread_t sleep_owner = __atomic_load_n(&ext4fs_lock.owner,
+					       __ATOMIC_RELAXED);
+
+	printf_emergency("ext4 locked=%d owner=%p owner_tid=%d depth=%u "
+			 "sleep_owner=%p sleep_owner_tid=%d\n",
+			 ext4fs_lock.locked, (uint64)owner,
+			 owner ? owner->tid : -1, ext4fs_lock_depth,
+			 (uint64)sleep_owner,
+			 sleep_owner ? sleep_owner->tid : -1);
+}
+
 static int ext4fs_is_orphan_directory(const char *directory,
 				      const char *name)
 {

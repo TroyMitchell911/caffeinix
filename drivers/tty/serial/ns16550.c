@@ -23,11 +23,14 @@
 #define UART_LCR_8N1 0x03
 #define UART_LCR_DLAB 0x80
 #define UART_LSR_DATA_READY 0x01
+#define UART_LSR_BREAK 0x10
 #define UART_LSR_THRE 0x20
 
 struct ns16550_device {
 	struct uart_port port;
 	struct platform_device *platform;
+	struct spinlock lsr_lock;
+	uint8 break_pending;
 	int used;
 };
 
@@ -58,6 +61,17 @@ static void ns16550_write(struct uart_port *port, uint32 number,
 		writeb(value, address);
 }
 
+static uint8 ns16550_read_lsr(struct uart_port *port)
+{
+	struct ns16550_device *device = port->private;
+	uint8 status = ns16550_read(port, UART_LSR);
+
+	/* Reading LSR clears the break bit, including from TX polling. */
+	if (status & UART_LSR_BREAK)
+		device->break_pending = 1;
+	return status;
+}
+
 static int ns16550_startup(struct uart_port *port)
 {
 	uint32 divisor = port->clock / (16 * 38400);
@@ -82,7 +96,13 @@ static void ns16550_shutdown(struct uart_port *port)
 
 static int ns16550_tx_ready(struct uart_port *port)
 {
-	return ns16550_read(port, UART_LSR) & UART_LSR_THRE;
+	struct ns16550_device *device = port->private;
+	uint8 status;
+
+	spinlock_acquire(&device->lsr_lock);
+	status = ns16550_read_lsr(port);
+	spinlock_release(&device->lsr_lock);
+	return status & UART_LSR_THRE;
 }
 
 static void ns16550_put_char(struct uart_port *port, int character)
@@ -92,9 +112,22 @@ static void ns16550_put_char(struct uart_port *port, int character)
 
 static int ns16550_get_char(struct uart_port *port)
 {
-	if (!(ns16550_read(port, UART_LSR) & UART_LSR_DATA_READY))
-		return -1;
-	return ns16550_read(port, UART_RX);
+	struct ns16550_device *device = port->private;
+	uint8 status;
+	int character = -1;
+
+	spinlock_acquire(&device->lsr_lock);
+	status = ns16550_read_lsr(port);
+	if (device->break_pending) {
+		device->break_pending = 0;
+		if (status & UART_LSR_DATA_READY)
+			(void)ns16550_read(port, UART_RX);
+		character = UART_RX_BREAK;
+	} else if (status & UART_LSR_DATA_READY) {
+		character = ns16550_read(port, UART_RX);
+	}
+	spinlock_release(&device->lsr_lock);
+	return character;
 }
 
 static void ns16550_update_ier(struct uart_port *port, uint8 mask,
@@ -165,6 +198,7 @@ static int ns16550_probe(struct platform_device *platform)
 	device->port.operations = &ns16550_operations;
 	device->port.of_node = node;
 	device->port.private = device;
+	spinlock_init(&device->lsr_lock, "ns16550 LSR");
 	if (of_property_read_u32(node, "reg-shift", &value) == 0)
 		device->port.reg_shift = value;
 	if (of_property_read_u32(node, "reg-io-width", &value) == 0)
