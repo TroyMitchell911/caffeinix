@@ -3,7 +3,9 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/mman.h>
+#include <sys/socket.h>
 #include <sys/syscall.h>
 #include <sys/uio.h>
 #include <sys/wait.h>
@@ -14,6 +16,14 @@
 #define SHARED_READ_PATH "/vm-shared-read.bin"
 #define SHARED_READ_START "/tmp/vm-shared-read-start"
 #define SHARED_READ_CHILDREN 8
+#define PREAD_PATH "/vm-pread.bin"
+#define PREAD_START "/tmp/vm-pread-start"
+#define PREAD_WRITE_PATH "/vm-pread-write.bin"
+#define PREAD_WRITE_START "/tmp/vm-pread-write-start"
+#define PREAD_WRITE_PAGES 32
+#define PREAD_WRITE_LENGTH (16 * PAGE_SIZE)
+#define PREAD_WRITE_READERS 4
+#define PREAD_WRITE_ITERATIONS 16
 #define HINT_ADDRESS ((void *)0x20000000UL)
 
 #define CHECK(condition, name) do { \
@@ -184,6 +194,255 @@ static void test_shared_file_reads(void)
 	CHECK(unlink(SHARED_READ_START) == 0, "shared read barrier unlink");
 	CHECK(unlink(SHARED_READ_PATH) == 0, "shared read unlink");
 	puts("VM_SHARED_READ_OK");
+}
+
+static void concurrent_pread_child(int fd, unsigned int page)
+{
+	unsigned char buffer[PAGE_SIZE];
+	unsigned int index;
+
+	while (access(PREAD_START, F_OK) < 0) {
+		if (errno != ENOENT)
+			_exit(1);
+	}
+	if (pread(fd, buffer, sizeof(buffer), page * PAGE_SIZE) !=
+	    sizeof(buffer))
+		_exit(1);
+	for (index = 0; index < PAGE_SIZE; index++) {
+		if (buffer[index] != pattern(page, index))
+			_exit(1);
+	}
+	_exit(0);
+}
+
+static void test_concurrent_pread(void)
+{
+	unsigned char buffer[PAGE_SIZE];
+	pid_t children[SHARED_READ_CHILDREN];
+	unsigned int index;
+	int fd, start_fd, status;
+
+	fd = open(PREAD_PATH, O_CREAT | O_TRUNC | O_RDWR, 0600);
+	CHECK(fd >= 0, "concurrent pread open");
+	for (index = 0; index < SHARED_READ_CHILDREN; index++) {
+		fill_page(buffer, index);
+		write_all(fd, buffer, sizeof(buffer));
+	}
+	unlink(PREAD_START);
+	for (index = 0; index < SHARED_READ_CHILDREN; index++) {
+		children[index] = fork();
+		CHECK(children[index] >= 0, "concurrent pread fork");
+		if (!children[index])
+			concurrent_pread_child(fd, index);
+	}
+	start_fd = open(PREAD_START, O_CREAT | O_TRUNC | O_WRONLY, 0600);
+	CHECK(start_fd >= 0, "concurrent pread barrier");
+	CHECK(close(start_fd) == 0, "concurrent pread barrier close");
+	for (index = 0; index < SHARED_READ_CHILDREN; index++) {
+		CHECK(waitpid(children[index], &status, 0) == children[index],
+		      "concurrent pread wait");
+		CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+		      "concurrent pread child status");
+	}
+	CHECK(close(fd) == 0, "concurrent pread close");
+	CHECK(unlink(PREAD_START) == 0, "concurrent pread barrier unlink");
+	CHECK(unlink(PREAD_PATH) == 0, "concurrent pread unlink");
+}
+
+static void expect_pread_fault(int fd, void *destination,
+			       const char *name)
+{
+	errno = 0;
+	CHECK(pread(fd, destination, 1, 0) == -1 && errno == EFAULT, name);
+}
+
+static void test_pread_copy_faults(void)
+{
+	static const char value = 'x';
+	void *destination;
+	int fd;
+
+	destination = mmap(0, PAGE_SIZE, PROT_READ,
+			   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	CHECK(destination != MAP_FAILED, "pread fault mmap");
+
+	fd = open(FILE_PATH, O_RDONLY);
+	CHECK(fd >= 0, "pread fault tmpfs open");
+	expect_pread_fault(fd, destination, "pread fault tmpfs");
+	CHECK(close(fd) == 0, "pread fault tmpfs close");
+
+	fd = open("/bin/sh", O_RDONLY);
+	CHECK(fd >= 0, "pread fault ext4 open");
+	expect_pread_fault(fd, destination, "pread fault ext4");
+	CHECK(close(fd) == 0, "pread fault ext4 close");
+
+	fd = open("/mnt/fat/pread-fault", O_CREAT | O_TRUNC | O_RDWR, 0600);
+	CHECK(fd >= 0, "pread fault FAT open");
+	write_all(fd, &value, sizeof(value));
+	expect_pread_fault(fd, destination, "pread fault FAT");
+	CHECK(close(fd) == 0, "pread fault FAT close");
+	CHECK(unlink("/mnt/fat/pread-fault") == 0,
+	      "pread fault FAT unlink");
+
+	CHECK(munmap(destination, PAGE_SIZE) == 0, "pread fault munmap");
+}
+
+static void pread_write_wait(void)
+{
+	while (access(PREAD_WRITE_START, F_OK) < 0) {
+		if (errno != ENOENT)
+			_exit(1);
+	}
+}
+
+static void pread_write_writer(int fd)
+{
+	unsigned char *buffer = malloc(PREAD_WRITE_LENGTH);
+	unsigned int iteration;
+
+	if (!buffer)
+		_exit(1);
+	memset(buffer, 0xa5, PREAD_WRITE_LENGTH);
+	pread_write_wait();
+	for (iteration = 0; iteration < PREAD_WRITE_ITERATIONS;
+	     iteration++) {
+		if (lseek(fd, 0, SEEK_SET) != 0 ||
+		    write(fd, buffer, PREAD_WRITE_LENGTH) !=
+		    PREAD_WRITE_LENGTH)
+			_exit(1);
+	}
+	free(buffer);
+	_exit(0);
+}
+
+static void pread_write_reader(int fd, unsigned int page)
+{
+	unsigned char buffer[PAGE_SIZE];
+	unsigned int iteration, index;
+
+	pread_write_wait();
+	for (iteration = 0; iteration < PREAD_WRITE_ITERATIONS;
+	     iteration++) {
+		if (pread(fd, buffer, sizeof(buffer), page * PAGE_SIZE) !=
+		    sizeof(buffer))
+			_exit(1);
+		for (index = 0; index < PAGE_SIZE; index++) {
+			if (buffer[index] != pattern(page, index))
+				_exit(1);
+		}
+	}
+	_exit(0);
+}
+
+static void test_concurrent_pread_write(void)
+{
+	unsigned char buffer[PAGE_SIZE];
+	pid_t children[PREAD_WRITE_READERS + 1];
+	unsigned int page, index;
+	int fd, start_fd, status;
+
+	fd = open(PREAD_WRITE_PATH, O_CREAT | O_TRUNC | O_RDWR, 0600);
+	CHECK(fd >= 0, "pread write open");
+	for (page = 0; page < PREAD_WRITE_PAGES; page++) {
+		fill_page(buffer, page);
+		write_all(fd, buffer, sizeof(buffer));
+	}
+	unlink(PREAD_WRITE_START);
+	children[0] = fork();
+	CHECK(children[0] >= 0, "pread write writer fork");
+	if (!children[0])
+		pread_write_writer(fd);
+	for (index = 0; index < PREAD_WRITE_READERS; index++) {
+		children[index + 1] = fork();
+		CHECK(children[index + 1] >= 0,
+		      "pread write reader fork");
+		if (!children[index + 1])
+			pread_write_reader(fd, 24 + index);
+	}
+	start_fd = open(PREAD_WRITE_START,
+			O_CREAT | O_TRUNC | O_WRONLY, 0600);
+	CHECK(start_fd >= 0, "pread write barrier");
+	CHECK(close(start_fd) == 0, "pread write barrier close");
+	for (index = 0; index < PREAD_WRITE_READERS + 1; index++) {
+		CHECK(waitpid(children[index], &status, 0) == children[index],
+		      "pread write wait");
+		CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+		      "pread write child status");
+	}
+	for (page = 0; page < PREAD_WRITE_PAGES; page++) {
+		CHECK(pread(fd, buffer, sizeof(buffer), page * PAGE_SIZE) ==
+		      sizeof(buffer), "pread write verify");
+		for (index = 0; index < PAGE_SIZE; index++) {
+			unsigned char expected = page < 16 ? 0xa5 :
+				pattern(page, index);
+
+			CHECK(buffer[index] == expected,
+			      "pread write contents");
+		}
+	}
+	CHECK(close(fd) == 0, "pread write close");
+	CHECK(unlink(PREAD_WRITE_START) == 0,
+	      "pread write barrier unlink");
+	CHECK(unlink(PREAD_WRITE_PATH) == 0, "pread write unlink");
+}
+
+static void test_pread(void)
+{
+	unsigned char buffer[32];
+	off_t position = 17;
+	int directory_fd, fd, null_fd, socket_fd, tty_fd, zero_fd;
+
+	fd = open(FILE_PATH, O_RDONLY);
+	CHECK(fd >= 0, "pread open");
+	CHECK(lseek(fd, position, SEEK_SET) == position, "pread seek");
+	CHECK(pread(fd, buffer, sizeof(buffer), PAGE_SIZE + 19) ==
+	      (ssize_t)sizeof(buffer), "pread data");
+	for (size_t index = 0; index < sizeof(buffer); index++)
+		CHECK(buffer[index] == pattern(1, index + 19),
+		      "pread contents");
+	CHECK(lseek(fd, 0, SEEK_CUR) == position, "pread position");
+	errno = 0;
+	CHECK(pread(fd, buffer, sizeof(buffer), -1) == -1 &&
+	      errno == EINVAL, "pread negative offset");
+	CHECK(close(fd) == 0, "pread close");
+	errno = 0;
+	CHECK(pread(fd, buffer, sizeof(buffer), 0) == -1 && errno == EBADF,
+	      "pread closed descriptor");
+	directory_fd = open("/", O_RDONLY | O_DIRECTORY);
+	CHECK(directory_fd >= 0, "pread directory open");
+	errno = 0;
+	CHECK(pread(directory_fd, buffer, sizeof(buffer), 0) == -1 &&
+	      errno == EISDIR, "pread directory");
+	CHECK(close(directory_fd) == 0, "pread directory close");
+	socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
+	CHECK(socket_fd >= 0, "pread socket");
+	errno = 0;
+	CHECK(pread(socket_fd, buffer, sizeof(buffer), 0) == -1 &&
+	      errno == ESPIPE, "pread non-seekable descriptor");
+	CHECK(close(socket_fd) == 0, "pread socket close");
+	tty_fd = open("/dev/ttyS0", O_RDONLY | O_NONBLOCK);
+	CHECK(tty_fd >= 0, "pread terminal open");
+	errno = 0;
+	CHECK(pread(tty_fd, buffer, sizeof(buffer), 0) == -1 &&
+	      errno == ESPIPE, "pread non-seekable terminal");
+	CHECK(close(tty_fd) == 0, "pread terminal close");
+	null_fd = open("/dev/null", O_RDONLY);
+	CHECK(null_fd >= 0, "pread null open");
+	CHECK(pread(null_fd, buffer, sizeof(buffer), 123) == 0,
+	      "pread null");
+	CHECK(close(null_fd) == 0, "pread null close");
+	memset(buffer, 0xa5, sizeof(buffer));
+	zero_fd = open("/dev/zero", O_RDONLY);
+	CHECK(zero_fd >= 0, "pread zero open");
+	CHECK(pread(zero_fd, buffer, sizeof(buffer), 123) ==
+	      (ssize_t)sizeof(buffer), "pread zero");
+	for (size_t index = 0; index < sizeof(buffer); index++)
+		CHECK(buffer[index] == 0, "pread zero contents");
+	CHECK(close(zero_fd) == 0, "pread zero close");
+	test_pread_copy_faults();
+	test_concurrent_pread();
+	test_concurrent_pread_write();
+	puts("VM_PREAD_OK");
 }
 
 static void test_file_mapping(unsigned char **mapping_out)
@@ -388,6 +647,7 @@ int main(void)
 	create_fixture();
 	test_read_copy_faults();
 	test_shared_file_reads();
+	test_pread();
 	test_file_mapping(&file_mapping);
 	anonymous = test_anonymous_mapping();
 	test_hint_and_fixed();
