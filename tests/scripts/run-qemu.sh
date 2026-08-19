@@ -23,7 +23,8 @@ require_command()
 }
 
 for command in \
-	"$make_command" "$qemu" expect e2fsck debugfs fsck.fat mtype python3 rg \
+	"$make_command" "$qemu" expect e2fsck debugfs fdtput fsck.fat mtype \
+	python3 rg \
 	"${CROSS_COMPILE:-riscv64-linux-gnu-}objdump" \
 	"${CROSS_COMPILE:-riscv64-linux-gnu-}readelf"; do
 	require_command "$command"
@@ -310,6 +311,11 @@ run_boot_smoke()
 		echo "userspace random marker is missing" >&2
 		exit 1
 	fi
+	if [ "$(awk '$0 == "TIME_RUNTIME_OK" { count++ }
+		END { print count + 0 }' "$clean")" -ne 1 ]; then
+		echo "userspace timekeeping marker is missing" >&2
+		exit 1
+	fi
 	if [ "$(awk '$0 == "ASLR_RUNTIME_OK" { count++ }
 		END { print count + 0 }' "$clean")" -ne 1 ]; then
 		echo "address randomization marker is missing" >&2
@@ -389,6 +395,26 @@ run_boot_smoke 1 "$large_memory"
 check_boot_memory_latency \
 	"$test_output/qemu-smp1-$large_memory.clean.log.timestamped" 10000000
 
+no_rtc_dtb=$test_output/virt-no-rtc.dtb
+"$qemu" -machine "virt,dumpdtb=$no_rtc_dtb" -m 128M -smp 1 \
+	-bios none -nographic >/dev/null 2>&1
+fdtput -r "$no_rtc_dtb" /soc/rtc@101000
+export NO_RTC_DTB=$no_rtc_dtb
+export QEMU_LOG=$test_output/qemu-no-rtc.log
+expect "$script_dir/run-time-fallback.exp"
+no_rtc_clean=$test_output/qemu-no-rtc.clean.log
+normalize_kernel_log "$QEMU_LOG" "$no_rtc_clean"
+if [ "$(awk '$0 == "TIME_FALLBACK_OK" { count++ }
+	END { print count + 0 }' "$no_rtc_clean")" -ne 1 ]; then
+	echo "realtime fallback marker is missing" >&2
+	exit 1
+fi
+if grep -Eq '^rtc: goldfish|\[PANIC\]|TIME_RUNTIME_FAIL' \
+	"$no_rtc_clean"; then
+	echo "RTC-free boot log contains an unexpected result" >&2
+	exit 1
+fi
+
 export QEMU_LOG=$test_output/qemu-debug-state.log
 expect "$script_dir/run-debug-dump.exp"
 
@@ -461,6 +487,7 @@ for marker in \
 	ELF_INTERP_REJECT_OK \
 	ELF_SHARED_PAGE_OK \
 	PROCESS_GROUP_OK \
+	TIME_RUNTIME_OK \
 	JOB_FOREGROUND_STATUS=130 \
 	JOB_STOPPED_OK \
 	JOB_BACKGROUND_OK \

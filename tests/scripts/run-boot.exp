@@ -116,6 +116,27 @@ expect {
 	eof { abort_test "QEMU exited after userspace random test" }
 }
 
+send -- "/bin/time-runtime\r"
+expect {
+	-re {\r?\nTIME_RUNTIME_OK} {}
+	-re {TIME_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "timekeeping test reported failure"
+	}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic in timekeeping test"
+	}
+	timeout { abort_with_dump "timekeeping test timeout" }
+	eof { abort_test "QEMU exited during timekeeping test" }
+}
+expect {
+	-re {\r?\n# $} {}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic after timekeeping test"
+	}
+	timeout { abort_test "shell prompt timeout" }
+	eof { abort_test "QEMU exited after timekeeping test" }
+}
+
 send -- "/bin/aslr-runtime\r"
 expect {
 	-re {\r?\nASLR_RUNTIME_OK} {}

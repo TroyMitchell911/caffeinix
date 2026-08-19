@@ -24,6 +24,7 @@
 #include <linux/random.h>
 #include <linux/sched.h>
 #include <linux/tcp.h>
+#include <linux/time.h>
 #include <linux/time_types.h>
 
 _Static_assert(LINUX_SYS_getcwd == __NR_getcwd, "getcwd number");
@@ -81,6 +82,14 @@ _Static_assert(LINUX_SYS_getsid == __NR_getsid, "getsid number");
 _Static_assert(LINUX_SYS_setsid == __NR_setsid, "setsid number");
 _Static_assert(LINUX_SYS_clock_gettime == __NR_clock_gettime,
 	       "clock_gettime number");
+_Static_assert(LINUX_SYS_clock_getres == __NR_clock_getres,
+	       "clock_getres number");
+_Static_assert(LINUX_SYS_clock_nanosleep == __NR_clock_nanosleep,
+	       "clock_nanosleep number");
+_Static_assert(LINUX_SYS_nanosleep == __NR_nanosleep,
+	       "nanosleep number");
+_Static_assert(LINUX_SYS_gettimeofday == __NR_gettimeofday,
+	       "gettimeofday number");
 _Static_assert(LINUX_SYS_clone == __NR_clone, "clone number");
 _Static_assert(LINUX_SYS_futex == __NR_futex, "futex number");
 _Static_assert(LINUX_SYS_set_robust_list == __NR_set_robust_list,
@@ -151,6 +160,12 @@ _Static_assert(sizeof(struct linux_winsize) == sizeof(struct winsize),
 	       "winsize size");
 _Static_assert(sizeof(struct linux_timespec) ==
 	       sizeof(struct __kernel_timespec), "timespec size");
+_Static_assert(sizeof(struct linux_timeval) == sizeof(struct timeval),
+	       "timeval size");
+_Static_assert(sizeof(struct linux_timezone) == sizeof(struct timezone),
+	       "timezone size");
+_Static_assert(LINUX_TIMER_ABSTIME == TIMER_ABSTIME,
+	       "absolute timer flag");
 _Static_assert(sizeof(struct linux_pollfd) == sizeof(struct pollfd),
 	       "pollfd size");
 _Static_assert(offsetof(struct linux_pollfd, revents) ==
