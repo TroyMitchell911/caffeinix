@@ -52,7 +52,8 @@ and ET_EXEC interpreters. One main image starts at a high virtual address and
 requires 2 MiB PT_LOAD alignment. Permission fixtures exercise an executable
 stack and a permissionless guard segment. In addition, the image contains the
 unmodified musl 1.2.6 runtime linker and shared libc, dynamically linked test
-programs, and shared-object fixtures.
+programs, shared-object fixtures, a dynamic BusyBox, and a static recovery
+BusyBox.
 
 Each boot requires one SBI BASE report and exactly one online and timer marker
 per logical CPU. A static check rejects machine-mode CSR operations, direct
@@ -99,8 +100,9 @@ The guest selftest covers:
 - `/dev/ttyS0` metadata, `/dev/tty` error semantics, and terminal ioctls;
 - termios set/get state, canonical echo and erase, raw input, CR/NL handling,
   blocking wakeups, and UART output larger than the transmit queue;
-- BusyBox ash Tab completion, command history, cursor editing, and
-  cancellation of a partial command with Ctrl-C;
+- dynamic BusyBox ash startup, core applets, repeated process startup, Tab
+  completion, command history, cursor editing, and cancellation of a partial
+  command with Ctrl-C, plus execution of the static recovery binary;
 - ext4 and tmpfs links, sparse files, rename, directory iteration, truncate,
   fsync, and open-unlink lifetime rules;
 - symlink metadata through `lstat`;

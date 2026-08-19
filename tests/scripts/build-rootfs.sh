@@ -152,9 +152,14 @@ if ! make -C "$busybox_source" -j"$jobs" \
 	exit 1
 fi
 
-if "${cross_compile}readelf" -l "$busybox_source/busybox" |
-	grep -q INTERP; then
-	echo "BusyBox must be statically linked" >&2
+if ! "${cross_compile}readelf" -l "$busybox_source/busybox" |
+	grep -q '/lib/ld-musl-riscv64.so.1'; then
+	echo "BusyBox must use the musl runtime linker" >&2
+	exit 1
+fi
+if ! "${cross_compile}readelf" -d "$busybox_source/busybox" |
+	grep -q 'Shared library: \[libc.so\]'; then
+	echo "BusyBox must depend on shared musl libc" >&2
 	exit 1
 fi
 
@@ -166,6 +171,28 @@ if ! make -C "$busybox_source" \
 		CONFIG_PREFIX="$staging" \
 		install >>"$busybox_log" 2>&1; then
 	cat "$busybox_log" >&2
+	exit 1
+fi
+
+sed -i \
+	's/^# CONFIG_STATIC is not set$/CONFIG_STATIC=y/' \
+	"$busybox_source/.config"
+set +o pipefail
+yes '' | make -C "$busybox_source" oldconfig >>"$busybox_log" 2>&1
+set -o pipefail
+make -C "$busybox_source" clean >>"$busybox_log" 2>&1
+if ! make -C "$busybox_source" -j"$jobs" \
+		ARCH=riscv \
+		CROSS_COMPILE="$cross_compile" \
+		CC="$musl_cc" >>"$busybox_log" 2>&1; then
+	cat "$busybox_log" >&2
+	exit 1
+fi
+install -m 755 "$busybox_source/busybox" \
+	"$staging/bin/busybox-static"
+if "${cross_compile}readelf" -l "$staging/bin/busybox-static" |
+	grep -q INTERP; then
+	echo "recovery BusyBox must be statically linked" >&2
 	exit 1
 fi
 
