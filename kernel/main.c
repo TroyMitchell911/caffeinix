@@ -49,6 +49,7 @@
 #include <page_cache.h>
 #include <mmap.h>
 #include <random.h>
+#include <goldfish_rtc.h>
 
 volatile static uint8 start = 0;
 extern char end[];
@@ -85,6 +86,8 @@ static void main_boot(void)
 		PANIC("populate platform devices");
 	if (ns16550_init() < 0)
 		PANIC("register NS16550 driver");
+	if (goldfish_rtc_init() < 0)
+		PANIC("register goldfish RTC driver");
 	if (uart_core_selftest() < 0)
 		PANIC("UART core selftest");
 	block_device_init();

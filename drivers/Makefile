@@ -6,5 +6,6 @@ obj-y += dma/
 obj-y += net/
 obj-y += of/
 obj-y += platform/
+obj-y += rtc/
 obj-y += tty/
 obj-y += virtio/
