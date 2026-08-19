@@ -72,6 +72,15 @@ expect_prompt
 
 send -- "/bin/exec-runtime\r"
 expect {
+	-re {\r?\nEXEC_SCRIPT_CHILD_OK} {}
+	-re {EXEC_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "script interpreter test reported failure"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in script test" }
+	timeout { abort_test "script interpreter test timeout" }
+	eof { abort_test "QEMU exited during script interpreter test" }
+}
+expect {
 	-re {\r?\nEXEC_ERRNO_OK} {}
 	-re {EXEC_RUNTIME_FAIL[^\r\n]*} {
 		abort_test "exec errno test reported failure"
@@ -79,6 +88,15 @@ expect {
 	-re {\[PANIC\]} { abort_test "kernel panic in exec errno test" }
 	timeout { abort_test "exec errno test timeout" }
 	eof { abort_test "QEMU exited during exec errno test" }
+}
+expect {
+	-re {\r?\nEXEC_SCRIPT_OK} {}
+	-re {EXEC_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "script recursion test reported failure"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in script recursion test" }
+	timeout { abort_test "script recursion test timeout" }
+	eof { abort_test "QEMU exited during script recursion test" }
 }
 expect_prompt
 
