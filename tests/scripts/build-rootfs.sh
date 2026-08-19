@@ -460,6 +460,18 @@ done
 	"$tests_dir/thread_runtime.c" "$tests_dir/thread_clone.S" \
 	-o "$staging/bin/thread-runtime"
 
+"$musl_cc" \
+	-march=rv64gc -mabi=lp64d \
+	-O2 -Wall -Wextra -Werror -pthread \
+	"$tests_dir/pthread_runtime.c" \
+	-o "$staging/bin/pthread-runtime"
+
+"$musl_cc" \
+	-march=rv64gc -mabi=lp64d \
+	-O2 -Wall -Wextra -Werror -pthread \
+	"$tests_dir/futex_runtime.c" \
+	-o "$staging/bin/futex-runtime"
+
 if "${cross_compile}readelf" -l "$staging/bin/fs-runtime" |
 	grep -q INTERP; then
 	echo "guest selftest must be statically linked" >&2
@@ -499,6 +511,18 @@ fi
 if "${cross_compile}readelf" -l "$staging/bin/thread-runtime" |
 	grep -q INTERP; then
 	echo "thread selftest must be statically linked" >&2
+	exit 1
+fi
+
+if ! "${cross_compile}readelf" -l "$staging/bin/pthread-runtime" |
+	grep -q '/lib/ld-musl-riscv64.so.1'; then
+	echo "pthread selftest must use the musl runtime linker" >&2
+	exit 1
+fi
+
+if ! "${cross_compile}readelf" -l "$staging/bin/futex-runtime" |
+	grep -q '/lib/ld-musl-riscv64.so.1'; then
+	echo "futex selftest must use the musl runtime linker" >&2
 	exit 1
 fi
 

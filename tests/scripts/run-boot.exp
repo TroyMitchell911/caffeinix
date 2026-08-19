@@ -106,6 +106,48 @@ expect {
 	eof { abort_test "QEMU exited after user thread clone test" }
 }
 
+send -- "/bin/pthread-runtime\r"
+expect {
+	-re {\r?\nPTHREAD_RUNTIME_OK} {}
+	-re {PTHREAD_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "musl pthread test reported failure"
+	}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic in musl pthread test"
+	}
+	timeout { abort_with_dump "musl pthread test timeout" }
+	eof { abort_test "QEMU exited during musl pthread test" }
+}
+expect {
+	-re {\r?\n# $} {}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic after musl pthread test"
+	}
+	timeout { abort_test "shell prompt timeout" }
+	eof { abort_test "QEMU exited after musl pthread test" }
+}
+
+send -- "/bin/futex-runtime\r"
+expect {
+	-re {\r?\nFUTEX_RUNTIME_OK} {}
+	-re {FUTEX_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "Linux futex test reported failure"
+	}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic in Linux futex test"
+	}
+	timeout { abort_with_dump "Linux futex test timeout" }
+	eof { abort_test "QEMU exited during Linux futex test" }
+}
+expect {
+	-re {\r?\n# $} {}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic after Linux futex test"
+	}
+	timeout { abort_test "shell prompt timeout" }
+	eof { abort_test "QEMU exited after Linux futex test" }
+}
+
 send -- "/bin/dynamic-runtime pressure $pressure_iterations\r"
 expect {
 	-re {\r?\nDYNAMIC_EXEC_PRESSURE_OK} {}

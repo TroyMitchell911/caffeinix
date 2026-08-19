@@ -12,6 +12,7 @@
 #include <asm-generic/socket.h>
 #include <asm-generic/termios.h>
 #include <linux/in.h>
+#include <linux/futex.h>
 #include <linux/mman.h>
 #include <linux/sched.h>
 #include <linux/tcp.h>
@@ -44,6 +45,11 @@ _Static_assert(LINUX_SYS_getpriority == __NR_getpriority,
 _Static_assert(LINUX_SYS_clock_gettime == __NR_clock_gettime,
 	       "clock_gettime number");
 _Static_assert(LINUX_SYS_clone == __NR_clone, "clone number");
+_Static_assert(LINUX_SYS_futex == __NR_futex, "futex number");
+_Static_assert(LINUX_SYS_set_robust_list == __NR_set_robust_list,
+	       "set_robust_list number");
+_Static_assert(LINUX_SYS_get_robust_list == __NR_get_robust_list,
+	       "get_robust_list number");
 _Static_assert(LINUX_SYS_execve == __NR_execve, "execve number");
 _Static_assert(LINUX_SYS_mprotect == __NR_mprotect, "mprotect number");
 _Static_assert(LINUX_SYS_wait4 == __NR_wait4, "wait4 number");
@@ -103,3 +109,7 @@ _Static_assert(LINUX_CLONE_PARENT_SETTID == CLONE_PARENT_SETTID,
 	       "CLONE_PARENT_SETTID value");
 _Static_assert(LINUX_CLONE_CHILD_CLEARTID == CLONE_CHILD_CLEARTID,
 	       "CLONE_CHILD_CLEARTID value");
+_Static_assert(LINUX_FUTEX_WAIT == FUTEX_WAIT, "FUTEX_WAIT value");
+_Static_assert(LINUX_FUTEX_WAKE == FUTEX_WAKE, "FUTEX_WAKE value");
+_Static_assert(LINUX_FUTEX_PRIVATE_FLAG == FUTEX_PRIVATE_FLAG,
+	       "FUTEX_PRIVATE_FLAG value");
