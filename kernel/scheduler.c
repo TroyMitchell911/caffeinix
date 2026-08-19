@@ -51,7 +51,14 @@ cpu_t cur_cpu(void)
 
 thread_t cur_thread(void)
 {
-	return cur_cpu()->current;
+	thread_t current;
+	uint64 status;
+
+	/* A timer interrupt may reschedule this thread on another CPU. */
+	status = intr_save();
+	current = cur_cpu()->current;
+	intr_restore(status);
+	return current;
 }
 
 process_t cur_proc(void)

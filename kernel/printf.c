@@ -6,8 +6,7 @@
 static const char digits[] = "0123456789abcdef";
 static struct {
         struct spinlock lock;
-        /* This flag for panic */
-        uint8 locking;
+	uint8 locking;
 }pf;
 
 static void console_emit(int character, void *context)
@@ -140,6 +139,15 @@ void printf(char* fmt, ...)
 		spinlock_release(&pf.lock);
 }
 
+void printf_emergency(char *fmt, ...)
+{
+	va_list arguments;
+
+	va_start(arguments, fmt);
+	vprintf_emit(console_emit, 0, fmt, arguments);
+	va_end(arguments);
+}
+
 void printf_enter_panic(void)
 {
 	pf.locking = 0;
@@ -148,6 +156,5 @@ void printf_enter_panic(void)
 void printf_init(void)
 {
         spinlock_init(&pf.lock, "printf");
-        /* No panic */
-        pf.locking = 1;
+	pf.locking = 1;
 }

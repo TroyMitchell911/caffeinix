@@ -2,8 +2,22 @@
 
 proc abort_test {message} {
 	puts stderr "OpenSBI boot test failed: $message"
+	catch {send -- "\001x"}
+	set saved_timeout $::timeout
+	set ::timeout 5
+	catch {expect eof}
+	set ::timeout $saved_timeout
 	catch {close}
 	exit 1
+}
+
+proc abort_with_dump {message} {
+	set saved_timeout $::timeout
+	catch {send -- "\001b"}
+	set ::timeout 5
+	catch {expect -re {DEBUG_STATE_END}}
+	set ::timeout $saved_timeout
+	abort_test $message
 }
 
 foreach variable {
@@ -19,6 +33,11 @@ foreach variable {
 set timeout 60
 if {[info exists env(QEMU_TIMEOUT)] && $env(QEMU_TIMEOUT) ne ""} {
 	set timeout $env(QEMU_TIMEOUT)
+}
+set pressure_iterations 1
+if {[info exists env(DYNAMIC_PRESSURE_ITERATIONS)] &&
+    $env(DYNAMIC_PRESSURE_ITERATIONS) ne ""} {
+	set pressure_iterations $env(DYNAMIC_PRESSURE_ITERATIONS)
 }
 
 log_file -noappend $env(QEMU_LOG)
@@ -66,7 +85,7 @@ expect {
 	eof { abort_test "QEMU exited after dynamic musl hello" }
 }
 
-send -- "/bin/dynamic-runtime pressure\r"
+send -- "/bin/dynamic-runtime pressure $pressure_iterations\r"
 expect {
 	-re {\r?\nDYNAMIC_EXEC_PRESSURE_OK} {}
 	-re {DYNAMIC_RUNTIME_FAIL[^\r\n]*} {
@@ -75,7 +94,7 @@ expect {
 	-re {\[PANIC\]} {
 		abort_test "kernel panic in dynamic exec pressure test"
 	}
-	timeout { abort_test "dynamic exec pressure test timeout" }
+	timeout { abort_with_dump "dynamic exec pressure test timeout" }
 	eof { abort_test "QEMU exited during dynamic exec pressure test" }
 }
 expect {

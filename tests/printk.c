@@ -171,6 +171,21 @@ static int test_time_conversion(void)
 	return 0;
 }
 
+static int test_emergency_printf(void)
+{
+	uint32 acquisitions = lock_acquisitions;
+
+	console_clear();
+	printf_emergency("emergency ");
+	if (lock_acquisitions != acquisitions)
+		return -1;
+	printf("normal");
+	if (lock_acquisitions != acquisitions + 1 ||
+	    strcmp(console_output, "emergency normal"))
+		return -1;
+	return 0;
+}
+
 static int test_emergency_output(void)
 {
 	uint32 acquisitions = lock_acquisitions;
@@ -201,6 +216,8 @@ int main(void)
 		return fail("printk truncation validation failed");
 	if (test_time_conversion())
 		return fail("printk time conversion validation failed");
+	if (test_emergency_printf())
+		return fail("printf emergency output validation failed");
 	if (test_emergency_output())
 		return fail("printk emergency output validation failed");
 	write(STDOUT_FILENO, "PRINTK_OK\n", 10);

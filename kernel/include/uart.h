@@ -7,6 +7,7 @@
 #include <typedefs.h>
 
 #define UART_TX_BUFFER_SIZE 128
+#define UART_RX_BREAK 0x100
 
 struct device_node;
 struct uart_port;

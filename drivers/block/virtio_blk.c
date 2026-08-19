@@ -42,6 +42,38 @@ struct virtio_blk {
 	char name[16];
 };
 
+static struct virtio_blk *debug_disks[BLOCK_DEVICE_MAX];
+static uint32 debug_readers;
+
+void virtio_blk_debug_dump(void)
+{
+	struct virtio_blk *disk;
+	struct virtqueue *queue;
+	uint16 available, used;
+	int found = 0;
+	uint32 id;
+
+	__atomic_add_fetch(&debug_readers, 1, __ATOMIC_SEQ_CST);
+	for (id = 1; id < BLOCK_DEVICE_MAX; id++) {
+		disk = __atomic_load_n(&debug_disks[id], __ATOMIC_SEQ_CST);
+		if (!disk || !(queue = disk->queue))
+			continue;
+		found = 1;
+		available = __atomic_load_n(&queue->available->index,
+					    __ATOMIC_RELAXED);
+		used = __atomic_load_n(&queue->used->index,
+				       __ATOMIC_RELAXED);
+		printf_emergency("%s avail=%u avail_shadow=%u used=%u "
+				 "used_shadow=%u free=%u size=%u\n", disk->name,
+				 available, queue->available_shadow, used,
+				 queue->used_shadow, queue->free_count,
+				 queue->size);
+	}
+	if (!found)
+		printf_emergency("virtio-blk unavailable\n");
+	__atomic_sub_fetch(&debug_readers, 1, __ATOMIC_SEQ_CST);
+}
+
 static int virtio_blk_submit(struct virtio_blk *disk, uint32 type,
 			     uint64 sector, void *buffer, uint32 length)
 {
@@ -180,6 +212,8 @@ static int virtio_blk_probe(struct virtio_device *device)
 	if (block_device_register(&disk->block) < 0)
 		goto failed;
 	disk->name[10] = '0' + disk->block.id - 1;
+	__atomic_store_n(&debug_disks[disk->block.id], disk,
+			 __ATOMIC_SEQ_CST);
 	dev_set_drvdata(&device->device, disk);
 	pr_info("%s: %lu sectors (%lu MiB)", disk->name,
 		disk->block.sector_count,
@@ -201,6 +235,9 @@ static void virtio_blk_remove(struct virtio_device *device)
 		return;
 	if (!wait_queue_empty(&disk->descriptor_wait))
 		PANIC("remove busy virtio-blk");
+	__atomic_store_n(&debug_disks[disk->block.id], 0, __ATOMIC_SEQ_CST);
+	while (__atomic_load_n(&debug_readers, __ATOMIC_SEQ_CST))
+		;
 	block_device_unregister(&disk->block);
 	dev_set_drvdata(&device->device, 0);
 	free(disk);

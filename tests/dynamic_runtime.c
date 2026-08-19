@@ -149,13 +149,30 @@ static void test_exec_pressure(void)
 		    !WIFEXITED(status) || WEXITSTATUS(status))
 			fail("pressure wait");
 	}
-	puts("DYNAMIC_EXEC_PRESSURE_OK");
+}
+
+static unsigned int pressure_iterations(const char *argument)
+{
+	char *end;
+	unsigned long iterations;
+
+	errno = 0;
+	iterations = strtoul(argument, &end, 10);
+	if (errno || !argument[0] || *end || !iterations ||
+	    iterations > 10000)
+		fail("pressure iterations");
+	return iterations;
 }
 
 int main(int argc, char **argv)
 {
-	if (argc == 2 && !strcmp(argv[1], "pressure")) {
-		test_exec_pressure();
+	if ((argc == 2 || argc == 3) && !strcmp(argv[1], "pressure")) {
+		unsigned int iterations = argc == 3 ?
+			pressure_iterations(argv[2]) : 1;
+
+		while (iterations--)
+			test_exec_pressure();
+		puts("DYNAMIC_EXEC_PRESSURE_OK");
 		return 0;
 	}
 	if (constructor_value != 11)
@@ -168,6 +185,7 @@ int main(int argc, char **argv)
 	test_relro();
 	test_exec_cloexec();
 	test_exec_pressure();
+	puts("DYNAMIC_EXEC_PRESSURE_OK");
 	puts("DYNAMIC_RUNTIME_OK");
 	return 0;
 }

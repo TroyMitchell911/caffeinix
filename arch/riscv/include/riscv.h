@@ -161,6 +161,31 @@ static inline void intr_off(void)
         sstatus_w(sstatus_r() & ~SSTATUS_SIE);
 }
 
+static inline uint64 intr_save(void)
+{
+	uint64 status;
+
+	asm volatile("csrrc %0, sstatus, %1"
+		     : "=r"(status)
+		     : "r"(SSTATUS_SIE)
+		     : "memory");
+	return status;
+}
+
+static inline void intr_restore(uint64 status)
+{
+	if (status & SSTATUS_SIE)
+		asm volatile("csrs sstatus, %0"
+			     :
+			     : "r"(SSTATUS_SIE)
+			     : "memory");
+	else
+		asm volatile("csrc sstatus, %0"
+			     :
+			     : "r"(SSTATUS_SIE)
+			     : "memory");
+}
+
 static inline void stvec_w(uint64 v)
 {
         asm volatile("csrw stvec, %0" : : "r"(v));

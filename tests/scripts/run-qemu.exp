@@ -575,7 +575,7 @@ expect {
 	eof { abort_test "QEMU exited during raw TTY test" }
 }
 after 250
-send -- "R\rX!"
+send -- "R\r\035X!"
 expect {
 	-re {TTY_RAW_OK} {}
 	-re {TTY_RUNTIME_FAIL=[^\r\n]*} {

@@ -134,7 +134,7 @@ static int test_nonblock(void)
 
 static int test_raw(void)
 {
-	static const char expected[] = { 'R', '\r', 'X', '!' };
+	static const char expected[] = { 'R', '\r', 0x1d, 'X', '!' };
 	struct termios original, mode;
 	char buffer[sizeof(expected)];
 	size_t total = 0;

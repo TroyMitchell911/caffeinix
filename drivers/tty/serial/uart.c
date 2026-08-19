@@ -81,8 +81,16 @@ int uart_handle_irq(struct uart_port *port)
 
 	if (!port || !port->registered)
 		return IRQ_NONE;
-	while ((character = port->operations->get_char(port)) >= 0)
-		tty_receive_char(&port->tty, character);
+	while ((character = port->operations->get_char(port)) >= 0) {
+		if (character == UART_RX_BREAK) {
+			if (tty_get_console() == &port->tty)
+				debug_dump_state();
+			else
+				tty_receive_char(&port->tty, '\0');
+		} else {
+			tty_receive_char(&port->tty, character);
+		}
+	}
 	spinlock_acquire(&port->lock);
 	uart_start_transmit_locked(port);
 	spinlock_release(&port->lock);
@@ -275,6 +283,15 @@ int uart_core_selftest(void)
 	if (uart_handle_irq(&ports[0]) != IRQ_HANDLED ||
 	    ports[0].tty.commit_position != 1 ||
 	    ports[1].tty.commit_position != 0)
+		goto fail;
+	if (tty_get_console() == &ports[1].tty)
+		goto fail;
+	states[1].receive = UART_RX_BREAK;
+	states[1].receive_pending = 1;
+	if (uart_handle_irq(&ports[1]) != IRQ_HANDLED ||
+	    ports[1].tty.edit_position != 1 ||
+	    ports[1].tty.commit_position != 0 ||
+	    ports[1].tty.input[0] != '\0')
 		goto fail;
 	uart_remove_one_port(&ports[1]);
 	uart_remove_one_port(&ports[0]);
