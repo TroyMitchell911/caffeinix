@@ -4,11 +4,11 @@ Caffeinix is a small Unix-like RISC-V operating system, written with an
 Americano close at hand. The kernel keeps its own internal design while
 exposing the Linux RISC-V userspace ABI needed by musl programs.
 
-The current milestone boots an unmodified static BusyBox from an ext4 root
-filesystem on QEMU `virt` and can run programs through the upstream musl
-runtime linker. The kernel mounts devfs at `/dev`, tmpfs at `/tmp`, can mount
-a second FAT16 or FAT32 disk at `/mnt/fat`, and can run IPv4 over a modern
-VirtIO network device through lwIP.
+The current milestone boots an unmodified dynamically linked BusyBox and
+upstream musl runtime linker from an ext4 root filesystem on QEMU `virt`.
+The kernel mounts devfs at `/dev`, tmpfs at `/tmp`, can mount a second FAT16
+or FAT32 disk at `/mnt/fat`, and can run IPv4 over a modern VirtIO network
+device through lwIP.
 
 ## Supported target
 
@@ -150,21 +150,22 @@ make -C "$BUSYBOX_DIR" -j"$(nproc)" \
   CC="$MUSL_SYSROOT/bin/musl-gcc"
 ```
 
-The output must be an RV64 statically linked executable:
+The output must be an RV64 dynamically linked executable using musl:
 
 ```bash
 file "$BUSYBOX_DIR/busybox"
 riscv64-linux-gnu-readelf -l "$BUSYBOX_DIR/busybox"
+riscv64-linux-gnu-readelf -d "$BUSYBOX_DIR/busybox"
 ```
 
-`readelf` must not show an `INTERP` program header.
+`readelf` must show `/lib/ld-musl-riscv64.so.1` as the interpreter and
+`libc.so` as a `DT_NEEDED` dependency.
 
 ## Create the ext4 root filesystem
 
 Choose an empty staging directory and an output image path. BusyBox installs
-its static binary and applet symlinks into the staging tree. Copy the external
-musl runtime into `/lib` for dynamically linked programs; no
-Caffeinix-specific userspace source is needed.
+its binary and applet symlinks into the staging tree. Copy the external musl
+runtime into `/lib`; no Caffeinix-specific userspace source is needed.
 
 ```bash
 export ROOTFS_STAGING=/absolute/path/to/rootfs-staging
