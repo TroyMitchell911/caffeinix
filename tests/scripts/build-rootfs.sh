@@ -372,10 +372,18 @@ fi
 	-L"$staging/lib" -ldynamic-fixture \
 	-o "$staging/bin/dynamic-runtime"
 
+"$musl_cc" \
+	-fPIE -pie -march=rv64gc -mabi=lp64d \
+	-O2 -Wall -Wextra -Werror \
+	"$tests_dir/aslr_runtime.c" \
+	-L"$staging/lib" -ldynamic-fixture \
+	-o "$staging/bin/aslr-runtime"
+
 for program in \
 	"$staging/bin/dynamic-hello" \
 	"$staging/bin/dynamic-child" \
-	"$staging/bin/dynamic-runtime"; do
+	"$staging/bin/dynamic-runtime" \
+	"$staging/bin/aslr-runtime"; do
 	if ! "${cross_compile}readelf" -l "$program" |
 		grep -q '/lib/ld-musl-riscv64.so.1'; then
 		echo "dynamic fixture has the wrong PT_INTERP: $program" >&2
@@ -387,6 +395,12 @@ for program in \
 		exit 1
 	fi
 done
+
+if [ "$("${cross_compile}readelf" -h "$staging/bin/aslr-runtime" |
+	awk '$1 == "Type:" { print $2 }')" != DYN ]; then
+	echo "ASLR selftest must be a PIE executable" >&2
+	exit 1
+fi
 
 if ! "${cross_compile}readelf" -d "$staging/bin/dynamic-runtime" |
 	grep -q 'Shared library: \[libdynamic-fixture.so\]'; then

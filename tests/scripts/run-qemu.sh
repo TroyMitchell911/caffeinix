@@ -306,6 +306,11 @@ run_boot_smoke()
 		echo "userspace random marker is missing" >&2
 		exit 1
 	fi
+	if [ "$(awk '$0 == "ASLR_RUNTIME_OK" { count++ }
+		END { print count + 0 }' "$clean")" -ne 1 ]; then
+		echo "address randomization marker is missing" >&2
+		exit 1
+	fi
 	if [ "$(awk -v marker="$random_marker" '$0 == marker { count++ }
 		END { print count + 0 }' "$clean")" -ne 1 ]; then
 		echo "unexpected random initialization status" >&2
@@ -421,6 +426,7 @@ for marker in \
 	BUSYBOX_SHELL_OK \
 	DYNAMIC_HELLO_OK \
 	RANDOM_RUNTIME_OK \
+	ASLR_RUNTIME_OK \
 	DYNAMIC_CONSTRUCTOR_OK \
 	DYNAMIC_NEEDED_OK \
 	DYNAMIC_TLS_OK \

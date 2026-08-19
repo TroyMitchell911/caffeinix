@@ -111,6 +111,8 @@ The guest selftest covers:
 - per-exec `AT_RANDOM`, Linux `getrandom` flags and errors, non-repeating
   output across calls and `fork`, a default VirtIO entropy source, and the
   explicitly warned no-device fallback;
+- independently randomized PIE, interpreter, shared-library, anonymous mmap,
+  heap, and stack addresses across repeated executions;
 - remote TLB invalidation after a sibling thread removes a user mapping;
 - prompt release of exited processes' user pages while zombies await their
   parent's `wait4`, under memory pressure exceeding available guest RAM;

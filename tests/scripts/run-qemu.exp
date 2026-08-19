@@ -96,6 +96,20 @@ expect {
 }
 expect_prompt
 
+send -- "/bin/aslr-runtime\r"
+expect {
+	-re {\r?\nASLR_RUNTIME_OK} {}
+	-re {ASLR_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "address randomization test reported failure"
+	}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic in address randomization test"
+	}
+	timeout { abort_test "address randomization test timeout" }
+	eof { abort_test "QEMU exited during address randomization test" }
+}
+expect_prompt
+
 send -- "/bin/dynamic-runtime\r"
 foreach marker {
 	DYNAMIC_CONSTRUCTOR_OK

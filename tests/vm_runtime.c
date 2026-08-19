@@ -50,6 +50,23 @@ static void fail(const char *name, int line)
 	exit(EXIT_FAILURE);
 }
 
+static void test_brk_mmap_ceiling(void)
+{
+	void *heap = sbrk(0);
+	void *mapping;
+	uintptr_t ceiling;
+
+	mapping = mmap(0, PAGE_SIZE, PROT_READ | PROT_WRITE,
+		       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	CHECK(mapping != MAP_FAILED, "brk ceiling mmap");
+	ceiling = (uintptr_t)mapping + PAGE_SIZE;
+	CHECK(munmap(mapping, PAGE_SIZE) == 0, "brk ceiling munmap");
+	errno = 0;
+	CHECK(brk((void *)(ceiling + PAGE_SIZE)) < 0 && errno == ENOMEM,
+	      "brk mmap ceiling");
+	CHECK(sbrk(0) == heap, "brk ceiling preserve");
+}
+
 static unsigned char pattern(unsigned int page, unsigned int index)
 {
 	return (unsigned char)(page * 37U + index * 13U + 11U);
@@ -1147,6 +1164,7 @@ int main(void)
 {
 	unsigned char *anonymous, *file_mapping;
 
+	test_brk_mmap_ceiling();
 	create_fixture();
 	test_read_copy_faults();
 	test_shared_file_reads();
