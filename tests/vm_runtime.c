@@ -30,6 +30,10 @@
 #define COW_PRESSURE_START "/tmp/vm-cow-pressure-start"
 #define ZOMBIE_RELEASE_LENGTH (8 * 1024 * 1024UL)
 #define ZOMBIE_RELEASE_CHILDREN 32
+#define SHARED_MAP_PATH "/vm-shared-map.bin"
+#define SHARED_SPARSE_PATH "/vm-shared-sparse.bin"
+#define SHARED_TRUNCATE_START "/tmp/vm-shared-truncate-start"
+#define OPEN_TRUNCATE_PATH "/tmp/vm-open-truncate.bin"
 #define HINT_ADDRESS ((void *)0x20000000UL)
 
 #define CHECK(condition, name) do { \
@@ -658,6 +662,221 @@ static void test_cached_private_write(void)
 	CHECK(close(fd) == 0, "cached private close");
 }
 
+static void shared_truncate_child(volatile unsigned char *mapping)
+{
+	volatile unsigned char value;
+
+	while (access(SHARED_TRUNCATE_START, F_OK) < 0) {
+		if (errno != ENOENT)
+			_exit(EXIT_FAILURE);
+	}
+	value = mapping[2 * PAGE_SIZE];
+	(void)value;
+	_exit(EXIT_SUCCESS);
+}
+
+static void test_shared_sparse_write(void)
+{
+	unsigned char initial[16] = {0};
+	unsigned char value = 0x6d;
+	unsigned char *mapping;
+	int fd;
+
+	fd = open(SHARED_SPARSE_PATH, O_CREAT | O_TRUNC | O_RDWR, 0600);
+	CHECK(fd >= 0, "shared sparse open");
+	write_all(fd, initial, sizeof(initial));
+	mapping = mmap(0, PAGE_SIZE, PROT_READ | PROT_WRITE,
+		       MAP_SHARED, fd, 0);
+	CHECK(mapping != MAP_FAILED, "shared sparse mmap");
+	CHECK(mapping[0] == 0, "shared sparse populate");
+	mapping[PAGE_SIZE / 2] = 0xa5;
+	CHECK(lseek(fd, 3 * PAGE_SIZE / 4, SEEK_SET) == 3 * PAGE_SIZE / 4,
+	      "shared sparse seek");
+	CHECK(write(fd, &value, 1) == 1, "shared sparse extend");
+	CHECK(mapping[PAGE_SIZE / 2] == 0, "shared sparse gap zero");
+	CHECK(mapping[3 * PAGE_SIZE / 4] == value,
+	      "shared sparse write visibility");
+	CHECK(fsync(fd) == 0, "shared sparse fsync");
+	CHECK(munmap(mapping, PAGE_SIZE) == 0, "shared sparse munmap");
+	CHECK(close(fd) == 0, "shared sparse close");
+	CHECK(unlink(SHARED_SPARSE_PATH) == 0, "shared sparse unlink");
+}
+
+static void test_shared_file_mapping(void)
+{
+	unsigned char buffer[PAGE_SIZE];
+	unsigned char value, original;
+	unsigned char *first, *private, *readonly_private, *second;
+	struct iovec iovecs[2];
+	int barrier, fd, readonly_fd, status;
+	pid_t child;
+
+	fd = open(SHARED_MAP_PATH, O_CREAT | O_TRUNC | O_RDWR, 0600);
+	CHECK(fd >= 0, "shared mmap open");
+	for (unsigned int page = 0; page < 3; page++) {
+		fill_page(buffer, page);
+		write_all(fd, buffer, sizeof(buffer));
+	}
+	first = mmap(0, 3 * PAGE_SIZE, PROT_READ | PROT_WRITE,
+		     MAP_SHARED, fd, 0);
+	CHECK(first != MAP_FAILED, "shared first mmap");
+	second = mmap(0, 3 * PAGE_SIZE, PROT_READ | PROT_WRITE,
+		      MAP_SHARED, fd, 0);
+	CHECK(second != MAP_FAILED, "shared second mmap");
+	private = mmap(0, PAGE_SIZE, PROT_READ | PROT_WRITE,
+		       MAP_PRIVATE, fd, 0);
+	CHECK(private != MAP_FAILED, "shared private mmap");
+	CHECK(first[3] == pattern(0, 3) && second[3] == pattern(0, 3),
+	      "shared initial contents");
+	original = first[0];
+	private[0] ^= 0xff;
+	CHECK(first[0] == original && second[0] == original,
+	      "private mapping isolation");
+
+	readonly_fd = open(SHARED_MAP_PATH, O_RDONLY);
+	CHECK(readonly_fd >= 0, "shared readonly open");
+	errno = 0;
+	CHECK(mmap(0, PAGE_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED,
+		   readonly_fd, 0) == MAP_FAILED && errno == EACCES,
+	      "shared writable access");
+	readonly_private = mmap(0, PAGE_SIZE, PROT_READ | PROT_WRITE,
+				MAP_PRIVATE, readonly_fd, 0);
+	CHECK(readonly_private != MAP_FAILED, "private readonly fd mmap");
+	readonly_private[0] ^= 0xff;
+	CHECK(first[0] == original, "private readonly fd isolation");
+	CHECK(munmap(readonly_private, PAGE_SIZE) == 0,
+	      "private readonly fd munmap");
+	CHECK(close(readonly_fd) == 0, "shared readonly close");
+
+	first[3] = 0x7a;
+	CHECK(second[3] == 0x7a, "shared alias visibility");
+	CHECK(pread(fd, &value, 1, 3) == 1 && value == 0x7a,
+	      "shared read coherence");
+	CHECK(lseek(fd, 17, SEEK_SET) == 17, "shared write seek");
+	value = 0x6b;
+	CHECK(write(fd, &value, 1) == 1, "shared normal write");
+	CHECK(first[17] == value && second[17] == value,
+	      "shared write coherence");
+	value = 0x5c;
+	iovecs[0].iov_base = &value;
+	iovecs[0].iov_len = 1;
+	iovecs[1].iov_base = (void *)-1;
+	iovecs[1].iov_len = 1;
+	CHECK(lseek(fd, 29, SEEK_SET) == 29, "shared writev seek");
+	CHECK(writev(fd, iovecs, 2) == 1, "shared partial writev");
+	CHECK(first[29] == value && second[29] == value,
+	      "shared partial writev coherence");
+
+	child = fork();
+	CHECK(child >= 0, "shared fork");
+	if (!child) {
+		first[PAGE_SIZE + 11] = 0x66;
+		_exit(EXIT_SUCCESS);
+	}
+	CHECK(waitpid(child, &status, 0) == child, "shared fork wait");
+	CHECK(WIFEXITED(status) && WEXITSTATUS(status) == EXIT_SUCCESS,
+	      "shared fork status");
+	CHECK(second[PAGE_SIZE + 11] == 0x66, "shared fork visibility");
+
+	CHECK(mprotect(second + 2 * PAGE_SIZE, PAGE_SIZE, PROT_READ) == 0,
+	      "shared readonly mprotect");
+	CHECK(mprotect(second + 2 * PAGE_SIZE, PAGE_SIZE,
+		       PROT_READ | PROT_WRITE) == 0,
+	      "shared writable mprotect");
+	second[2 * PAGE_SIZE + 9] = 0x55;
+	CHECK(first[2 * PAGE_SIZE + 9] == 0x55,
+	      "shared mprotect visibility");
+	CHECK(msync(second, 3 * PAGE_SIZE, MS_SYNC) == 0,
+	      "shared msync");
+	CHECK(msync(second, PAGE_SIZE, 0) == 0, "shared Linux msync flags");
+	first[31] = 0x44;
+	CHECK(fsync(fd) == 0, "shared fsync");
+	CHECK(pread(fd, &value, 1, 31) == 1 && value == 0x44,
+	      "shared second writeback");
+	errno = 0;
+	CHECK(msync(first, PAGE_SIZE, MS_ASYNC | MS_SYNC) == -1 &&
+	      errno == EINVAL, "shared msync flags");
+
+	unlink(SHARED_TRUNCATE_START);
+	child = fork();
+	CHECK(child >= 0, "shared truncate fork");
+	if (!child)
+		shared_truncate_child(first);
+	CHECK(ftruncate(fd, PAGE_SIZE + 64) == 0, "shared truncate");
+	barrier = open(SHARED_TRUNCATE_START,
+		       O_CREAT | O_TRUNC | O_WRONLY, 0600);
+	CHECK(barrier >= 0, "shared truncate barrier");
+	CHECK(close(barrier) == 0, "shared truncate barrier close");
+	CHECK(waitpid(child, &status, 0) == child,
+	      "shared truncate wait");
+	CHECK(WIFSIGNALED(status) && WTERMSIG(status) == SIGBUS,
+	      "shared truncate SIGBUS");
+	CHECK(first[PAGE_SIZE + 100] == 0, "shared truncate partial tail");
+	first[PAGE_SIZE + 100] = 0x7c;
+	CHECK(ftruncate(fd, PAGE_SIZE + 128) == 0,
+	      "shared partial page extend");
+	CHECK(first[PAGE_SIZE + 100] == 0,
+	      "shared partial page extend zero fill");
+	CHECK(ftruncate(fd, 3 * PAGE_SIZE) == 0, "shared extend");
+	CHECK(first[2 * PAGE_SIZE] == 0, "shared extend zero fill");
+	first[2 * PAGE_SIZE] = 0x33;
+	CHECK(msync(first, 3 * PAGE_SIZE, MS_SYNC) == 0,
+	      "shared extend msync");
+
+	CHECK(unlink(SHARED_TRUNCATE_START) == 0,
+	      "shared truncate barrier unlink");
+	CHECK(munmap(private, PAGE_SIZE) == 0, "shared private munmap");
+	CHECK(munmap(second, 3 * PAGE_SIZE) == 0, "shared second munmap");
+	CHECK(munmap(first, 3 * PAGE_SIZE) == 0, "shared first munmap");
+	CHECK(close(fd) == 0, "shared mmap close");
+	fd = open(SHARED_MAP_PATH, O_RDONLY);
+	CHECK(fd >= 0, "shared reopen");
+	CHECK(pread(fd, &value, 1, 31) == 1 && value == 0x44,
+	      "shared persisted second write");
+	CHECK(pread(fd, &value, 1, 2 * PAGE_SIZE) == 1 && value == 0x33,
+	      "shared persisted contents");
+	CHECK(close(fd) == 0, "shared reopen close");
+	CHECK(unlink(SHARED_MAP_PATH) == 0, "shared mmap unlink");
+}
+
+static void open_truncate_child(volatile unsigned char *mapping)
+{
+	volatile unsigned char value = mapping[0];
+
+	(void)value;
+	_exit(EXIT_SUCCESS);
+}
+
+static void test_open_truncate_mapping(void)
+{
+	volatile unsigned char *mapping;
+	unsigned char value = 0x5a;
+	pid_t child;
+	int fd, status, truncate_fd;
+
+	fd = open(OPEN_TRUNCATE_PATH, O_CREAT | O_TRUNC | O_RDWR, 0600);
+	CHECK(fd >= 0, "open truncate create");
+	CHECK(ftruncate(fd, PAGE_SIZE) == 0, "open truncate extend");
+	CHECK(write(fd, &value, 1) == 1, "open truncate write");
+	mapping = mmap(0, PAGE_SIZE, PROT_READ, MAP_SHARED, fd, 0);
+	CHECK(mapping != MAP_FAILED, "open truncate mmap");
+	CHECK(mapping[0] == value, "open truncate populate");
+	truncate_fd = open(OPEN_TRUNCATE_PATH, O_WRONLY | O_TRUNC);
+	CHECK(truncate_fd >= 0, "open truncate open");
+	CHECK(close(truncate_fd) == 0, "open truncate close");
+	child = fork();
+	CHECK(child >= 0, "open truncate fork");
+	if (!child)
+		open_truncate_child(mapping);
+	CHECK(waitpid(child, &status, 0) == child, "open truncate wait");
+	CHECK(WIFSIGNALED(status) && WTERMSIG(status) == SIGBUS,
+	      "open truncate SIGBUS");
+	CHECK(munmap((void *)mapping, PAGE_SIZE) == 0,
+	      "open truncate munmap");
+	CHECK(close(fd) == 0, "open truncate source close");
+	CHECK(unlink(OPEN_TRUNCATE_PATH) == 0, "open truncate unlink");
+}
+
 static void cow_pressure_child(const unsigned char *mapping,
 			       unsigned int child)
 {
@@ -837,6 +1056,10 @@ int main(void)
 	test_fork_isolation(anonymous, file_mapping);
 	test_kernel_copy_cow();
 	test_cached_private_write();
+	test_shared_sparse_write();
+	test_shared_file_mapping();
+	test_open_truncate_mapping();
+	puts("VM_SHARED_MAP_OK");
 	test_cow_memory_pressure();
 	puts("VM_COW_OK");
 	test_zombie_memory_release();

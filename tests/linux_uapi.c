@@ -74,6 +74,7 @@ _Static_assert(LINUX_SYS_membarrier == __NR_membarrier,
 	       "membarrier number");
 _Static_assert(LINUX_SYS_execve == __NR_execve, "execve number");
 _Static_assert(LINUX_SYS_mprotect == __NR_mprotect, "mprotect number");
+_Static_assert(LINUX_SYS_msync == __NR_msync, "msync number");
 _Static_assert(LINUX_SYS_wait4 == __NR_wait4, "wait4 number");
 _Static_assert(LINUX_SYS_renameat2 == __NR_renameat2,
 	       "renameat2 number");
@@ -146,6 +147,10 @@ _Static_assert(LINUX_PROT_READ == PROT_READ, "PROT_READ value");
 _Static_assert(LINUX_PROT_WRITE == PROT_WRITE, "PROT_WRITE value");
 _Static_assert(LINUX_PROT_EXEC == PROT_EXEC, "PROT_EXEC value");
 _Static_assert(LINUX_MAP_SHARED == MAP_SHARED, "MAP_SHARED value");
+_Static_assert(LINUX_MS_ASYNC == MS_ASYNC, "MS_ASYNC value");
+_Static_assert(LINUX_MS_INVALIDATE == MS_INVALIDATE,
+	       "MS_INVALIDATE value");
+_Static_assert(LINUX_MS_SYNC == MS_SYNC, "MS_SYNC value");
 _Static_assert(LINUX_MAP_PRIVATE == MAP_PRIVATE, "MAP_PRIVATE value");
 _Static_assert(LINUX_MAP_FIXED == MAP_FIXED, "MAP_FIXED value");
 _Static_assert(LINUX_MAP_ANONYMOUS == MAP_ANONYMOUS,
