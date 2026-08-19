@@ -518,7 +518,7 @@ static int exec_elf(char *path, const char *execfn, char **argv, char **envp)
 			name = path_p + 1;
 	}
 	safe_strncpy(process->name, name, MAXNAME);
-	process_exec_end(process);
+	process_exec_end(process, 1);
 	process_freepagedir(oldpgdir, oldsz);
 	vma_set_destroy(&old_vmas);
 	return argc;
@@ -529,7 +529,7 @@ fail:
 	if (pgdir)
 		process_freepagedir(pgdir, sz);
 	vma_set_destroy(&new_vmas);
-	process_exec_end(process);
+	process_exec_end(process, 0);
 	return error;
 }
 

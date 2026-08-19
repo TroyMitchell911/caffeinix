@@ -268,6 +268,10 @@ extern uint64 sys_linux_rt_sigtimedwait(void);
 extern uint64 sys_linux_rt_sigreturn(void);
 extern uint64 sys_linux_setpriority(void);
 extern uint64 sys_linux_getpriority(void);
+extern uint64 sys_linux_setpgid(void);
+extern uint64 sys_linux_getpgid(void);
+extern uint64 sys_linux_getsid(void);
+extern uint64 sys_linux_setsid(void);
 extern uint64 sys_linux_getrandom(void);
 extern uint64 sys_linux_symlinkat(void);
 extern uint64 sys_linux_sync(void);
@@ -353,6 +357,10 @@ static syscall_t linux_syscalls[LINUX_SYS_pwritev2 + 1] = {
 	[LINUX_SYS_rt_sigreturn] = sys_linux_rt_sigreturn,
 	[LINUX_SYS_setpriority] = sys_linux_setpriority,
 	[LINUX_SYS_getpriority] = sys_linux_getpriority,
+	[LINUX_SYS_setpgid] = sys_linux_setpgid,
+	[LINUX_SYS_getpgid] = sys_linux_getpgid,
+	[LINUX_SYS_getsid] = sys_linux_getsid,
+	[LINUX_SYS_setsid] = sys_linux_setsid,
 	[LINUX_SYS_umask] = sys_linux_umask,
 	[LINUX_SYS_prctl] = sys_linux_prctl,
 	[LINUX_SYS_getpid] = sys_linux_getpid,

@@ -57,6 +57,10 @@
 #define LINUX_SYS_rt_sigreturn      139
 #define LINUX_SYS_setpriority       140
 #define LINUX_SYS_getpriority       141
+#define LINUX_SYS_setpgid           154
+#define LINUX_SYS_getpgid           155
+#define LINUX_SYS_getsid            156
+#define LINUX_SYS_setsid            157
 #define LINUX_SYS_umask             166
 #define LINUX_SYS_prctl             167
 #define LINUX_SYS_getpid            172

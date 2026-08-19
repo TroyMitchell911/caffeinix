@@ -111,6 +111,36 @@ uint64 sys_linux_gettid(void)
 	return cur_thread()->tid;
 }
 
+uint64 sys_linux_setpgid(void)
+{
+	int pgid, pid;
+
+	argint(0, &pid);
+	argint(1, &pgid);
+	return process_setpgid(pid, pgid);
+}
+
+uint64 sys_linux_getpgid(void)
+{
+	int pid;
+
+	argint(0, &pid);
+	return process_getpgid(pid);
+}
+
+uint64 sys_linux_getsid(void)
+{
+	int pid;
+
+	argint(0, &pid);
+	return process_getsid(pid);
+}
+
+uint64 sys_linux_setsid(void)
+{
+	return process_setsid();
+}
+
 uint64 sys_linux_getrandom(void)
 {
 	uint8 buffer[64];
@@ -246,8 +276,7 @@ uint64 sys_linux_wait4(void)
 	argint(0, &target);
 	argaddr(1, &status_address);
 	argint(2, &options);
-	if ((target < -1) || target == 0 ||
-	    options & ~(LINUX_WNOHANG | LINUX_WUNTRACED |
+	if (options & ~(LINUX_WNOHANG | LINUX_WUNTRACED |
 	                LINUX_WCONTINUED))
 		return -LINUX_EINVAL;
 	result = process_wait(target, status_address, options);

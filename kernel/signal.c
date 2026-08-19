@@ -998,7 +998,7 @@ static int signal_send_syscall(int thread_group, int tid, int signal,
 		result = signal_send_thread(thread_group, tid, signal,
 		                            &information);
 	else
-		result = signal_send_process(tid, signal, &information);
+		result = signal_send_processes(tid, signal, &information);
 	if (result == SIGNAL_QUEUE_FULL)
 		return -LINUX_EAGAIN;
 	return result < 0 ? -LINUX_ESRCH : 0;
@@ -1010,8 +1010,6 @@ uint64 sys_linux_kill(void)
 
 	argint(0, &pid);
 	argint(1, &signal);
-	if (pid <= 0)
-		return -LINUX_EINVAL;
 	return signal_send_syscall(0, pid, signal, 0);
 }
 

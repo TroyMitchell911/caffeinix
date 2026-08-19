@@ -48,6 +48,8 @@ int signal_queue_thread_locked(struct process *process,
 			       const struct signal_info *information);
 int signal_send_process(int pid, int signal,
 			const struct signal_info *information);
+int signal_send_processes(int selector, int signal,
+			  const struct signal_info *information);
 int signal_send_thread(int thread_group, int tid, int signal,
 		       const struct signal_info *information);
 

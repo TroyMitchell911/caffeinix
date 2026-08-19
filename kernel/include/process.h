@@ -40,6 +40,8 @@ typedef struct process{
 
         char name[MAXNAME];
         int pid;
+	int pgid;
+	int sid;
         process_state_t state;
         
         uint64 sz;
@@ -63,6 +65,7 @@ typedef struct process{
 	int group_exit_signal;
 	int group_exit_core;
 	int execing;
+	int did_exec;
 	int live_threads;
 	int stopped;
 	int child_event;
@@ -94,9 +97,13 @@ void process_auto_reap(process_t process);
 int process_group_exiting(process_t process, int *status);
 int process_exec_begin(process_t process, thread_t thread);
 int process_exec_quiesce(process_t process, thread_t thread);
-void process_exec_end(process_t process);
+void process_exec_end(process_t process, int committed);
 int process_thread_exit_requested(thread_t thread, int *status);
 int process_wait(int target, uint64 status_address, int options);
+int process_setpgid(int pid, int pgid);
+int process_getpgid(int pid);
+int process_getsid(int pid);
+int process_setsid(void);
 int process_set_nice(int pid, int nice);
 int process_get_nice(int pid, int *nice);
 

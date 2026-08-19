@@ -304,6 +304,8 @@ static process_t process_alloc(void)
         
 	/* Linux thread-group leaders share their PID and TID. */
 	p->pid = t->tid;
+	p->pgid = p->pid;
+	p->sid = p->pid;
         
         /* Set the context of return address */
         t->context.ra = (uint64)(proc_first_start);
@@ -478,6 +480,9 @@ int process_fork(uint64 child_stack)
 	spinlock_acquire(&wait_lock);
 	spinlock_acquire(&newp->lock);
 	newp->parent = oldp;
+	newp->pgid = oldp->pgid;
+	newp->sid = oldp->sid;
+	newp->did_exec = 0;
 	newp->state = PROCESS_LIVE;
 	spinlock_release(&newp->lock);
 	spinlock_acquire(&newt->lock);
@@ -640,8 +645,13 @@ int process_exec_quiesce(process_t p, thread_t current)
 	return 0;
 }
 
-void process_exec_end(process_t p)
+void process_exec_end(process_t p, int committed)
 {
+	if (committed) {
+		spinlock_acquire(&wait_lock);
+		p->did_exec = 1;
+		spinlock_release(&wait_lock);
+	}
 	spinlock_acquire(&p->lock);
 	if (!p->execing)
 		PANIC("finish inactive exec");
@@ -756,6 +766,18 @@ void process_thread_exit(int cause, int group)
 	scheduler_exit_locked();
 }
 
+static int process_wait_matches(process_t parent, process_t child,
+				int target)
+{
+	if (target > 0)
+		return child->pid == target;
+	if (target == -1)
+		return 1;
+	if (!target)
+		return child->pgid == parent->pgid;
+	return (int64)child->pgid == -(int64)target;
+}
+
 int process_wait(int target, uint64 status_address, int options)
 {
         process_t p, pp;
@@ -772,8 +794,8 @@ int process_wait(int target, uint64 status_address, int options)
                         pp = list_entry(l, struct process, all_tag);
                         if(!pp)
                                 continue;
-			if(pp->parent == p &&
-			   (target == -1 || target == pp->pid)) {
+			if (pp->parent == p &&
+			    process_wait_matches(p, pp, target)) {
                                 spinlock_acquire(&pp->lock);
 				if (pp->auto_reap) {
 					spinlock_release(&pp->lock);
@@ -889,6 +911,129 @@ static process_t process_find_locked(int pid)
 	return 0;
 }
 
+static process_t process_find_existing_locked(int pid)
+{
+	process_t process;
+	list_t entry;
+
+	if (!spinlock_holding(&wait_lock))
+		PANIC("process lookup unlocked");
+	for (entry = proc.next; entry != &proc; entry = entry->next) {
+		process = list_entry(entry, struct process, all_tag);
+		if (process->pid == pid && process->state != PROCESS_EMBRYO)
+			return process;
+	}
+	return 0;
+}
+
+static int process_group_exists_locked(int pgid, int sid)
+{
+	process_t process;
+	list_t entry;
+
+	if (!spinlock_holding(&wait_lock))
+		PANIC("process group lookup unlocked");
+	for (entry = proc.next; entry != &proc; entry = entry->next) {
+		process = list_entry(entry, struct process, all_tag);
+		if (process->state != PROCESS_EMBRYO && process->pgid == pgid &&
+		    process->sid == sid)
+			return 1;
+	}
+	return 0;
+}
+
+int process_setpgid(int pid, int pgid)
+{
+	process_t caller = cur_proc();
+	process_t target;
+	int result = 0;
+
+	if (pid < 0 || pgid < 0)
+		return -LINUX_EINVAL;
+	if (!pid)
+		pid = caller->pid;
+	spinlock_acquire(&wait_lock);
+	target = process_find_locked(pid);
+	if (!target || (target != caller && target->parent != caller)) {
+		result = -LINUX_ESRCH;
+		goto out;
+	}
+	if (target != caller && target->did_exec) {
+		result = -LINUX_EACCES;
+		goto out;
+	}
+	if (target->sid != caller->sid || target->pid == target->sid) {
+		result = -LINUX_EPERM;
+		goto out;
+	}
+	if (!pgid)
+		pgid = target->pid;
+	if (pgid != target->pid &&
+	    !process_group_exists_locked(pgid, caller->sid)) {
+		result = -LINUX_EPERM;
+		goto out;
+	}
+	target->pgid = pgid;
+out:
+	spinlock_release(&wait_lock);
+	return result;
+}
+
+int process_getpgid(int pid)
+{
+	process_t process;
+	int result;
+
+	if (pid < 0)
+		return -LINUX_ESRCH;
+	if (!pid)
+		pid = cur_proc()->pid;
+	spinlock_acquire(&wait_lock);
+	process = process_find_existing_locked(pid);
+	if (!process)
+		result = -LINUX_ESRCH;
+	else
+		result = process->pgid;
+	spinlock_release(&wait_lock);
+	return result;
+}
+
+int process_getsid(int pid)
+{
+	process_t process;
+	int result;
+
+	if (pid < 0)
+		return -LINUX_ESRCH;
+	if (!pid)
+		pid = cur_proc()->pid;
+	spinlock_acquire(&wait_lock);
+	process = process_find_existing_locked(pid);
+	if (!process)
+		result = -LINUX_ESRCH;
+	else
+		result = process->sid;
+	spinlock_release(&wait_lock);
+	return result;
+}
+
+int process_setsid(void)
+{
+	process_t caller = cur_proc();
+	int result;
+
+	spinlock_acquire(&wait_lock);
+	if (process_group_exists_locked(caller->pid, caller->sid)) {
+		result = -LINUX_EPERM;
+	} else {
+		caller->sid = caller->pid;
+		caller->pgid = caller->pid;
+		result = caller->sid;
+	}
+	spinlock_release(&wait_lock);
+	return result;
+}
+
 static void process_notify_parent_locked(process_t child, int code,
 					 int status)
 {
@@ -949,6 +1094,52 @@ int signal_send_process(int pid, int signal,
 	}
 	spinlock_release(&wait_lock);
 	return result < 0 ? result : 0;
+}
+
+int signal_send_processes(int selector, int signal,
+			  const struct signal_info *information)
+{
+	process_t caller = cur_proc();
+	process_t process;
+	list_t entry;
+	int delivered = 0, full = 0;
+	int64 group = selector < -1 ? -(int64)selector : 0;
+
+	if (selector > 0)
+		return signal_send_process(selector, signal, information);
+	spinlock_acquire(&wait_lock);
+	for (entry = proc.next; entry != &proc; entry = entry->next) {
+		int result, resumed = 0;
+
+		process = list_entry(entry, struct process, all_tag);
+		if (process->state != PROCESS_LIVE)
+			continue;
+		if (!selector && process->pgid != caller->pgid)
+			continue;
+		if (selector == -1 && (process == first || process == caller))
+			continue;
+		if (selector < -1 && (int64)process->pgid != group)
+			continue;
+		spinlock_acquire(&process->lock);
+		if (!signal)
+			result = 0;
+		else
+			result = resumed = signal_queue_process_locked(
+				process, signal, information);
+		spinlock_release(&process->lock);
+		if (result == SIGNAL_QUEUE_FULL) {
+			full = 1;
+			continue;
+		}
+		if (result < 0)
+			continue;
+		delivered = 1;
+		process_continue_event_locked(process, resumed);
+	}
+	spinlock_release(&wait_lock);
+	if (delivered)
+		return 0;
+	return full ? SIGNAL_QUEUE_FULL : -1;
 }
 
 int signal_send_thread(int thread_group, int tid, int signal,
