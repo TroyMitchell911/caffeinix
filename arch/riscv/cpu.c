@@ -123,6 +123,21 @@ void cpu_membarrier(void)
 	sleeplock_release(&membarrier_lock);
 }
 
+void cpu_tlb_flush_all(void)
+{
+	int current = cpuid();
+	int logical;
+
+	sfence_vma();
+	for (logical = 0; logical < logical_cpu_count; logical++) {
+		if (logical == current || !cpus[logical]->online)
+			continue;
+		/* A zero range requests a complete address-space flush. */
+		if (sbi_remote_sfence_vma(cpu_hart_id(logical), 0, 0))
+			PANIC("remote TLB flush failed");
+	}
+}
+
 uint64 cpu_hart_id(int logical_id)
 {
 	if (logical_id < 0 || logical_id >= logical_cpu_count)

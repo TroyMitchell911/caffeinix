@@ -23,6 +23,7 @@ void cpu_mark_online(void);
 void cpu_membarrier_init(void);
 void cpu_membarrier_interrupt(void);
 void cpu_membarrier(void);
+void cpu_tlb_flush_all(void);
 void cpu_wait_for_secondary_harts(void);
 
 #endif

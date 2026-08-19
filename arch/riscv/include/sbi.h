@@ -13,5 +13,6 @@ int64 sbi_hart_start(uint64 hart_id, uint64 start_address,
 		     uint64 opaque);
 int64 sbi_hart_get_status(uint64 hart_id, uint64 *status);
 int64 sbi_send_ipi(uint64 hart_id);
+int64 sbi_remote_sfence_vma(uint64 hart_id, uint64 start, uint64 size);
 
 #endif

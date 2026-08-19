@@ -13,6 +13,8 @@
 
 #include <riscv.h>
 
+struct vma_set;
+
 /* For kernel */
 void kvm_create(void);
 void kvm_init(void);
@@ -32,12 +34,13 @@ int vm_alloc_load_range(pagedir_t pgdir, uint64 start, uint64 end,
 int vm_alloc_user_range(pagedir_t pgdir, uint64 start, uint64 end,
 			int permissions);
 int vm_protect_user_range(pagedir_t pgdir, uint64 start, uint64 end,
-			  int permissions);
+			  int permissions, const struct vma_set *vmas);
+int vm_resolve_cow(pagedir_t pgdir, uint64 va);
 uint64 vm_user_pa(pagedir_t pgdir, uint64 va);
 uint64 vm_alloc(pagedir_t pgdir, uint64 oldsz, uint64 newsz, int eperm);
 uint64 vm_dealloc(pagedir_t pgdir, uint64 oldsz, uint64 newsz);
 void vm_clear(pagedir_t pgdir, uint64 va);
-int vm_copy(pagedir_t old, pagedir_t new);
+int vm_copy(pagedir_t old, pagedir_t new, const struct vma_set *vmas);
 void vm_free_user(pagedir_t pgdir);
 /* For page-table */
 pagedir_t pagedir_alloc(void);

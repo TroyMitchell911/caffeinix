@@ -430,7 +430,7 @@ int process_fork(uint64 child_stack)
 	scheduler_inherit(newt, oldt);
 
 	sleeplock_acquire(&oldp->mmap_lock);
-	if (vm_copy(oldp->pagetable, newp->pagetable) != 0 ||
+	if (vm_copy(oldp->pagetable, newp->pagetable, &oldp->vmas) != 0 ||
 	    vma_set_clone(&newp->vmas, &oldp->vmas) < 0) {
 		sleeplock_release(&oldp->mmap_lock);
 		spinlock_release(&newt->lock);

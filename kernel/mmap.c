@@ -87,13 +87,7 @@ static enum mmap_fault_result mmap_file_fault(struct vm_area *area,
 		if (bytes > PGSIZE)
 			bytes = PGSIZE;
 	}
-	/*
-	 * A private mmap may later become writable through mprotect().  Until
-	 * private cache mappings have copy-on-write PTEs, only share immutable
-	 * load mappings selected by the ELF loader.
-	 */
-	if (bytes == PGSIZE && area->usage == VMA_ELF &&
-	    !(area->protection & LINUX_PROT_WRITE) &&
+	if (bytes == PGSIZE && !(area->protection & LINUX_PROT_WRITE) &&
 	    page_cache_get(area->file, file_offset, page) == 0)
 		return MMAP_FAULT_OK;
 	allocated = palloc_zero();
@@ -145,7 +139,17 @@ enum mmap_fault_result mmap_handle_fault(process_t process, uint64 address,
 	}
 	if (vm_mapped(process->pagetable, page_address)) {
 		pte_t *pte = PTE(process->pagetable, page_address, 0);
+		int cow = access == MMAP_FAULT_WRITE ?
+			vm_resolve_cow(process->pagetable, page_address) : 0;
 
+		if (cow > 0) {
+			result = MMAP_FAULT_OK;
+			goto out;
+		}
+		if (cow < 0) {
+			result = MMAP_FAULT_NOMEM;
+			goto out;
+		}
 		if (pte && (*pte & PTE_V) && (*pte & PTE_U) &&
 		    ((access == MMAP_FAULT_READ && (*pte & PTE_R)) ||
 		     (access == MMAP_FAULT_WRITE && (*pte & PTE_W)) ||
@@ -324,7 +328,7 @@ uint64 sys_linux_mprotect(void)
 		return -LINUX_ENOMEM;
 	}
 	if (vm_protect_user_range(process->pagetable, address, end,
-				  permissions) < 0)
+				  permissions, &process->vmas) < 0)
 		PANIC("VMA and page table protection mismatch");
 	sleeplock_release(&process->mmap_lock);
 	return 0;
