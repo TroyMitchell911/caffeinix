@@ -23,6 +23,7 @@ file_t file_alloc(void)
 		if (!file->ref) {
 			memset(file, 0, sizeof(*file));
 			file->ref = 1;
+			sleeplock_init(&file->position_lock, "file position");
 			spinlock_release(&file_table.lock);
 			return file;
 		}

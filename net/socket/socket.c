@@ -7,14 +7,17 @@
 #include <network_stack.h>
 #include <palloc.h>
 #include <process.h>
+#include <scheduler.h>
 #include <signal.h>
 #include <spinlock.h>
 #include <vfs.h>
+#include <vm.h>
 
 #define SOCKET_LISTEN_BACKLOG_MAX 16
 #define SOCKET_LINGER_MAX_SECONDS 0x7fff
 #define SOCKET_RECEIVE_BUFFER_MIN 2304
 #define SOCKET_RECEIVE_BUFFER_MAX 0x7fffffff
+#define SOCKET_DATAGRAM_RECEIVE_MAX 0xffff
 #define SOCKET_TIMEOUT_MAX_MS 0x7fffffff
 
 #define SOCKET_INHERIT_REUSEADDR (1U << 0)
@@ -532,6 +535,76 @@ static int64 socket_file_read(struct vfs_file *file, int user_destination,
 	return result;
 }
 
+static int64 socket_file_readv(struct vfs_file *file, int user_destination,
+			       const struct vfs_iovec *iovecs,
+			       uint32 count)
+{
+	struct socket_file *socket = file->private;
+	uint64 copied = 0, capacity = 0, remaining;
+	unsigned int buffer_order = 0;
+	void *buffer;
+	uint32 index;
+	int64 result;
+
+	for (index = 0; index < count; index++)
+		capacity += iovecs[index].length;
+	if (!capacity)
+		return 0;
+	if (socket_read_is_shutdown(socket) &&
+	    socket->type != LINUX_SOCK_STREAM)
+		return 0;
+	if (socket->type == LINUX_SOCK_STREAM && capacity > PGSIZE)
+		capacity = PGSIZE;
+	else if (capacity > SOCKET_DATAGRAM_RECEIVE_MAX)
+		capacity = SOCKET_DATAGRAM_RECEIVE_MAX;
+	remaining = capacity;
+	for (index = 0; user_destination && index < count && remaining;
+	     index++) {
+		uint64 length = iovecs[index].length;
+
+		if (length > remaining)
+			length = remaining;
+		if (length && vm_prefault_user_write(cur_proc()->pagetable,
+						  iovecs[index].base,
+						  length) < 0)
+			return VFS_ERR_FAULT;
+		remaining -= length;
+	}
+	while ((PGSIZE << buffer_order) < capacity)
+		buffer_order++;
+	buffer = alloc_pages(buffer_order, 0);
+	if (!buffer)
+		return VFS_ERR_NOMEM;
+	lwip_socket_thread_init();
+	errno = 0;
+	result = lwip_recv(socket->descriptor, buffer, capacity, 0);
+	if (result < 0) {
+		if (socket_read_is_shutdown(socket) &&
+		    (errno == ENOTCONN || errno == ECONNRESET))
+			result = 0;
+		else
+			result = socket_vfs_error(errno);
+		goto out;
+	}
+	for (index = 0; index < count && copied < (uint64)result; index++) {
+		uint64 length = iovecs[index].length;
+
+		if (length > (uint64)result - copied)
+			length = result - copied;
+		if (length && either_copyout(user_destination,
+					     iovecs[index].base,
+					     (uint8 *)buffer + copied,
+					     length) < 0) {
+			result = VFS_ERR_FAULT;
+			goto out;
+		}
+		copied += length;
+	}
+out:
+	free_pages(buffer, buffer_order);
+	return result;
+}
+
 static int64 socket_file_write(struct vfs_file *file, int user_source,
 			       uint64 source, uint64 count,
 			       uint64 *position)
@@ -719,6 +792,7 @@ static uint32 socket_file_poll(struct vfs_file *file, uint32 events)
 static const struct vfs_file_operations socket_file_operations = {
 	.release = socket_file_release,
 	.read = socket_file_read,
+	.readv = socket_file_readv,
 	.write = socket_file_write,
 	.writev = socket_file_writev,
 	.ioctl = socket_file_ioctl,

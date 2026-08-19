@@ -20,6 +20,8 @@
 #define VFS_MOUNT_MAX 16
 #define VFS_SYMLINK_MAX 8
 
+#define VFS_MAX_FILE_OFFSET 0x7fffffffffffffffULL
+
 #define VFS_LOOKUP_PARENT (1U << 0)
 #define VFS_LOOKUP_NOFOLLOW_FINAL (1U << 1)
 
@@ -913,6 +915,8 @@ int64 vfs_file_pread_raw(struct vfs_file *file, int user_destination,
 int64 vfs_file_pread(struct vfs_file *file, int user_destination,
 		     uint64 destination, uint64 count, uint64 offset)
 {
+	if (!file || !(file->flags & VFS_OPEN_READ))
+		return VFS_ERR_BADF;
 	if (page_cache_writeback_file(file) < 0)
 		return VFS_ERR_IO;
 	return vfs_file_pread_raw(file, user_destination, destination,
@@ -929,6 +933,144 @@ int64 vfs_file_pwrite_raw(struct vfs_file *file, int user_source,
 	    !(file->capabilities & VFS_FILE_CAN_PREAD))
 		return VFS_ERR_SPIPE;
 	return file_write(file, user_source, source, count, &offset);
+}
+
+static int vfs_prepare_positioned_write(file_t file, uint32 flags,
+					uint64 *offset, uint64 *old_size)
+{
+	struct vfs_inode *inode;
+	struct vfs_stat stat;
+	int result;
+
+	*old_size = 0;
+	if (!file->path.dentry ||
+	    !(inode = file->path.dentry->inode) ||
+	    inode->type != VFS_INODE_REGULAR)
+		return VFS_OK;
+	result = vfs_inode_stat(inode, &stat);
+	if (result < 0)
+		return result;
+	*old_size = stat.size;
+	if (!(flags & VFS_WRITE_NOAPPEND) &&
+	    file->flags & VFS_OPEN_APPEND)
+		*offset = stat.size;
+	return VFS_OK;
+}
+
+int64 vfs_file_pwrite(struct vfs_file *file, int user_source,
+			 uint64 source, uint64 count, uint64 offset,
+			 uint32 flags)
+{
+	sleeplock_t lock;
+	uint64 old_size;
+	int64 result;
+
+	if (!file || !(file->flags & VFS_OPEN_WRITE))
+		return VFS_ERR_BADF;
+	lock = file->path.dentry ?
+		vfs_inode_write_lock(file->path.dentry->inode) : 0;
+	if (lock)
+		sleeplock_acquire(lock);
+	result = vfs_prepare_positioned_write(file, flags, &offset,
+					      &old_size);
+	if (result < 0)
+		goto out;
+	if (count > VFS_MAX_FILE_OFFSET ||
+	    offset > VFS_MAX_FILE_OFFSET - count) {
+		result = VFS_ERR_INVAL;
+		goto out;
+	}
+	result = vfs_file_pwrite_raw(file, user_source, source, count,
+				     offset);
+	if (result > 0 && lock)
+		page_cache_refresh(file, user_source, source, offset, result,
+				   old_size);
+out:
+	if (lock)
+		sleeplock_release(lock);
+	return result;
+}
+
+int64 vfs_file_preadv(struct vfs_file *file, int user_destination,
+			 const struct vfs_iovec *iovecs, uint32 count,
+			 uint64 offset)
+{
+	uint64 total = 0;
+	uint32 index;
+	int64 result;
+
+	if (!file || !(file->flags & VFS_OPEN_READ))
+		return VFS_ERR_BADF;
+	if (page_cache_writeback_file(file) < 0)
+		return VFS_ERR_IO;
+	for (index = 0; index < count; index++) {
+		result = vfs_file_pread_raw(file, user_destination,
+					    iovecs[index].base,
+					    iovecs[index].length, offset);
+		if (result < 0)
+			return total ? total : result;
+		offset += result;
+		total += result;
+		if ((uint64)result != iovecs[index].length)
+			break;
+	}
+	return total;
+}
+
+int64 vfs_file_pwritev(struct vfs_file *file, int user_source,
+			  const struct vfs_iovec *iovecs, uint32 count,
+			  uint64 offset, uint32 flags)
+{
+	sleeplock_t lock;
+	uint64 length = 0, old_size, start, total = 0;
+	uint32 index;
+	int64 result;
+
+	if (!file || !(file->flags & VFS_OPEN_WRITE))
+		return VFS_ERR_BADF;
+	lock = file->path.dentry ?
+		vfs_inode_write_lock(file->path.dentry->inode) : 0;
+	if (lock)
+		sleeplock_acquire(lock);
+	result = vfs_prepare_positioned_write(file, flags, &offset,
+					      &old_size);
+	if (result < 0)
+		goto out;
+	for (index = 0; index < count; index++) {
+		if (iovecs[index].length > VFS_MAX_FILE_OFFSET - length) {
+			result = VFS_ERR_INVAL;
+			goto out;
+		}
+		length += iovecs[index].length;
+	}
+	if (offset > VFS_MAX_FILE_OFFSET - length) {
+		result = VFS_ERR_INVAL;
+		goto out;
+	}
+	for (index = 0; index < count; index++) {
+		start = offset;
+		result = vfs_file_pwrite_raw(file, user_source,
+					     iovecs[index].base,
+					     iovecs[index].length, offset);
+		if (result < 0) {
+			result = total ? total : result;
+			goto out;
+		}
+		if (result > 0 && lock)
+			page_cache_refresh(file, user_source, iovecs[index].base,
+					   start, result, old_size);
+		offset += result;
+		if (offset > old_size)
+			old_size = offset;
+		total += result;
+		if ((uint64)result != iovecs[index].length)
+			break;
+	}
+	result = total;
+out:
+	if (lock)
+		sleeplock_release(lock);
+	return result;
 }
 
 int vfs_open(const char *path, uint32 flags, uint32 mode, int *fd_out)
@@ -1175,24 +1317,61 @@ int vfs_read(int fd, uint64 address, int length)
 	return result > 0x7fffffff ? VFS_ERR_INVAL : result;
 }
 
+int64 vfs_readv(int fd, int user_destination,
+		const struct vfs_iovec *iovecs, uint32 count)
+{
+	file_t file;
+	uint64 total = 0;
+	uint32 index;
+	int64 result = VFS_OK;
+
+	if (fd_get(fd, &file) != VFS_OK)
+		return VFS_ERR_BADF;
+	for (index = 0; index < count; index++) {
+		if (iovecs[index].length > 0x7fffffff - total) {
+			result = VFS_ERR_INVAL;
+			goto out;
+		}
+		total += iovecs[index].length;
+	}
+	if (!(file->flags & VFS_OPEN_READ)) {
+		result = VFS_ERR_BADF;
+		goto out;
+	}
+	if (page_cache_writeback_file(file) < 0) {
+		result = VFS_ERR_IO;
+		goto out;
+	}
+	total = 0;
+	sleeplock_acquire(&file->position_lock);
+	if (file->operations && file->operations->readv) {
+		result = file->operations->readv(file, user_destination, iovecs,
+					       count);
+		goto out_unlock;
+	}
+	for (index = 0; index < count; index++) {
+		result = file_read(file, user_destination, iovecs[index].base,
+				   iovecs[index].length, &file->position);
+		if (result < 0) {
+			result = total ? total : result;
+			goto out_unlock;
+		}
+		total += result;
+		if ((uint64)result != iovecs[index].length)
+			break;
+	}
+	result = total;
+out_unlock:
+	sleeplock_release(&file->position_lock);
+out:
+	vfs_file_put(file);
+	return result;
+}
+
 static int vfs_prepare_write(file_t file, uint64 *old_size)
 {
-	struct vfs_inode *inode;
-	struct vfs_stat stat;
-	int result;
-
-	*old_size = 0;
-	if (!file->path.dentry ||
-	    !(inode = file->path.dentry->inode) ||
-	    inode->type != VFS_INODE_REGULAR)
-		return VFS_OK;
-	result = vfs_inode_stat(inode, &stat);
-	if (result < 0)
-		return result;
-	*old_size = stat.size;
-	if (file->flags & VFS_OPEN_APPEND)
-		file->position = stat.size;
-	return VFS_OK;
+	return vfs_prepare_positioned_write(file, 0, &file->position,
+					    old_size);
 }
 
 static sleeplock_t vfs_regular_write_lock(file_t file)
@@ -1234,7 +1413,8 @@ int vfs_write(int fd, uint64 address, int length)
 }
 
 int64 vfs_writev(int fd, int user_source,
-		 const struct vfs_iovec *iovecs, uint32 count)
+		 const struct vfs_iovec *iovecs, uint32 count,
+		 uint32 flags)
 {
 	sleeplock_t lock;
 	file_t file;
@@ -1262,7 +1442,8 @@ int64 vfs_writev(int fd, int user_source,
 						  count);
 		goto out;
 	}
-	result = vfs_prepare_write(file, &old_size);
+	result = vfs_prepare_positioned_write(file, flags, &file->position,
+					      &old_size);
 	if (result < 0)
 		goto out;
 	for (index = 0; index < count; index++) {

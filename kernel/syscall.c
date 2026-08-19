@@ -1,6 +1,7 @@
 #include <debug.h>
 #include <linux_uapi.h>
 #include <mystring.h>
+#include <palloc.h>
 #include <printk.h>
 #include <scheduler.h>
 #include <signal.h>
@@ -114,6 +115,48 @@ int64 linux_error(int result)
 	}
 }
 
+int copy_user_iov(uint64 address, int count, struct vfs_iovec **result,
+		  unsigned int *order)
+{
+	struct linux_iovec linux_iov;
+	struct vfs_iovec *iovecs;
+	uint64 bytes, capacity = PGSIZE, total = 0;
+	int i;
+
+	*result = 0;
+	*order = 0;
+	if (count < 0 || count > LINUX_IOV_MAX)
+		return -LINUX_EINVAL;
+	if (!count)
+		return 0;
+	bytes = count * sizeof(*iovecs);
+	while (capacity < bytes) {
+		capacity <<= 1;
+		(*order)++;
+	}
+	iovecs = alloc_pages(*order, 0);
+	if (!iovecs)
+		return -LINUX_ENOMEM;
+
+	for (i = 0; i < count; i++) {
+		if (copyin(cur_proc()->pagetable, (char *)&linux_iov,
+		           address + i * sizeof(linux_iov),
+		           sizeof(linux_iov)) < 0) {
+			free_pages(iovecs, *order);
+			return -LINUX_EFAULT;
+		}
+		if (linux_iov.len > 0x7fffffff - total) {
+			free_pages(iovecs, *order);
+			return -LINUX_EINVAL;
+		}
+		iovecs[i].base = linux_iov.base;
+		iovecs[i].length = linux_iov.len;
+		total += linux_iov.len;
+	}
+	*result = iovecs;
+	return 0;
+}
+
 static uint64 argraw(int n)
 {
 	uint64 *args = &cur_thread()->trapframe->a0;
@@ -199,7 +242,13 @@ extern uint64 sys_linux_newfstatat(void);
 extern uint64 sys_linux_openat(void);
 extern uint64 sys_linux_prctl(void);
 extern uint64 sys_linux_pread64(void);
+extern uint64 sys_linux_preadv(void);
+extern uint64 sys_linux_preadv2(void);
+extern uint64 sys_linux_pwrite64(void);
+extern uint64 sys_linux_pwritev(void);
+extern uint64 sys_linux_pwritev2(void);
 extern uint64 sys_linux_read(void);
+extern uint64 sys_linux_readv(void);
 extern uint64 sys_linux_readlinkat(void);
 extern uint64 sys_linux_renameat2(void);
 extern uint64 sys_linux_set_tid_address(void);
@@ -248,7 +297,7 @@ extern uint64 sys_linux_ftruncate(void);
 
 typedef uint64 (*syscall_t)(void);
 
-static syscall_t linux_syscalls[LINUX_SYS_membarrier + 1] = {
+static syscall_t linux_syscalls[LINUX_SYS_pwritev2 + 1] = {
 	[LINUX_SYS_getcwd] = sys_linux_getcwd,
 	[LINUX_SYS_dup] = sys_linux_dup,
 	[LINUX_SYS_dup3] = sys_linux_dup3,
@@ -267,8 +316,12 @@ static syscall_t linux_syscalls[LINUX_SYS_membarrier + 1] = {
 	[LINUX_SYS_lseek] = sys_linux_lseek,
 	[LINUX_SYS_read] = sys_linux_read,
 	[LINUX_SYS_write] = sys_linux_write,
+	[LINUX_SYS_readv] = sys_linux_readv,
 	[LINUX_SYS_writev] = sys_linux_writev,
 	[LINUX_SYS_pread64] = sys_linux_pread64,
+	[LINUX_SYS_pwrite64] = sys_linux_pwrite64,
+	[LINUX_SYS_preadv] = sys_linux_preadv,
+	[LINUX_SYS_pwritev] = sys_linux_pwritev,
 	[LINUX_SYS_ppoll] = sys_linux_ppoll,
 	[LINUX_SYS_readlinkat] = sys_linux_readlinkat,
 	[LINUX_SYS_newfstatat] = sys_linux_newfstatat,
@@ -333,6 +386,8 @@ static syscall_t linux_syscalls[LINUX_SYS_membarrier + 1] = {
 	[LINUX_SYS_renameat2] = sys_linux_renameat2,
 	[LINUX_SYS_getrandom] = sys_linux_getrandom,
 	[LINUX_SYS_membarrier] = sys_linux_membarrier,
+	[LINUX_SYS_preadv2] = sys_linux_preadv2,
+	[LINUX_SYS_pwritev2] = sys_linux_pwritev2,
 };
 
 void syscall(void)

@@ -17,6 +17,8 @@
 #define VFS_OPEN_APPEND     (1U << 6)
 #define VFS_OPEN_NONBLOCK   (1U << 7)
 
+#define VFS_WRITE_NOAPPEND  (1U << 0)
+
 #define VFS_FD_CLOEXEC      (1U << 0)
 
 #define VFS_POLL_IN   0x001
@@ -260,6 +262,7 @@ struct vfs_mount {
 
 struct vfs_file {
 	int ref;
+	struct sleeplock position_lock;
 	struct vfs_path path;
 	const struct vfs_file_operations *operations;
 	uint32 capabilities;
@@ -299,6 +302,15 @@ int64 vfs_file_pread_raw(struct vfs_file *file, int user_destination,
 			 uint64 destination, uint64 count, uint64 offset);
 int64 vfs_file_pwrite_raw(struct vfs_file *file, int user_source,
 			  uint64 source, uint64 count, uint64 offset);
+int64 vfs_file_pwrite(struct vfs_file *file, int user_source,
+			 uint64 source, uint64 count, uint64 offset,
+			 uint32 flags);
+int64 vfs_file_preadv(struct vfs_file *file, int user_destination,
+			 const struct vfs_iovec *iovecs, uint32 count,
+			 uint64 offset);
+int64 vfs_file_pwritev(struct vfs_file *file, int user_source,
+			  const struct vfs_iovec *iovecs, uint32 count,
+			  uint64 offset, uint32 flags);
 
 int vfs_open(const char *path, uint32 flags, uint32 mode, int *fd_out);
 int vfs_install_file(struct vfs_file *file, uint8 flags, int *fd_out);
@@ -313,8 +325,11 @@ int vfs_dup(int oldfd, int minimum, uint8 flags, int *fd_out);
 int vfs_dup_to(int oldfd, int newfd, uint8 flags);
 int vfs_read(int fd, uint64 address, int length);
 int vfs_write(int fd, uint64 address, int length);
+int64 vfs_readv(int fd, int user_destination,
+		const struct vfs_iovec *iovecs, uint32 count);
 int64 vfs_writev(int fd, int user_source,
-		 const struct vfs_iovec *iovecs, uint32 count);
+		 const struct vfs_iovec *iovecs, uint32 count,
+		 uint32 flags);
 int vfs_ftruncate(int fd, uint64 size);
 int64 vfs_ioctl(int fd, uint64 request, uint64 argument);
 int vfs_seek(int fd, int64 offset, int whence, uint64 *result);

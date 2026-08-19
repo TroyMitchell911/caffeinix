@@ -212,6 +212,26 @@ uint64 sys_linux_pread64(void)
 	return result < 0 ? linux_error(result) : result;
 }
 
+uint64 sys_linux_pwrite64(void)
+{
+	struct vfs_file *file;
+	uint64 address, count, offset;
+	int fd;
+	int64 result;
+
+	argint(0, &fd);
+	argaddr(1, &address);
+	argaddr(2, &count);
+	argaddr(3, &offset);
+	if ((int64)offset < 0 || count > 0x7fffffff)
+		return -LINUX_EINVAL;
+	if (vfs_get_file_fd(fd, &file) < 0)
+		return -LINUX_EBADF;
+	result = vfs_file_pwrite(file, 1, address, count, offset, 0);
+	vfs_file_put(file);
+	return result < 0 ? linux_error(result) : result;
+}
+
 uint64 sys_linux_lseek(void)
 {
 	uint64 result;
@@ -638,37 +658,121 @@ uint64 sys_linux_ioctl(void)
 	return result < 0 ? linux_error(result) : result;
 }
 
-uint64 sys_linux_writev(void)
+static uint64 linux_positioned_iov(int write_operation, int version_two)
 {
-	process_t p = cur_proc();
-	struct linux_iovec linux_iov;
-	struct vfs_iovec iovecs[LINUX_IOV_MAX];
-	uint64 iov_address;
-	file_t f;
-	int fd, count, i;
-	int64 written;
+	struct vfs_iovec *iovecs;
+	file_t file;
+	uint64 address, offset, offset_high, offset_low;
+	unsigned int order;
+	int count, error, fd, flags = 0;
+	uint32 vfs_flags = 0;
+	int64 result;
 
 	argint(0, &fd);
-	argaddr(1, &iov_address);
+	argaddr(1, &address);
 	argint(2, &count);
-
-	if (fd < 0 || fd >= NOFILE || !(f = p->ofile[fd]))
-		return -LINUX_EBADF;
-	if (count < 0 || count > LINUX_IOV_MAX)
-		return -LINUX_EINVAL;
-
-	for (i = 0; i < count; i++) {
-		if (copyin(p->pagetable, (char *)&linux_iov,
-		           iov_address + i * sizeof(linux_iov),
-			   sizeof(linux_iov)) < 0)
-			return -LINUX_EFAULT;
-		if (linux_iov.len > 0x7fffffff)
-			return -LINUX_EINVAL;
-		iovecs[i].base = linux_iov.base;
-		iovecs[i].length = linux_iov.len;
+	argaddr(3, &offset_low);
+	argaddr(4, &offset_high);
+	offset = (uint32)offset_low | ((uint64)(uint32)offset_high << 32);
+	if (version_two)
+		argint(5, &flags);
+	if ((!write_operation && flags) ||
+	    (write_operation && flags & ~LINUX_RWF_NOAPPEND))
+		return -LINUX_EOPNOTSUPP;
+	if (flags & LINUX_RWF_NOAPPEND)
+		vfs_flags |= VFS_WRITE_NOAPPEND;
+	error = copy_user_iov(address, count, &iovecs, &order);
+	if (error < 0)
+		return error;
+	if (version_two && offset == (uint64)-1) {
+		result = write_operation ?
+			vfs_writev(fd, 1, iovecs, count, vfs_flags) :
+			vfs_readv(fd, 1, iovecs, count);
+		goto translate;
 	}
-	written = vfs_writev(fd, 1, iovecs, count);
-	return written < 0 ? linux_error(written) : written;
+	if ((int64)offset < 0) {
+		result = -LINUX_EINVAL;
+		goto out_iov;
+	}
+	if (vfs_get_file_fd(fd, &file) < 0) {
+		result = -LINUX_EBADF;
+		goto out_iov;
+	}
+	result = write_operation ?
+		vfs_file_pwritev(file, 1, iovecs, count, offset, vfs_flags) :
+		vfs_file_preadv(file, 1, iovecs, count, offset);
+	vfs_file_put(file);
+translate:
+	if (result == VFS_ERR_INTR && !write_operation)
+		result = -SIGNAL_RESTART_SYS;
+	else if (result < 0)
+		result = linux_error(result);
+out_iov:
+	if (iovecs)
+		free_pages(iovecs, order);
+	return result;
+}
+
+uint64 sys_linux_preadv(void)
+{
+	return linux_positioned_iov(0, 0);
+}
+
+uint64 sys_linux_pwritev(void)
+{
+	return linux_positioned_iov(1, 0);
+}
+
+uint64 sys_linux_preadv2(void)
+{
+	return linux_positioned_iov(0, 1);
+}
+
+uint64 sys_linux_pwritev2(void)
+{
+	return linux_positioned_iov(1, 1);
+}
+
+uint64 sys_linux_readv(void)
+{
+	struct vfs_iovec *iovecs;
+	uint64 address;
+	unsigned int order;
+	int count, error, fd;
+	int64 result;
+
+	argint(0, &fd);
+	argaddr(1, &address);
+	argint(2, &count);
+	error = copy_user_iov(address, count, &iovecs, &order);
+	if (error < 0)
+		return error;
+	result = vfs_readv(fd, 1, iovecs, count);
+	if (iovecs)
+		free_pages(iovecs, order);
+	if (result == VFS_ERR_INTR)
+		return -SIGNAL_RESTART_SYS;
+	return result < 0 ? linux_error(result) : result;
+}
+
+uint64 sys_linux_writev(void)
+{
+	struct vfs_iovec *iovecs;
+	uint64 address;
+	unsigned int order;
+	int count, error, fd;
+	int64 result;
+
+	argint(0, &fd);
+	argaddr(1, &address);
+	argint(2, &count);
+	error = copy_user_iov(address, count, &iovecs, &order);
+	if (error < 0)
+		return error;
+	result = vfs_writev(fd, 1, iovecs, count, 0);
+	if (iovecs)
+		free_pages(iovecs, order);
+	return result < 0 ? linux_error(result) : result;
 }
 
 uint64 sys_linux_execve(void)

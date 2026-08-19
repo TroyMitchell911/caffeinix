@@ -48,6 +48,7 @@ void pagedir_free(pagedir_t pgdir);
 
 int copyout(pagedir_t pgdir, uint64 dstva, char* src, uint64 len);
 int copyout_nofault(pagedir_t pgdir, uint64 dstva, char *src, uint64 len);
+int vm_prefault_user_write(pagedir_t pgdir, uint64 address, uint64 length);
 int copyin(pagedir_t pgdir, char* dst, uint64 srcva, uint64 len);
 int copyinstr(pagedir_t pgdir, char *dst, uint64 srcva, uint64 max);
 #endif

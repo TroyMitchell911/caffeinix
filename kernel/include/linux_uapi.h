@@ -23,8 +23,12 @@
 #define LINUX_SYS_lseek              62
 #define LINUX_SYS_read               63
 #define LINUX_SYS_write              64
+#define LINUX_SYS_readv              65
 #define LINUX_SYS_writev             66
 #define LINUX_SYS_pread64            67
+#define LINUX_SYS_pwrite64           68
+#define LINUX_SYS_preadv             69
+#define LINUX_SYS_pwritev            70
 #define LINUX_SYS_ppoll              73
 #define LINUX_SYS_readlinkat         78
 #define LINUX_SYS_newfstatat         79
@@ -89,6 +93,8 @@
 #define LINUX_SYS_renameat2         276
 #define LINUX_SYS_getrandom         278
 #define LINUX_SYS_membarrier        283
+#define LINUX_SYS_preadv2           286
+#define LINUX_SYS_pwritev2          287
 
 #define LINUX_SYS_RISCV_FLUSH_ICACHE_LOCAL 1UL
 #define LINUX_SYS_RISCV_FLUSH_ICACHE_ALL \
@@ -156,7 +162,8 @@
 #define LINUX_EALREADY              114
 #define LINUX_EINPROGRESS           115
 
-#define LINUX_IOV_MAX               16
+#define LINUX_IOV_MAX             1024
+#define LINUX_RWF_NOAPPEND         0x20
 
 struct linux_iovec {
 	uint64 base;

@@ -13,6 +13,8 @@
 
 #ifndef __ASSEMBLER__
 #include <typedefs.h>
+
+struct vfs_iovec;
 #endif
 
 #ifndef __ASSEMBLER__
@@ -22,6 +24,8 @@ void argint(int n, int *ip);
 void argaddr(int n, uint64 *ap);
 int argstr(int n, char *buf, int max);
 int64 linux_error(int result);
+int copy_user_iov(uint64 address, int count, struct vfs_iovec **result,
+		  unsigned int *order);
 #endif
 
 #endif

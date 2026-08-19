@@ -362,11 +362,13 @@ uint64 sys_linux_shutdown(void)
 }
 
 static int socket_copy_message(struct linux_msghdr *message,
-			       struct linux_iovec *iovecs,
+			       struct vfs_iovec **iovecs,
+			       unsigned int *iov_order,
 			       int receive)
 {
 	process_t process = cur_proc();
 	uint64 message_address;
+	int result;
 
 	argaddr(1, &message_address);
 	if (copyin(process->pagetable, (char *)message, message_address,
@@ -374,79 +376,96 @@ static int socket_copy_message(struct linux_msghdr *message,
 		return -LINUX_EFAULT;
 	if (message->iov_length > LINUX_IOV_MAX)
 		return -LINUX_EINVAL;
-	if (message->iov_length &&
-	    copyin(process->pagetable, (char *)iovecs, message->iov,
-		   message->iov_length * sizeof(*iovecs)) < 0)
-		return -LINUX_EFAULT;
+	result = copy_user_iov(message->iov, message->iov_length, iovecs,
+	                       iov_order);
+	if (result < 0)
+		return result;
 	if (!receive && message->control_length)
-		return -LINUX_EOPNOTSUPP;
-	return 0;
+		result = -LINUX_EOPNOTSUPP;
+	if (result < 0 && *iovecs) {
+		free_pages(*iovecs, *iov_order);
+		*iovecs = 0;
+	}
+	return result;
+}
+
+static void socket_free_iovecs(struct vfs_iovec *iovecs,
+			       unsigned int order)
+{
+	if (iovecs)
+		free_pages(iovecs, order);
 }
 
 uint64 sys_linux_sendmsg(void)
 {
 	struct linux_sockaddr_in address;
-	struct linux_iovec iovecs[LINUX_IOV_MAX];
+	struct vfs_iovec *iovecs;
 	struct linux_msghdr message;
 	process_t process = cur_proc();
 	uint64 used = 0;
+	unsigned int iov_order;
 	void *buffer = 0;
 	int fd, flags, type, result;
 	uint32 i;
 
 	argint(0, &fd);
 	argint(2, &flags);
-	result = socket_copy_message(&message, iovecs, 0);
+	result = socket_copy_message(&message, &iovecs, &iov_order, 0);
 	if (result < 0)
 		return result;
 	result = ksocket_type(fd, &type);
 	if (result < 0)
-		return result;
+		goto out_iov;
 	if (message.name) {
 		result = socket_address_in(message.name, message.name_length,
 					   &address);
 		if (result < 0)
-			return result;
+			goto out_iov;
 	}
 	for (i = 0; i < message.iov_length; i++) {
-		uint64 copied = iovecs[i].len;
+		uint64 copied = iovecs[i].length;
 
 		if (copied > PGSIZE - used) {
 			if (type != LINUX_SOCK_STREAM) {
-				if (buffer)
-					pfree(buffer);
-				return -LINUX_EMSGSIZE;
+				result = -LINUX_EMSGSIZE;
+				goto out_buffer;
 			}
 			copied = PGSIZE - used;
 		}
 		if (copied && !buffer) {
 			buffer = palloc();
-			if (!buffer)
-				return -LINUX_ENOMEM;
+			if (!buffer) {
+				result = -LINUX_ENOMEM;
+				goto out_iov;
+			}
 		}
 		if (copied && copyin(process->pagetable, buffer + used,
 				     iovecs[i].base, copied) < 0) {
-			pfree(buffer);
-			return -LINUX_EFAULT;
+			result = -LINUX_EFAULT;
+			goto out_buffer;
 		}
 		used += copied;
-		if (copied != iovecs[i].len)
+		if (copied != iovecs[i].length)
 			break;
 	}
 	result = ksocket_send(fd, buffer ? buffer : "", used, flags,
 			      message.name ? &address : 0);
+out_buffer:
 	if (buffer)
 		pfree(buffer);
+out_iov:
+	socket_free_iovecs(iovecs, iov_order);
 	return result;
 }
 
 uint64 sys_linux_recvmsg(void)
 {
 	struct linux_sockaddr_in address;
-	struct linux_iovec iovecs[LINUX_IOV_MAX];
+	struct vfs_iovec *iovecs;
 	struct linux_msghdr message;
 	process_t process = cur_proc();
 	uint64 message_address, capacity = 0, copied = 0, payload_length;
+	unsigned int iov_order;
 	void *buffer;
 	uint32 message_flags;
 	int fd, flags, result;
@@ -456,42 +475,40 @@ uint64 sys_linux_recvmsg(void)
 	argint(0, &fd);
 	argaddr(1, &message_address);
 	argint(2, &flags);
-	result = socket_copy_message(&message, iovecs, 1);
+	result = socket_copy_message(&message, &iovecs, &iov_order, 1);
 	if (result < 0)
 		return result;
 	for (i = 0; i < message.iov_length && capacity < PGSIZE; i++) {
-		if (iovecs[i].len > PGSIZE - capacity)
+		if (iovecs[i].length > PGSIZE - capacity)
 			capacity = PGSIZE;
 		else
-			capacity += iovecs[i].len;
+			capacity += iovecs[i].length;
 	}
 	buffer = capacity ? palloc() : 0;
-	if (capacity && !buffer)
-		return -LINUX_ENOMEM;
+	if (capacity && !buffer) {
+		result = -LINUX_ENOMEM;
+		goto out_iov;
+	}
 	received = ksocket_receive_message(fd, buffer, capacity, flags,
 		message.name ? &address : 0, &message_flags);
 	if (received < 0) {
-		if (buffer)
-			pfree(buffer);
-		return received;
+		result = received;
+		goto out_buffer;
 	}
 	payload_length = (uint64)received < capacity ? received : capacity;
 	for (i = 0; i < message.iov_length && copied < payload_length;
 	     i++) {
-		uint64 part = iovecs[i].len;
+		uint64 part = iovecs[i].length;
 
 		if (part > payload_length - copied)
 			part = payload_length - copied;
 		if (part && copyout(process->pagetable, iovecs[i].base,
 				    buffer + copied, part) < 0) {
-			if (buffer)
-				pfree(buffer);
-			return -LINUX_EFAULT;
+			result = -LINUX_EFAULT;
+			goto out_buffer;
 		}
 		copied += part;
 	}
-	if (buffer)
-		pfree(buffer);
 	message.flags = message_flags;
 	message.control_length = 0;
 	if (message.name) {
@@ -500,14 +517,24 @@ uint64 sys_linux_recvmsg(void)
 			available : sizeof(address);
 
 		if (part && copyout(process->pagetable, message.name,
-				    (char *)&address, part) < 0)
-			return -LINUX_EFAULT;
+				    (char *)&address, part) < 0) {
+			result = -LINUX_EFAULT;
+			goto out_buffer;
+		}
 		message.name_length = sizeof(address);
 	}
 	if (copyout(process->pagetable, message_address, (char *)&message,
-		    sizeof(message)) < 0)
-		return -LINUX_EFAULT;
-	return received;
+		    sizeof(message)) < 0) {
+		result = -LINUX_EFAULT;
+		goto out_buffer;
+	}
+	result = received;
+out_buffer:
+	if (buffer)
+		pfree(buffer);
+out_iov:
+	socket_free_iovecs(iovecs, iov_order);
+	return result;
 }
 
 uint64 sys_linux_ppoll(void)

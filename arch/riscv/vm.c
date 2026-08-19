@@ -665,6 +665,25 @@ int copyout_nofault(pagedir_t pgdir, uint64 dstva, char *src, uint64 len)
 	return copyout_internal(pgdir, dstva, src, len, 0);
 }
 
+int vm_prefault_user_write(pagedir_t pgdir, uint64 address, uint64 length)
+{
+	void *pinned_page;
+	uint64 end, page;
+
+	if (!length)
+		return 0;
+	if (address >= MAXVA || length > MAXVA - address)
+		return -1;
+	end = address + length;
+	for (page = PGROUNDDOWN(address); page < end; page += PGSIZE) {
+		if (!user_copy_va2pa_pinned(pgdir, page, PTE_W, 1,
+					    &pinned_page))
+			return -1;
+		pfree(pinned_page);
+	}
+	return 0;
+}
+
 int copyin(pagedir_t pgdir, char* dst, uint64 srcva, uint64 len)
 {
 	void *pinned_page;
