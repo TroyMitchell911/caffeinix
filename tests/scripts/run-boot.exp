@@ -20,6 +20,11 @@ set timeout 60
 if {[info exists env(QEMU_TIMEOUT)] && $env(QEMU_TIMEOUT) ne ""} {
 	set timeout $env(QEMU_TIMEOUT)
 }
+set pressure_iterations 1
+if {[info exists env(DYNAMIC_PRESSURE_ITERATIONS)] &&
+    $env(DYNAMIC_PRESSURE_ITERATIONS) ne ""} {
+	set pressure_iterations $env(DYNAMIC_PRESSURE_ITERATIONS)
+}
 
 log_file -noappend $env(QEMU_LOG)
 set command [list \
@@ -66,7 +71,7 @@ expect {
 	eof { abort_test "QEMU exited after dynamic musl hello" }
 }
 
-send -- "/bin/dynamic-runtime pressure\r"
+send -- "/bin/dynamic-runtime pressure $pressure_iterations\r"
 expect {
 	-re {\r?\nDYNAMIC_EXEC_PRESSURE_OK} {}
 	-re {DYNAMIC_RUNTIME_FAIL[^\r\n]*} {

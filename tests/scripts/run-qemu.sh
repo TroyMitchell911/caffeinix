@@ -261,12 +261,14 @@ run_boot_smoke()
 {
 	local cpus=$1
 	local memory=$2
+	local pressure_iterations=${3:-1}
 	local log=$test_output/qemu-smp${cpus}-${memory}.log
 	local clean=$test_output/qemu-smp${cpus}-${memory}.clean.log
 
 	export QEMU_CPUS=$cpus
 	export QEMU_MEMORY=$memory
 	export QEMU_LOG=$log
+	export DYNAMIC_PRESSURE_ITERATIONS=$pressure_iterations
 	expect "$script_dir/run-boot.exp"
 	normalize_kernel_log "$log" "$clean"
 	if [ "$(awk '$0 == "OPENSBI_BOOT_OK" { count++ }
@@ -306,7 +308,7 @@ run_boot_smoke()
 
 run_boot_smoke 1 64M
 run_boot_smoke 2 192M
-run_boot_smoke 3 96M
+run_boot_smoke 3 96M 32
 run_boot_smoke 4 128M
 run_boot_smoke 8 256M
 run_boot_smoke 9 256M
