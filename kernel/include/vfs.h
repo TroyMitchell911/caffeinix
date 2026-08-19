@@ -182,6 +182,8 @@ struct vfs_file_operations {
 	void (*release)(struct vfs_file *file);
 	int64 (*read)(struct vfs_file *file, int user_destination,
 	              uint64 destination, uint64 count, uint64 *position);
+	int64 (*readv)(struct vfs_file *file, int user_destination,
+		       const struct vfs_iovec *iovecs, uint32 count);
 	int64 (*write)(struct vfs_file *file, int user_source, uint64 source,
 	               uint64 count, uint64 *position);
 	int64 (*writev)(struct vfs_file *file, int user_source,
@@ -332,6 +334,7 @@ int64 vfs_readv(int fd, int user_destination,
 int64 vfs_writev(int fd, int user_source,
 		 const struct vfs_iovec *iovecs, uint32 count,
 		 uint32 flags);
+int vfs_pipe(uint32 file_flags, uint8 fd_flags, int descriptors[2]);
 int vfs_ftruncate(int fd, uint64 size);
 int64 vfs_ioctl(int fd, uint64 request, uint64 argument);
 int vfs_seek(int fd, int64 offset, int whence, uint64 *result);

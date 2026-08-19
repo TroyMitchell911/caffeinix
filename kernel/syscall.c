@@ -240,6 +240,7 @@ extern uint64 sys_linux_membarrier(void);
 extern uint64 sys_linux_munmap(void);
 extern uint64 sys_linux_newfstatat(void);
 extern uint64 sys_linux_openat(void);
+extern uint64 sys_linux_pipe2(void);
 extern uint64 sys_linux_prctl(void);
 extern uint64 sys_linux_pread64(void);
 extern uint64 sys_linux_preadv(void);
@@ -313,6 +314,7 @@ static syscall_t linux_syscalls[LINUX_SYS_pwritev2 + 1] = {
 	[LINUX_SYS_chdir] = sys_linux_chdir,
 	[LINUX_SYS_openat] = sys_linux_openat,
 	[LINUX_SYS_close] = sys_linux_close,
+	[LINUX_SYS_pipe2] = sys_linux_pipe2,
 	[LINUX_SYS_getdents64] = sys_linux_getdents64,
 	[LINUX_SYS_lseek] = sys_linux_lseek,
 	[LINUX_SYS_read] = sys_linux_read,

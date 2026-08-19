@@ -166,6 +166,34 @@ uint64 sys_linux_close(void)
 	return result < 0 ? linux_error(result) : 0;
 }
 
+uint64 sys_linux_pipe2(void)
+{
+	process_t process = cur_proc();
+	uint64 address;
+	uint32 file_flags = 0;
+	uint8 fd_flags = 0;
+	int descriptors[2], flags, result;
+
+	argaddr(0, &address);
+	argint(1, &flags);
+	if (flags & ~(LINUX_O_CLOEXEC | LINUX_O_NONBLOCK))
+		return -LINUX_EINVAL;
+	if (flags & LINUX_O_NONBLOCK)
+		file_flags |= VFS_OPEN_NONBLOCK;
+	if (flags & LINUX_O_CLOEXEC)
+		fd_flags |= VFS_FD_CLOEXEC;
+	result = vfs_pipe(file_flags, fd_flags, descriptors);
+	if (result < 0)
+		return linux_error(result);
+	if (copyout(process->pagetable, address, (char *)descriptors,
+	            sizeof(descriptors)) < 0) {
+		vfs_close(descriptors[0]);
+		vfs_close(descriptors[1]);
+		return -LINUX_EFAULT;
+	}
+	return 0;
+}
+
 uint64 sys_linux_read(void)
 {
 	uint64 address;
@@ -189,6 +217,8 @@ uint64 sys_linux_write(void)
 	argaddr(1, &address);
 	argint(2, &length);
 	result = vfs_write(fd, address, length);
+	if (result == VFS_ERR_INTR)
+		return -SIGNAL_RESTART_SYS;
 	return result < 0 ? linux_error(result) : result;
 }
 
@@ -703,7 +733,7 @@ static uint64 linux_positioned_iov(int write_operation, int version_two)
 		vfs_file_preadv(file, 1, iovecs, count, offset);
 	vfs_file_put(file);
 translate:
-	if (result == VFS_ERR_INTR && !write_operation)
+	if (result == VFS_ERR_INTR)
 		result = -SIGNAL_RESTART_SYS;
 	else if (result < 0)
 		result = linux_error(result);
@@ -772,6 +802,8 @@ uint64 sys_linux_writev(void)
 	result = vfs_writev(fd, 1, iovecs, count, 0);
 	if (iovecs)
 		free_pages(iovecs, order);
+	if (result == VFS_ERR_INTR)
+		return -SIGNAL_RESTART_SYS;
 	return result < 0 ? linux_error(result) : result;
 }
 
