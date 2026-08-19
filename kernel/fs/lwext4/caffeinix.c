@@ -1036,6 +1036,7 @@ static int ext4fs_readdir(struct vfs_file *file,
 }
 
 static const struct vfs_file_operations ext4fs_file_operations = {
+	.flags = VFS_FILE_CAN_PREAD,
 	.open = ext4fs_file_open,
 	.release = ext4fs_file_release,
 	.read = ext4fs_read,

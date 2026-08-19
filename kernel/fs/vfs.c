@@ -847,6 +847,7 @@ int vfs_open_file(const char *name, uint32 flags, uint32 mode,
 	}
 	file->path = path;
 	file->operations = path.dentry->inode->file_operations;
+	file->capabilities = file->operations ? file->operations->flags : 0;
 	file->flags = flags;
 	file->position = flags & VFS_OPEN_APPEND ? stat.size : 0;
 	if (file->operations && file->operations->open) {
@@ -877,6 +878,12 @@ void vfs_file_put(struct vfs_file *file)
 int64 vfs_file_pread(struct vfs_file *file, int user_destination,
 		     uint64 destination, uint64 count, uint64 offset)
 {
+	if (file && file->path.dentry && file->path.dentry->inode &&
+	    file->path.dentry->inode->type == VFS_INODE_DIRECTORY)
+		return VFS_ERR_ISDIR;
+	if (!file || !file->operations ||
+	    !(file->capabilities & VFS_FILE_CAN_PREAD))
+		return VFS_ERR_SPIPE;
 	return file_read(file, user_destination, destination, count, &offset);
 }
 

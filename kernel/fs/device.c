@@ -13,6 +13,8 @@ static int vfs_device_open(struct vfs_inode *inode, struct vfs_file *file)
 	if (!device)
 		return VFS_ERR_NODEV;
 	file->private = device;
+	if (device->flags & CHAR_DEVICE_CAN_PREAD)
+		file->capabilities |= VFS_FILE_CAN_PREAD;
 	if (!device->operations->open)
 		return VFS_OK;
 	return device->operations->open(device, file);

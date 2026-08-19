@@ -24,6 +24,7 @@
 #define LINUX_SYS_read               63
 #define LINUX_SYS_write              64
 #define LINUX_SYS_writev             66
+#define LINUX_SYS_pread64            67
 #define LINUX_SYS_ppoll              73
 #define LINUX_SYS_readlinkat         78
 #define LINUX_SYS_newfstatat         79

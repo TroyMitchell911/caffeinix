@@ -385,7 +385,9 @@ void char_device_init(void)
 	spinlock_init(&char_devices.lock, "character devices");
 	char_devices.next_inode = 2;
 	null_device.operations = &null_operations;
+	null_device.flags = CHAR_DEVICE_CAN_PREAD;
 	zero_device.operations = &zero_operations;
+	zero_device.flags = CHAR_DEVICE_CAN_PREAD;
 	if (char_device_region_register(DEVICE_NULL, 3, "memory") < 0 ||
 	    char_device_add(&null_device, DEVICE_NULL, 1) < 0 ||
 	    char_device_add(&zero_device, DEVICE_ZERO, 1) < 0 ||

@@ -566,6 +566,7 @@ static int fatfs_file_sync(struct vfs_file *file)
 }
 
 static const struct vfs_file_operations fatfs_file_operations = {
+	.flags = VFS_FILE_CAN_PREAD,
 	.open = fatfs_file_open,
 	.release = fatfs_file_release,
 	.read = fatfs_read,
