@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/sendfile.h>
 #include <sys/syscall.h>
 #include <sys/uio.h>
 #include <unistd.h>
@@ -17,9 +18,17 @@
 #endif
 
 #define VECTORED_HIGH_OFFSET ((off_t)(1ULL << 32) + 127)
+#define SENDFILE_CONCURRENT_CHUNK (32 * 1024)
 #define READV_RECORD_HALF 64
 #define READV_RECORDS 256
 #define READV_REF_LOOPS 128
+
+struct sendfile_worker {
+	atomic_int *start;
+	int input;
+	int output;
+	ssize_t result;
+};
 
 struct readv_worker {
 	atomic_int *start;
@@ -272,14 +281,170 @@ fail:
 	return -1;
 }
 
+static int compare_files(int first, int second, size_t length)
+{
+	char first_buffer[512], second_buffer[512];
+	size_t chunk, offset = 0;
+
+	while (offset < length) {
+		chunk = length - offset;
+		if (chunk > sizeof(first_buffer))
+			chunk = sizeof(first_buffer);
+		if (read_exact(first, first_buffer, chunk, offset) < 0 ||
+		    read_exact(second, second_buffer, chunk, offset) < 0 ||
+		    memcmp(first_buffer, second_buffer, chunk))
+			return -1;
+		offset += chunk;
+	}
+	return 0;
+}
+
+static int file_contains_byte(int fd, unsigned char value, size_t length)
+{
+	unsigned char buffer[512];
+	size_t chunk, index, offset = 0;
+
+	while (offset < length) {
+		chunk = length - offset;
+		if (chunk > sizeof(buffer))
+			chunk = sizeof(buffer);
+		if (pread(fd, buffer, chunk, offset) != (ssize_t)chunk)
+			return -1;
+		for (index = 0; index < chunk; index++) {
+			if (buffer[index] != value)
+				return -1;
+		}
+		offset += chunk;
+	}
+	return 0;
+}
+
+static void *sendfile_worker(void *argument)
+{
+	struct sendfile_worker *worker = argument;
+
+	while (!atomic_load_explicit(worker->start, memory_order_acquire))
+		usleep(1000);
+	worker->result = sendfile(worker->output, worker->input, NULL,
+				  SENDFILE_CONCURRENT_CHUNK);
+	return NULL;
+}
+
+static int test_concurrent_sendfile(void)
+{
+	static const char *const paths[] = {
+		"/tmp/io-sendfile-shared-source",
+		"/tmp/io-sendfile-shared-first",
+		"/tmp/io-sendfile-shared-second",
+	};
+	struct sendfile_worker workers[2];
+	unsigned char buffer[512], values[2];
+	atomic_int start;
+	pthread_t threads[2];
+	off_t position;
+	int created = 0, failed = 1, index, input = -1;
+
+	workers[0].output = -1;
+	workers[1].output = -1;
+	input = open(paths[0], O_CREAT | O_EXCL | O_RDWR, 0600);
+	workers[0].output = open(paths[1], O_CREAT | O_EXCL | O_RDWR, 0600);
+	workers[1].output = open(paths[2], O_CREAT | O_EXCL | O_RDWR, 0600);
+	if (input < 0 || workers[0].output < 0 || workers[1].output < 0)
+		goto out;
+	for (index = 0; index < 2 * SENDFILE_CONCURRENT_CHUNK /
+				       (int)sizeof(buffer); index++) {
+		memset(buffer, index < SENDFILE_CONCURRENT_CHUNK /
+					 (int)sizeof(buffer) ? 'A' : 'B',
+		       sizeof(buffer));
+		if (write(input, buffer, sizeof(buffer)) != sizeof(buffer))
+			goto out;
+	}
+	if (lseek(input, 0, SEEK_SET) != 0)
+		goto out;
+	atomic_init(&start, 0);
+	workers[0].start = &start;
+	workers[0].input = input;
+	workers[0].result = -1;
+	workers[1].start = &start;
+	workers[1].input = input;
+	workers[1].result = -1;
+	if (pthread_create(&threads[0], NULL, sendfile_worker, &workers[0]))
+		goto out;
+	created = 1;
+	if (pthread_create(&threads[1], NULL, sendfile_worker, &workers[1]))
+		goto join;
+	created = 2;
+	atomic_store_explicit(&start, 1, memory_order_release);
+	for (index = 0; index < created; index++)
+		pthread_join(threads[index], NULL);
+	created = 0;
+	position = lseek(input, 0, SEEK_CUR);
+	if (workers[0].result != SENDFILE_CONCURRENT_CHUNK ||
+	    workers[1].result != SENDFILE_CONCURRENT_CHUNK ||
+	    position != 2 * SENDFILE_CONCURRENT_CHUNK ||
+	    pread(workers[0].output, &values[0], 1, 0) != 1 ||
+	    pread(workers[1].output, &values[1], 1, 0) != 1 ||
+	    values[0] == values[1] ||
+	    (values[0] != 'A' && values[0] != 'B') ||
+	    (values[1] != 'A' && values[1] != 'B') ||
+	    file_contains_byte(workers[0].output, values[0],
+			       SENDFILE_CONCURRENT_CHUNK) ||
+	    file_contains_byte(workers[1].output, values[1],
+			       SENDFILE_CONCURRENT_CHUNK))
+		goto out;
+	failed = 0;
+	goto out;
+
+join:
+	atomic_store_explicit(&start, 1, memory_order_release);
+	for (index = 0; index < created; index++)
+		pthread_join(threads[index], NULL);
+out:
+	if (workers[0].output >= 0)
+		close(workers[0].output);
+	if (workers[1].output >= 0)
+		close(workers[1].output);
+	if (input >= 0)
+		close(input);
+	for (index = 0; index < 3; index++)
+		unlink(paths[index]);
+	return failed ? -1 : 0;
+}
+
+static int test_sendfile_read_access(void)
+{
+	struct stat state;
+	int input = -1, output = -1, result = -1;
+
+	input = open("/tmp/io-source", O_WRONLY);
+	output = open("/tmp/io-sendfile-writeonly",
+	              O_CREAT | O_EXCL | O_WRONLY, 0600);
+	if (input < 0 || output < 0)
+		goto out;
+	errno = 0;
+	if (sendfile(output, input, NULL, 1) != -1 || errno != EBADF ||
+	    fstat(output, &state) || state.st_size)
+		goto out;
+	result = 0;
+out:
+	if (output >= 0)
+		close(output);
+	if (input >= 0)
+		close(input);
+	unlink("/tmp/io-sendfile-writeonly");
+	return result;
+}
+
 int main(void)
 {
 	const char source[] = "abcdefghijklmnopqrstuvwxyz";
 	const char write_first[] = "12";
 	const char write_second[] = "345";
 	struct iovec iov[2], write_iov[2];
+	char block[1024];
 	char first[3], second[4], result[14] = { 0 };
-	int input, readonly;
+	off_t offset;
+	int i, input, output, readonly;
 
 	input = open("/tmp/io-source", O_CREAT | O_TRUNC | O_RDWR, 0600);
 	if (input < 0 || write(input, source, sizeof(source) - 1) !=
@@ -355,6 +520,59 @@ int main(void)
 		return fail("readonly pwritev2");
 	if (close(readonly))
 		return fail("readonly close");
+	if (test_sendfile_read_access())
+		return fail("sendfile read access");
+
+	output = open("/tmp/io-sendfile", O_CREAT | O_TRUNC | O_RDWR, 0600);
+	if (output < 0 || lseek(input, 3, SEEK_SET) != 3)
+		return fail("sendfile setup");
+	offset = 1;
+	if (sendfile(output, input, &offset, 5) != 5 || offset != 6 ||
+	    lseek(input, 0, SEEK_CUR) != 3 ||
+	    read_exact(output, result, 5, 0) < 0 ||
+	    memcmp(result, "bcdeX", 5))
+		return fail("sendfile offset");
+	if (close(output) < 0)
+		return fail("sendfile close");
+
+	output = open("/tmp/io-sendfile-current",
+		      O_CREAT | O_TRUNC | O_RDWR, 0600);
+	if (output < 0 || lseek(input, 0, SEEK_SET) != 0 ||
+	    sendfile(output, input, NULL, 4) != 4 ||
+	    lseek(input, 0, SEEK_CUR) != 4 ||
+	    read_exact(output, result, 4, 0) < 0 ||
+	    memcmp(result, "abcd", 4))
+		return fail("sendfile current");
+	if (close(output) < 0)
+		return fail("sendfile current close");
+	output = open("/tmp/io-sendfile-append",
+		      O_CREAT | O_TRUNC | O_WRONLY | O_APPEND, 0600);
+	if (output < 0)
+		return fail("sendfile append setup");
+	errno = 0;
+	if (sendfile(output, input, NULL, 1) != -1 || errno != EINVAL ||
+	    lseek(input, 0, SEEK_CUR) != 4) {
+		close(output);
+		unlink("/tmp/io-sendfile-append");
+		return fail("sendfile append rejection");
+	}
+	if (close(output) < 0 || unlink("/tmp/io-sendfile-append") < 0 ||
+	    lseek(input, 0, SEEK_END) < 0)
+		return fail("sendfile bulk setup");
+	for (i = 0; i < (int)sizeof(block); i++)
+		block[i] = i * 31 + 7;
+	for (i = 0; i < 9; i++) {
+		if (write(input, block, sizeof(block)) !=
+		    (ssize_t)sizeof(block))
+			return fail("sendfile bulk fixture");
+	}
+	output = open("/tmp/io-sendfile-bulk",
+		      O_CREAT | O_TRUNC | O_RDWR, 0600);
+	if (output < 0 || lseek(input, 0, SEEK_SET) != 0 ||
+	    sendfile(output, input, NULL, 8209) != 8209 ||
+	    lseek(input, 0, SEEK_CUR) != 8209 ||
+	    compare_files(input, output, 8209) < 0)
+		return fail("sendfile bulk");
 
 	errno = 0;
 	if (syscall(SYS_readv, input, iov, 1025) != -1 || errno != EINVAL)
@@ -362,9 +580,12 @@ int main(void)
 	errno = 0;
 	if (pwrite(input, result, 1, -1) != -1 || errno != EINVAL)
 		return fail("pwrite offset");
-	if (close(input) < 0)
+	if (close(output) < 0 || close(input) < 0)
 		return fail("close");
+	if (test_concurrent_sendfile())
+		return fail("concurrent sendfile");
 
 	puts("VECTORED_IO_OK");
+	puts("SENDFILE_OK");
 	return 0;
 }

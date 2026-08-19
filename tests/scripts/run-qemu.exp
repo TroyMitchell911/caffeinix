@@ -103,6 +103,7 @@ expect_prompt
 send -- "/bin/io-runtime\r"
 foreach marker {
 	VECTORED_IO_OK
+	SENDFILE_OK
 } {
 	expect {
 		-re "\\r?\\n$marker" {}

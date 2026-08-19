@@ -39,6 +39,7 @@ _Static_assert(LINUX_SYS_pread64 == __NR_pread64, "pread64 number");
 _Static_assert(LINUX_SYS_pwrite64 == __NR_pwrite64, "pwrite64 number");
 _Static_assert(LINUX_SYS_preadv == __NR_preadv, "preadv number");
 _Static_assert(LINUX_SYS_pwritev == __NR_pwritev, "pwritev number");
+_Static_assert(LINUX_SYS_sendfile == __NR_sendfile, "sendfile number");
 _Static_assert(LINUX_SYS_preadv2 == __NR_preadv2, "preadv2 number");
 _Static_assert(LINUX_SYS_pwritev2 == __NR_pwritev2,
 	       "pwritev2 number");
