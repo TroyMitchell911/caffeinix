@@ -104,6 +104,8 @@ The guest selftest covers:
   copies into child memory, fork under resident-memory pressure, and stale
   writable-TLB rejection while sibling threads run on other harts;
 - remote TLB invalidation after a sibling thread removes a user mapping;
+- prompt release of exited processes' user pages while zombies await their
+  parent's `wait4`, under memory pressure exceeding available guest RAM;
 - read and positional-read copy faults through ext4, tmpfs, FAT, and
   character devices, plus concurrent reads through one ext4 file handle;
 - CFS runqueue progress with 24 runnable processes, timer preemption,

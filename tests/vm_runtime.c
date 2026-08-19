@@ -28,6 +28,8 @@
 #define COW_PRESSURE_LENGTH (48 * 1024 * 1024UL)
 #define COW_PRESSURE_CHILDREN 4
 #define COW_PRESSURE_START "/tmp/vm-cow-pressure-start"
+#define ZOMBIE_RELEASE_LENGTH (8 * 1024 * 1024UL)
+#define ZOMBIE_RELEASE_CHILDREN 32
 #define HINT_ADDRESS ((void *)0x20000000UL)
 
 #define CHECK(condition, name) do { \
@@ -725,6 +727,65 @@ static void test_mapping_lifetime(void)
 	}
 }
 
+static volatile sig_atomic_t zombie_exits;
+
+static void zombie_exit_handler(int signal)
+{
+	(void)signal;
+	zombie_exits++;
+}
+
+static void zombie_memory_child(void)
+{
+	volatile unsigned char *mapping;
+	unsigned long page;
+
+	mapping = mmap(0, ZOMBIE_RELEASE_LENGTH, PROT_READ | PROT_WRITE,
+		       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	if (mapping == MAP_FAILED)
+		_exit(EXIT_FAILURE);
+	for (page = 0; page < ZOMBIE_RELEASE_LENGTH / PAGE_SIZE; page++)
+		mapping[page * PAGE_SIZE] = (unsigned char)page;
+	_exit(EXIT_SUCCESS);
+}
+
+static void test_zombie_memory_release(void)
+{
+	struct sigaction action = { 0 }, old_action;
+	sigset_t blocked, old_mask;
+	pid_t children[ZOMBIE_RELEASE_CHILDREN];
+	int child, status;
+
+	action.sa_handler = zombie_exit_handler;
+	sigemptyset(&action.sa_mask);
+	sigemptyset(&blocked);
+	sigaddset(&blocked, SIGCHLD);
+	CHECK(sigaction(SIGCHLD, &action, &old_action) == 0,
+	      "zombie release sigaction");
+	CHECK(sigprocmask(SIG_BLOCK, &blocked, &old_mask) == 0,
+	      "zombie release block");
+	zombie_exits = 0;
+	for (child = 0; child < ZOMBIE_RELEASE_CHILDREN; child++) {
+		children[child] = fork();
+		CHECK(children[child] >= 0, "zombie release fork");
+		if (!children[child])
+			zombie_memory_child();
+		while (zombie_exits <= child)
+			CHECK(sigsuspend(&old_mask) == -1 && errno == EINTR,
+			      "zombie release suspend");
+	}
+	for (child = 0; child < ZOMBIE_RELEASE_CHILDREN; child++) {
+		CHECK(waitpid(children[child], &status, 0) == children[child],
+		      "zombie release wait");
+		CHECK(WIFEXITED(status) && WEXITSTATUS(status) == EXIT_SUCCESS,
+		      "zombie release status");
+	}
+	CHECK(sigprocmask(SIG_SETMASK, &old_mask, 0) == 0,
+	      "zombie release restore mask");
+	CHECK(sigaction(SIGCHLD, &old_action, 0) == 0,
+	      "zombie release restore action");
+}
+
 static void test_kernel_copy_permissions(void)
 {
 	struct iovec *iov;
@@ -778,6 +839,8 @@ int main(void)
 	test_cached_private_write();
 	test_cow_memory_pressure();
 	puts("VM_COW_OK");
+	test_zombie_memory_release();
+	puts("VM_ZOMBIE_RELEASE_OK");
 	test_mapping_lifetime();
 	test_kernel_copy_permissions();
 	CHECK(munmap(anonymous, 3 * PAGE_SIZE) == 0, "unmap anonymous");
