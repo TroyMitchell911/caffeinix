@@ -17,7 +17,7 @@ MEMORY_PATTERN = re.compile(
 PAGE_CACHE_PATTERN = re.compile(
     rb"page-cache pages=(\d+) hits=(\d+) misses=(\d+) "
     rb"reclaimed=(\d+) mapped=(\d+) shared=(\d+) refs=(\d+)")
-PROMPT_PATTERN = rb"(?:^|\r?\n)# "
+PROMPT_PATTERN = rb"(?:^|\r?\n)(?:[~/][~/A-Za-z0-9_.-]* )?# "
 
 
 class Guest:

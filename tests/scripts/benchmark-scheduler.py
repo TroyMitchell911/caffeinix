@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import pty
+import re
 import select
 import statistics
 import subprocess
@@ -19,6 +20,7 @@ COMMANDS = (
     "/bin/ls / >/dev/null",
     "/bin/ls /",
 )
+PROMPT_PATTERN = rb"(?:^|\r?\n)(?:[~/][~/A-Za-z0-9_.-]* )?# "
 
 
 class Guest:
@@ -49,14 +51,20 @@ class Guest:
         )
         os.close(slave)
         try:
-            self.read_until(b"# ")
+            self.read_regex(PROMPT_PATTERN)
         except Exception:
             self.close()
             raise
 
-    def read_until(self, marker):
+    def read_regex(self, pattern):
+        expression = re.compile(pattern)
         deadline = time.monotonic() + self.timeout
-        while marker not in self.buffer:
+        while True:
+            match = expression.search(self.buffer)
+            if match:
+                result = self.buffer[:match.end()]
+                self.buffer = self.buffer[match.end():]
+                return result
             panic = self.buffer.find(b"[PANIC]")
             if panic >= 0 and b"\n" in self.buffer[panic:]:
                 tail = self.buffer[-4096:].decode(
@@ -65,7 +73,8 @@ class Guest:
                     "kernel panic during scheduler benchmark:\n" + tail)
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise TimeoutError(f"guest did not produce {marker!r}")
+                raise TimeoutError(
+                    f"guest did not produce {pattern!r}")
             readable, _, _ = select.select([self.master], [], [], remaining)
             if not readable:
                 continue
@@ -76,15 +85,11 @@ class Guest:
             if not data:
                 raise RuntimeError("QEMU exited unexpectedly")
             self.buffer += data
-        position = self.buffer.index(marker) + len(marker)
-        result = self.buffer[:position]
-        self.buffer = self.buffer[position:]
-        return result
 
     def run(self, command):
         start = time.perf_counter_ns()
         os.write(self.master, command.encode() + b"\n")
-        output = self.read_until(b"# ")
+        output = self.read_regex(PROMPT_PATTERN)
         elapsed = (time.perf_counter_ns() - start) / 1_000_000
         if b"[PANIC]" in output:
             tail = output[-4096:].decode("utf-8", errors="replace")

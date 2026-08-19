@@ -136,11 +136,13 @@ The guest selftest covers:
 - termios set/get state, canonical echo and erase, raw input, CR/NL handling,
   `ISIG` control characters, `NOFLSH`, blocking wakeups, and UART output
   larger than the transmit queue;
-- dynamic BusyBox ash startup, core applets, repeated process startup, Tab
-  completion, command history, cursor editing, and cancellation of a partial
-  command with Ctrl-C, foreground pipeline interruption, stopped and resumed
-  jobs, background terminal reads, plus execution of the static recovery
-  binary;
+- dynamic BusyBox ash startup, core applets, repeated process startup,
+  command and UTF-8 pathname completion, completion listings, saved and
+  reverse-searchable history, Home/End/Delete and control-key editing, long
+  input, empty-line Ctrl-D, and cancellation of a partial command with Ctrl-C;
+- BusyBox vi insertion, persistence, exit, and reopen, foreground pipeline
+  interruption, stopped and resumed jobs, background terminal reads, plus
+  execution of the static recovery binary;
 - ext4 and tmpfs links, sparse files, rename, directory iteration, truncate,
   fsync, and open-unlink lifetime rules;
 - symlink metadata through `lstat`;

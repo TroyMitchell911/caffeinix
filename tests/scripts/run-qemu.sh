@@ -469,6 +469,20 @@ for marker in \
 	BUSYBOX_ARROW_ABCD \
 	BUSYBOX_CTRL_C_STATUS=130 \
 	BUSYBOX_CTRL_C_OK \
+	BUSYBOX_PATH_TAB_OK \
+	BUSYBOX_COMMAND_TAB_OK \
+	BUSYBOX_DOUBLE_TAB_OK \
+	BUSYBOX_UTF8_TAB_OK \
+	BUSYBOX_CTRL_A_OK \
+	BUSYBOX_CTRL_E_OK \
+	BUSYBOX_CTRL_U_OK \
+	BUSYBOX_HOME_OK \
+	BUSYBOX_DELETE_OK \
+	BUSYBOX_BACKSPACE_OK \
+	BUSYBOX_CTRL_L_OK \
+	BUSYBOX_LONG_LINE_OK \
+	BUSYBOX_CTRL_D_OK \
+	BUSYBOX_VI_OK \
 	VM_READ_FAULT_OK \
 	VM_SHARED_READ_OK \
 	VM_PREAD_OK \
@@ -515,6 +529,13 @@ marker_count=$(awk '$0 == "BUSYBOX_HISTORY_OK" { count++ }
 	END { print count + 0 }' "$clean_log")
 if [ "$marker_count" -ne 2 ]; then
 	echo "unexpected QEMU history marker count: $marker_count" >&2
+	exit 1
+fi
+
+marker_count=$(awk '$0 == "BUSYBOX_REVERSE_SEARCH_OK" { count++ }
+	END { print count + 0 }' "$clean_log")
+if [ "$marker_count" -ne 2 ]; then
+	echo "unexpected reverse-search marker count: $marker_count" >&2
 	exit 1
 fi
 
