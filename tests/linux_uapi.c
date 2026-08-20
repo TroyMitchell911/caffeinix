@@ -24,6 +24,7 @@
 #include <linux/mount.h>
 #include <linux/membarrier.h>
 #include <linux/random.h>
+#include <linux/resource.h>
 #include <linux/sched.h>
 #include <linux/sysinfo.h>
 #include <linux/tcp.h>
@@ -160,6 +161,10 @@ _Static_assert(LINUX_SYS_getrandom == __NR_getrandom,
 	       "getrandom number");
 _Static_assert(sizeof(struct linux_statfs) == sizeof(struct statfs),
 	       "statfs size");
+_Static_assert(sizeof(struct linux_rusage) == sizeof(struct rusage),
+	       "rusage size");
+_Static_assert(offsetof(struct linux_rusage, involuntary_context_switches) ==
+	       offsetof(struct rusage, ru_nivcsw), "rusage layout");
 _Static_assert(offsetof(struct linux_statfs, blocks) ==
 	       offsetof(struct statfs, f_blocks), "statfs blocks offset");
 _Static_assert(offsetof(struct linux_statfs, flags) ==
