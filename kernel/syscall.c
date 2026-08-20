@@ -236,6 +236,7 @@ extern uint64 sys_linux_getuid(void);
 extern uint64 sys_linux_fdatasync(void);
 extern uint64 sys_linux_fsync(void);
 extern uint64 sys_linux_ioctl(void);
+extern uint64 sys_linux_mknodat(void);
 extern uint64 sys_linux_linkat(void);
 extern uint64 sys_linux_lseek(void);
 extern uint64 sys_linux_mkdirat(void);
@@ -327,6 +328,11 @@ extern uint64 sys_linux_recvmsg(void);
 extern uint64 sys_linux_accept4(void);
 extern uint64 sys_linux_riscv_flush_icache(void);
 extern uint64 sys_linux_ftruncate(void);
+extern uint64 sys_linux_fallocate(void);
+extern uint64 sys_linux_statfs(void);
+extern uint64 sys_linux_fstatfs(void);
+extern uint64 sys_linux_fchmodat(void);
+extern uint64 sys_linux_fchownat(void);
 
 typedef uint64 (*syscall_t)(void);
 
@@ -336,11 +342,17 @@ static syscall_t linux_syscalls[LINUX_SYS_pwritev2 + 1] = {
 	[LINUX_SYS_dup3] = sys_linux_dup3,
 	[LINUX_SYS_fcntl] = sys_linux_fcntl,
 	[LINUX_SYS_ioctl] = sys_linux_ioctl,
+	[LINUX_SYS_mknodat] = sys_linux_mknodat,
 	[LINUX_SYS_mkdirat] = sys_linux_mkdirat,
 	[LINUX_SYS_unlinkat] = sys_linux_unlinkat,
 	[LINUX_SYS_symlinkat] = sys_linux_symlinkat,
 	[LINUX_SYS_linkat] = sys_linux_linkat,
 	[LINUX_SYS_ftruncate] = sys_linux_ftruncate,
+	[LINUX_SYS_fallocate] = sys_linux_fallocate,
+	[LINUX_SYS_statfs] = sys_linux_statfs,
+	[LINUX_SYS_fstatfs] = sys_linux_fstatfs,
+	[LINUX_SYS_fchmodat] = sys_linux_fchmodat,
+	[LINUX_SYS_fchownat] = sys_linux_fchownat,
 	[LINUX_SYS_faccessat] = sys_linux_faccessat,
 	[LINUX_SYS_chdir] = sys_linux_chdir,
 	[LINUX_SYS_openat] = sys_linux_openat,

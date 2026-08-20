@@ -11,6 +11,7 @@ enum mmap_fault_access {
 	MMAP_FAULT_READ,
 	MMAP_FAULT_WRITE,
 	MMAP_FAULT_EXEC,
+	MMAP_FAULT_POPULATE,
 };
 
 enum mmap_fault_result {

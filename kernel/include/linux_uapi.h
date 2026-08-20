@@ -9,13 +9,19 @@
 #define LINUX_SYS_dup3               24
 #define LINUX_SYS_fcntl              25
 #define LINUX_SYS_ioctl              29
+#define LINUX_SYS_mknodat            33
 #define LINUX_SYS_mkdirat            34
 #define LINUX_SYS_unlinkat           35
 #define LINUX_SYS_symlinkat          36
 #define LINUX_SYS_linkat             37
+#define LINUX_SYS_statfs             43
+#define LINUX_SYS_fstatfs            44
 #define LINUX_SYS_ftruncate          46
+#define LINUX_SYS_fallocate          47
 #define LINUX_SYS_faccessat          48
 #define LINUX_SYS_chdir              49
+#define LINUX_SYS_fchmodat           53
+#define LINUX_SYS_fchownat           54
 #define LINUX_SYS_openat             56
 #define LINUX_SYS_close              57
 #define LINUX_SYS_pipe2              59
@@ -253,6 +259,21 @@ struct linux_sysinfo {
 
 #define LINUX_SI_LOAD_SHIFT 16
 
+struct linux_statfs {
+	int64 type;
+	int64 block_size;
+	uint64 blocks;
+	uint64 blocks_free;
+	uint64 blocks_available;
+	uint64 files;
+	uint64 files_free;
+	int32 fsid[2];
+	int64 name_length;
+	int64 fragment_size;
+	int64 flags;
+	int64 spare[4];
+};
+
 struct linux_pollfd {
 	int32 fd;
 	int16 events;
@@ -363,6 +384,9 @@ struct linux_linger {
 
 #define LINUX_FIONREAD              0x541b
 #define LINUX_FIONBIO               0x5421
+
+#define LINUX_BLKSSZGET             0x1268
+#define LINUX_BLKGETSIZE64      0x80081272
 
 #define LINUX_F_DUPFD                  0
 #define LINUX_F_GETFD                  1

@@ -1,4 +1,5 @@
 #include <block_device.h>
+#include <debug.h>
 #include <spinlock.h>
 
 static struct {
@@ -17,12 +18,16 @@ int block_device_register(struct block_device *device)
 
 	if (!device || !device->name || !device->operations ||
 	    !device->operations->read || !device->operations->write ||
-	    !device->sector_size || !device->sector_count)
+	    !device->sector_size || !device->sector_count ||
+	    device->sector_count > (uint64)-1 / device->sector_size)
 		return -1;
 	first = device->id ? device->id : 1;
 	last = device->id ? device->id + 1 : BLOCK_DEVICE_MAX;
 	if (first >= BLOCK_DEVICE_MAX)
 		return -1;
+	sleeplock_init(&device->raw_write_lock, "block raw write");
+	wait_queue_init(&device->open_wait, "block device openers");
+	device->open_count = 0;
 	spinlock_acquire(&block_devices.lock);
 	for (id = first; id < last; id++) {
 		if (!block_devices.devices[id]) {
@@ -41,9 +46,14 @@ void block_device_unregister(struct block_device *device)
 	if (!device || !device->id || device->id >= BLOCK_DEVICE_MAX)
 		return;
 	spinlock_acquire(&block_devices.lock);
-	if (block_devices.devices[device->id] == device)
-		block_devices.devices[device->id] = 0;
+	if (block_devices.devices[device->id] != device) {
+		spinlock_release(&block_devices.lock);
+		return;
+	}
+	block_devices.devices[device->id] = 0;
 	device->id = 0;
+	while (device->open_count)
+		wait_queue_sleep(&device->open_wait, &block_devices.lock);
 	spinlock_release(&block_devices.lock);
 }
 
@@ -57,6 +67,37 @@ struct block_device *block_device_get(uint32 id)
 	device = block_devices.devices[id];
 	spinlock_release(&block_devices.lock);
 	return device;
+}
+
+struct block_device *block_device_open(uint32 id)
+{
+	struct block_device *device = 0;
+
+	if (id >= BLOCK_DEVICE_MAX)
+		return 0;
+	spinlock_acquire(&block_devices.lock);
+	device = block_devices.devices[id];
+	if (device) {
+		if (device->open_count == ~(uint32)0)
+			device = 0;
+		else
+			device->open_count++;
+	}
+	spinlock_release(&block_devices.lock);
+	return device;
+}
+
+void block_device_close(struct block_device *device)
+{
+	if (!device)
+		return;
+	spinlock_acquire(&block_devices.lock);
+	if (!device->open_count)
+		PANIC("block device close without open");
+	device->open_count--;
+	if (!device->open_count)
+		wait_queue_wake_all(&device->open_wait);
+	spinlock_release(&block_devices.lock);
 }
 
 static int block_device_range_valid(struct block_device *device,

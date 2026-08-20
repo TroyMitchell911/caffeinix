@@ -188,13 +188,23 @@ static void elf_image_exec_credentials(
 	const struct elf_image *image,
 	struct process_credentials *credentials)
 {
-	const struct vfs_inode *inode = image->file->path.dentry->inode;
+	struct vfs_inode *inode = image->file->path.dentry->inode;
+	sleeplock_t lock = inode->superblock ?
+		&inode->superblock->attribute_lock : 0;
+	uint32 gid, mode, uid;
 
+	if (lock)
+		sleeplock_acquire(lock);
+	mode = inode->mode;
+	uid = inode->uid;
+	gid = inode->gid;
+	if (lock)
+		sleeplock_release(lock);
 	process_credentials_get(credentials);
-	if (inode->mode & 04000)
-		credentials->euid = inode->uid;
-	if ((inode->mode & 02000) && (inode->mode & 00010))
-		credentials->egid = inode->gid;
+	if (mode & 04000)
+		credentials->euid = uid;
+	if ((mode & 02000) && (mode & 00010))
+		credentials->egid = gid;
 	credentials->suid = credentials->euid;
 	credentials->fsuid = credentials->euid;
 	credentials->sgid = credentials->egid;

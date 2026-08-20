@@ -460,6 +460,8 @@ static enum mmap_fault_result mmap_file_fault(struct vm_area *area,
 static int mmap_access_allowed(const struct vm_area *area,
 			       enum mmap_fault_access access)
 {
+	if (access == MMAP_FAULT_POPULATE)
+		return area->protection != LINUX_PROT_NONE;
 	if (access == MMAP_FAULT_EXEC)
 		return area->protection & LINUX_PROT_EXEC;
 	if (access == MMAP_FAULT_WRITE)
@@ -495,7 +497,25 @@ retry:
 	}
 	if (vm_mapped(process->pagetable, page_address)) {
 		pte_t *pte = PTE(process->pagetable, page_address, 0);
-		int cow = access == MMAP_FAULT_WRITE ?
+		int cow;
+
+		if (access == MMAP_FAULT_WRITE && pte && (*pte & PTE_V) &&
+		    (*pte & PTE_U) && !(*pte & PTE_W) &&
+		    area->origin == VMA_FILE_BACKED &&
+		    (area->flags & 0xf) == LINUX_MAP_SHARED &&
+		    (area->protection & LINUX_PROT_WRITE)) {
+			if (vfs_file_mark_shared_dirty(
+				    area->file, area->offset + page_address -
+				    area->start) < 0) {
+				result = MMAP_FAULT_NOMEM;
+				goto out;
+			}
+			*pte |= PTE_W;
+			sfence_vma();
+			result = MMAP_FAULT_OK;
+			goto out;
+		}
+		cow = access == MMAP_FAULT_WRITE ?
 			vm_resolve_cow(process->pagetable, page_address) : 0;
 
 		if (cow > 0) {
@@ -509,7 +529,9 @@ retry:
 		if (pte && (*pte & PTE_V) && (*pte & PTE_U) &&
 		    ((access == MMAP_FAULT_READ && (*pte & PTE_R)) ||
 		     (access == MMAP_FAULT_WRITE && (*pte & PTE_W)) ||
-		     (access == MMAP_FAULT_EXEC && (*pte & PTE_X)))) {
+		     (access == MMAP_FAULT_EXEC && (*pte & PTE_X)) ||
+		     (access == MMAP_FAULT_POPULATE &&
+		      (*pte & (PTE_R | PTE_W | PTE_X))))) {
 			result = MMAP_FAULT_OK;
 			goto out;
 		}
@@ -545,12 +567,16 @@ retry:
 		goto out;
 	}
 	if (cached && (area->flags & 0xf) == LINUX_MAP_SHARED &&
-	    (permissions & PTE_W) &&
-	    page_cache_mark_dirty(area->file,
-				  area->offset + page_address - area->start) < 0) {
-		pfree(page);
-		result = MMAP_FAULT_NOMEM;
-		goto out;
+	    (permissions & PTE_W)) {
+		if (access != MMAP_FAULT_WRITE) {
+			permissions &= ~PTE_W;
+		} else if (vfs_file_mark_shared_dirty(
+				   area->file, area->offset + page_address -
+				   area->start) < 0) {
+			pfree(page);
+			result = MMAP_FAULT_NOMEM;
+			goto out;
+		}
 	}
 	if (vm_map(process->pagetable, page_address, (uint64)page, PGSIZE,
 		   permissions | PTE_SW_USER) < 0) {
@@ -574,19 +600,13 @@ out:
 static void mmap_populate(process_t process, uint64 start, uint64 length,
 			  int protection)
 {
-	enum mmap_fault_access access;
 	uint64 end = start + length;
 
 	if (protection == LINUX_PROT_NONE)
 		return;
-	if (protection & LINUX_PROT_READ)
-		access = MMAP_FAULT_READ;
-	else if (protection & LINUX_PROT_WRITE)
-		access = MMAP_FAULT_WRITE;
-	else
-		access = MMAP_FAULT_EXEC;
 	for (; start < end; start += PGSIZE) {
-		if (mmap_handle_fault(process, start, access) != MMAP_FAULT_OK)
+		if (mmap_handle_fault(process, start, MMAP_FAULT_POPULATE) !=
+		    MMAP_FAULT_OK)
 			break;
 	}
 }
@@ -741,27 +761,6 @@ out_file:
 	return result;
 }
 
-static int mmap_mark_shared_dirty(process_t process, uint64 start,
-				  uint64 end)
-{
-	const struct vm_area *area;
-	uint64 address, offset;
-
-	for (address = start; address < end; address += PGSIZE) {
-		if (!vm_mapped(process->pagetable, address))
-			continue;
-		area = vma_find(&process->vmas, address);
-		if (!area || area->origin != VMA_FILE_BACKED ||
-		    (area->flags & 0xf) != LINUX_MAP_SHARED ||
-		    !(area->protection & LINUX_PROT_WRITE))
-			continue;
-		offset = area->offset + address - area->start;
-		if (page_cache_mark_dirty(area->file, offset) < 0)
-			return -1;
-	}
-	return 0;
-}
-
 static int mmap_shared_write_allowed(const struct vma_set *set,
 				     uint64 start, uint64 end)
 {
@@ -817,9 +816,6 @@ uint64 sys_linux_mprotect(void)
 		sleeplock_release(&process->mmap_lock);
 		return -LINUX_ENOMEM;
 	}
-	if ((protection & LINUX_PROT_WRITE) &&
-	    mmap_mark_shared_dirty(process, address, end) < 0)
-		PANIC("shared mapping cache mismatch");
 	if (vm_protect_user_range(process->pagetable, address, end,
 				  permissions, &process->vmas) < 0)
 		PANIC("VMA and page table protection mismatch");

@@ -126,6 +126,22 @@ static void make_linux_stat(struct linux_stat *linux_stat,
 		linux_stat->mode |= LINUX_S_IFREG;
 }
 
+static void make_linux_statfs(struct linux_statfs *linux_stat,
+			      const struct vfs_statfs *vfs_stat)
+{
+	memset(linux_stat, 0, sizeof(*linux_stat));
+	linux_stat->type = vfs_stat->type;
+	linux_stat->block_size = vfs_stat->block_size;
+	linux_stat->blocks = vfs_stat->blocks;
+	linux_stat->blocks_free = vfs_stat->blocks_free;
+	linux_stat->blocks_available = vfs_stat->blocks_available;
+	linux_stat->files = vfs_stat->files;
+	linux_stat->files_free = vfs_stat->files_free;
+	linux_stat->name_length = vfs_stat->name_length;
+	linux_stat->fragment_size = vfs_stat->fragment_size;
+	linux_stat->flags = vfs_stat->flags;
+}
+
 uint64 sys_linux_openat(void)
 {
 	char path[MAXPATH];
@@ -163,6 +179,24 @@ uint64 sys_linux_ftruncate(void)
 	if (signed_length < 0)
 		return -LINUX_EINVAL;
 	result = vfs_ftruncate(fd, signed_length);
+	return result < 0 ? linux_error(result) : 0;
+}
+
+uint64 sys_linux_fallocate(void)
+{
+	uint64 offset, length;
+	int fd, mode, result;
+
+	argint(0, &fd);
+	argint(1, &mode);
+	argaddr(2, &offset);
+	argaddr(3, &length);
+	if (mode)
+		return -LINUX_EOPNOTSUPP;
+	if ((int64)offset < 0 || (int64)length <= 0 ||
+	    offset > 0x7fffffffffffffffULL - length)
+		return -LINUX_EINVAL;
+	result = vfs_fallocate(fd, offset, length);
 	return result < 0 ? linux_error(result) : 0;
 }
 
@@ -298,6 +332,48 @@ uint64 sys_linux_fstat(void)
 	if (result < 0)
 		return linux_error(result);
 	make_linux_stat(&linux_stat, &stat);
+	if (copyout(process->pagetable, address, (char *)&linux_stat,
+	            sizeof(linux_stat)) < 0)
+		return -LINUX_EFAULT;
+	return 0;
+}
+
+uint64 sys_linux_statfs(void)
+{
+	struct linux_statfs linux_stat;
+	struct vfs_statfs stat;
+	process_t process = cur_proc();
+	char path[MAXPATH];
+	uint64 address;
+	int result;
+
+	argaddr(1, &address);
+	if (argstr(0, path, sizeof(path)) < 0)
+		return -LINUX_EFAULT;
+	result = vfs_statfs_path(path, &stat);
+	if (result < 0)
+		return linux_error(result);
+	make_linux_statfs(&linux_stat, &stat);
+	if (copyout(process->pagetable, address, (char *)&linux_stat,
+	            sizeof(linux_stat)) < 0)
+		return -LINUX_EFAULT;
+	return 0;
+}
+
+uint64 sys_linux_fstatfs(void)
+{
+	struct linux_statfs linux_stat;
+	struct vfs_statfs stat;
+	process_t process = cur_proc();
+	uint64 address;
+	int fd, result;
+
+	argint(0, &fd);
+	argaddr(1, &address);
+	result = vfs_statfs_fd(fd, &stat);
+	if (result < 0)
+		return linux_error(result);
+	make_linux_statfs(&linux_stat, &stat);
 	if (copyout(process->pagetable, address, (char *)&linux_stat,
 	            sizeof(linux_stat)) < 0)
 		return -LINUX_EFAULT;
@@ -462,6 +538,131 @@ uint64 sys_linux_mkdirat(void)
 	mode &= VFS_MODE_PERMISSIONS;
 	mode &= ~process_umask_get();
 	result = vfs_mkdir(path, mode);
+	return result < 0 ? linux_error(result) : 0;
+}
+
+static uint64 linux_decode_device(uint64 device)
+{
+	uint32 major = ((device >> 8) & 0xfff) |
+		((device >> 32) & ~0xfffULL);
+	uint32 minor = (device & 0xff) | ((device >> 12) & 0xffffff00ULL);
+
+	return VFS_MAKE_DEVICE(major, minor);
+}
+
+static int linux_mknod_allowed(void)
+{
+	struct process_credentials credentials;
+
+	process_credentials_get(&credentials);
+	return credentials.euid == 0;
+}
+
+uint64 sys_linux_mknodat(void)
+{
+	char path[MAXPATH];
+	enum vfs_inode_type type;
+	uint64 device;
+	uint32 permissions;
+	int dirfd, mode, result;
+
+	argint(0, &dirfd);
+	argint(2, &mode);
+	argaddr(3, &device);
+	if (argstr(1, path, sizeof(path)) < 0)
+		return -LINUX_EFAULT;
+	permissions = (mode & VFS_MODE_PERMISSIONS) & ~process_umask_get();
+	switch (mode & LINUX_S_IFMT) {
+	case 0:
+	case LINUX_S_IFREG:
+		type = VFS_INODE_REGULAR;
+		break;
+	case LINUX_S_IFCHR:
+		if (!linux_mknod_allowed())
+			return -LINUX_EPERM;
+		type = VFS_INODE_CHAR_DEVICE;
+		break;
+	case LINUX_S_IFBLK:
+		if (!linux_mknod_allowed())
+			return -LINUX_EPERM;
+		type = VFS_INODE_BLOCK_DEVICE;
+		break;
+	case LINUX_S_IFIFO:
+		return -LINUX_EOPNOTSUPP;
+	case LINUX_S_IFSOCK:
+		type = VFS_INODE_SOCKET;
+		break;
+	default:
+		return -LINUX_EINVAL;
+	}
+	if (path[0] == '/' || dirfd == LINUX_AT_FDCWD)
+		result = vfs_mknod(path, type, permissions,
+				   linux_decode_device(device));
+	else
+		result = vfs_mknod_at(dirfd, path, type, permissions,
+				      linux_decode_device(device));
+	return result < 0 ? linux_error(result) : 0;
+}
+
+uint64 sys_linux_fchmodat(void)
+{
+	struct vfs_iattr attributes = { .mask = VFS_ATTR_MODE };
+	char path[MAXPATH];
+	int dirfd, mode, result;
+
+	argint(0, &dirfd);
+	argint(2, &mode);
+	if (argstr(1, path, sizeof(path)) < 0)
+		return -LINUX_EFAULT;
+	attributes.mode = mode & VFS_MODE_PERMISSIONS;
+	if (path[0] == '/' || dirfd == LINUX_AT_FDCWD)
+		result = vfs_setattr_path(path, 1, &attributes);
+	else
+		result = vfs_setattr_at(dirfd, path, 1, &attributes);
+	return result < 0 ? linux_error(result) : 0;
+}
+
+uint64 sys_linux_fchownat(void)
+{
+	struct vfs_iattr attributes = { 0 };
+	struct vfs_stat stat;
+	char path[MAXPATH];
+	int dirfd, flags, group, owner, result;
+
+	argint(0, &dirfd);
+	argint(2, &owner);
+	argint(3, &group);
+	argint(4, &flags);
+	if (argstr(1, path, sizeof(path)) < 0)
+		return -LINUX_EFAULT;
+	if (flags & ~LINUX_AT_SYMLINK_NOFOLLOW)
+		return -LINUX_EINVAL;
+	if (owner != -1) {
+		attributes.mask |= VFS_ATTR_UID;
+		attributes.uid = owner;
+	}
+	if (group != -1) {
+		attributes.mask |= VFS_ATTR_GID;
+		attributes.gid = group;
+	}
+	if (!attributes.mask) {
+		if (path[0] == '/' || dirfd == LINUX_AT_FDCWD)
+			result = vfs_stat_path(
+				path, !(flags & LINUX_AT_SYMLINK_NOFOLLOW),
+				&stat);
+		else
+			result = vfs_stat_at(
+				dirfd, path,
+				!(flags & LINUX_AT_SYMLINK_NOFOLLOW), &stat);
+		return result < 0 ? linux_error(result) : 0;
+	}
+	if (path[0] == '/' || dirfd == LINUX_AT_FDCWD)
+		result = vfs_setattr_path(
+			path, !(flags & LINUX_AT_SYMLINK_NOFOLLOW), &attributes);
+	else
+		result = vfs_setattr_at(
+			dirfd, path, !(flags & LINUX_AT_SYMLINK_NOFOLLOW),
+			&attributes);
 	return result < 0 ? linux_error(result) : 0;
 }
 
@@ -681,12 +882,14 @@ uint64 sys_linux_utimensat(void)
 			if (!(flags & LINUX_AT_EMPTY_PATH))
 				return -LINUX_ENOENT;
 			use_fd = 1;
-		} else if (path[0] != '/' && dirfd != LINUX_AT_FDCWD) {
-			return -LINUX_EBADF;
 		}
 	}
 	if (use_fd)
 		result = vfs_set_times_fd(dirfd, times, mask, owner_only);
+	else if (path[0] != '/' && dirfd != LINUX_AT_FDCWD)
+		result = vfs_set_times_at(dirfd, path,
+				!(flags & LINUX_AT_SYMLINK_NOFOLLOW),
+				times, mask, owner_only);
 	else
 		result = vfs_set_times_path(path,
 				!(flags & LINUX_AT_SYMLINK_NOFOLLOW),

@@ -1589,6 +1589,46 @@ int ext4_fopen2(ext4_file *file, const char *path, int flags)
 	return r;
 }
 
+int ext4_fopen_by_number(ext4_file *file, const char *path, uint32_t ino,
+			 int flags)
+{
+	struct ext4_inode_ref ref;
+	struct ext4_mountpoint *mp = ext4_get_mount(path);
+	int loaded = 0, put_result, r;
+
+	if (!file || !mp || !ino)
+		return EINVAL;
+	if (mp->fs.read_only && (flags & (O_WRONLY | O_RDWR)))
+		return EROFS;
+	if (flags & (O_CREAT | O_TRUNC))
+		return EINVAL;
+
+	file->mp = 0;
+	EXT4_MP_LOCK(mp);
+	r = ext4_fs_get_inode_ref(&mp->fs, ino, &ref);
+	if (r == EOK) {
+		loaded = 1;
+		if (!ext4_inode_is_type(&mp->fs.sb, ref.inode,
+		                        EXT4_INODE_MODE_FILE)) {
+			r = ENOENT;
+		} else {
+			file->mp = mp;
+			file->inode = ino;
+			file->flags = flags;
+			file->fsize = ext4_inode_get_size(&mp->fs.sb,
+			                                  ref.inode);
+			file->fpos = flags & O_APPEND ? file->fsize : 0;
+		}
+	}
+	if (loaded) {
+		put_result = ext4_fs_put_inode_ref(&ref);
+		if (r == EOK)
+			r = put_result;
+	}
+	EXT4_MP_UNLOCK(mp);
+	return r;
+}
+
 int ext4_fclose(ext4_file *file)
 {
 	ext4_assert(file && file->mp);
@@ -2077,6 +2117,19 @@ static int ext4_trans_get_inode_ref(const char *path,
 	return r;
 }
 
+static int ext4_trans_get_inode_ref_by_number(
+	struct ext4_mountpoint *mp, uint32_t ino,
+	struct ext4_inode_ref *inode_ref)
+{
+	int r;
+
+	ext4_trans_start(mp);
+	r = ext4_fs_get_inode_ref(&mp->fs, ino, inode_ref);
+	if (r != EOK)
+		ext4_trans_abort(mp);
+	return r;
+}
+
 static int ext4_trans_put_inode_ref(struct ext4_mountpoint *mp,
 				    struct ext4_inode_ref *inode_ref)
 {
@@ -2164,7 +2217,7 @@ int ext4_inode_exist(const char *path, int type)
 	return r;
 }
 
-int ext4_mode_set(const char *path, uint32_t mode)
+static int ext4_mode_set_inode(const char *path, uint32_t ino, uint32_t mode)
 {
 	int r;
 	uint32_t orig_mode;
@@ -2179,7 +2232,8 @@ int ext4_mode_set(const char *path, uint32_t mode)
 
 	EXT4_MP_LOCK(mp);
 
-	r = ext4_trans_get_inode_ref(path, mp, &inode_ref);
+	r = ino ? ext4_trans_get_inode_ref_by_number(mp, ino, &inode_ref) :
+		ext4_trans_get_inode_ref(path, mp, &inode_ref);
 	if (r != EOK)
 		goto Finish;
 
@@ -2197,7 +2251,18 @@ int ext4_mode_set(const char *path, uint32_t mode)
 	return r;
 }
 
-int ext4_owner_set(const char *path, uint32_t uid, uint32_t gid)
+int ext4_mode_set(const char *path, uint32_t mode)
+{
+	return ext4_mode_set_inode(path, 0, mode);
+}
+
+int ext4_mode_set_by_number(const char *path, uint32_t ino, uint32_t mode)
+{
+	return ino ? ext4_mode_set_inode(path, ino, mode) : EINVAL;
+}
+
+static int ext4_owner_set_inode(const char *path, uint32_t ino,
+				uint32_t uid, uint32_t gid)
 {
 	int r;
 	struct ext4_inode_ref inode_ref;
@@ -2211,7 +2276,8 @@ int ext4_owner_set(const char *path, uint32_t uid, uint32_t gid)
 
 	EXT4_MP_LOCK(mp);
 
-	r = ext4_trans_get_inode_ref(path, mp, &inode_ref);
+	r = ino ? ext4_trans_get_inode_ref_by_number(mp, ino, &inode_ref) :
+		ext4_trans_get_inode_ref(path, mp, &inode_ref);
 	if (r != EOK)
 		goto Finish;
 
@@ -2225,6 +2291,17 @@ int ext4_owner_set(const char *path, uint32_t uid, uint32_t gid)
 	EXT4_MP_UNLOCK(mp);
 
 	return r;
+}
+
+int ext4_owner_set(const char *path, uint32_t uid, uint32_t gid)
+{
+	return ext4_owner_set_inode(path, 0, uid, gid);
+}
+
+int ext4_owner_set_by_number(const char *path, uint32_t ino, uint32_t uid,
+			     uint32_t gid)
+{
+	return ino ? ext4_owner_set_inode(path, ino, uid, gid) : EINVAL;
 }
 
 int ext4_mode_get(const char *path, uint32_t *mode)
@@ -2370,8 +2447,9 @@ int ext4_ctime_set(const char *path, uint32_t ctime)
 	return r;
 }
 
-int ext4_times_set(const char *path, const struct ext4_timespec times[3],
-		   uint32_t mask)
+static int ext4_times_set_inode(const char *path, uint32_t ino,
+				const struct ext4_timespec times[3],
+				uint32_t mask)
 {
 	struct ext4_inode_ref inode_ref;
 	struct ext4_mountpoint *mp = ext4_get_mount(path);
@@ -2386,7 +2464,8 @@ int ext4_times_set(const char *path, const struct ext4_timespec times[3],
 		return EINVAL;
 
 	EXT4_MP_LOCK(mp);
-	r = ext4_trans_get_inode_ref(path, mp, &inode_ref);
+	r = ino ? ext4_trans_get_inode_ref_by_number(mp, ino, &inode_ref) :
+		ext4_trans_get_inode_ref(path, mp, &inode_ref);
 	if (r != EOK)
 		goto Finish;
 	if (mask & EXT4_TIME_ATIME)
@@ -2409,6 +2488,19 @@ int ext4_times_set(const char *path, const struct ext4_timespec times[3],
 Finish:
 	EXT4_MP_UNLOCK(mp);
 	return r;
+}
+
+int ext4_times_set(const char *path, const struct ext4_timespec times[3],
+		   uint32_t mask)
+{
+	return ext4_times_set_inode(path, 0, times, mask);
+}
+
+int ext4_times_set_by_number(const char *path, uint32_t ino,
+			     const struct ext4_timespec times[3],
+			     uint32_t mask)
+{
+	return ino ? ext4_times_set_inode(path, ino, times, mask) : EINVAL;
 }
 
 int ext4_atime_get(const char *path, uint32_t *atime)

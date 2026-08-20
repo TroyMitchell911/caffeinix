@@ -185,9 +185,34 @@ static int fatfs_sync(struct vfs_super_block *superblock)
 		VFS_ERR_IO : VFS_OK;
 }
 
+static int fatfs_statfs(struct vfs_super_block *superblock,
+			struct vfs_statfs *stat)
+{
+	FATFS *filesystem;
+	DWORD free_clusters;
+	FRESULT result;
+
+	(void)superblock;
+	sleeplock_acquire(&fatfs_port.lock);
+	result = f_getfree("0:", &free_clusters, &filesystem);
+	sleeplock_release(&fatfs_port.lock);
+	if (result != FR_OK)
+		return fatfs_result(result);
+	memset(stat, 0, sizeof(*stat));
+	stat->type = 0x4d44;
+	stat->block_size = filesystem->csize * 512;
+	stat->fragment_size = stat->block_size;
+	stat->blocks = filesystem->n_fatent - 2;
+	stat->blocks_free = free_clusters;
+	stat->blocks_available = free_clusters;
+	stat->name_length = VFS_NAME_MAX;
+	return VFS_OK;
+}
+
 static const struct vfs_super_operations fatfs_super_operations = {
 	.put_inode = fatfs_put_inode,
 	.sync = fatfs_sync,
+	.statfs = fatfs_statfs,
 };
 
 static int fatfs_getattr(struct vfs_inode *inode, struct vfs_stat *stat)

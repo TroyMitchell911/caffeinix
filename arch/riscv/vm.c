@@ -483,6 +483,11 @@ int vm_protect_user_range(pagedir_t pgdir, uint64 start, uint64 end,
 			    palloc_refcount((void *)PTE2PA(*pte)) > 1) {
 				page_permissions &= ~PTE_W;
 				software = PTE_SW_COW;
+			} else if (area->origin == VMA_FILE_BACKED &&
+				   (area->flags & 0xf) == LINUX_MAP_SHARED &&
+				   !(*pte & PTE_W)) {
+				page_permissions &= ~PTE_W;
+				software = 0;
 			} else {
 				software = 0;
 			}

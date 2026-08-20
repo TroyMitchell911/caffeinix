@@ -121,6 +121,34 @@ static int vfs_inode_same_identity(const struct vfs_inode *left,
 	       left->number == right->number;
 }
 
+static void vfs_inode_sync_metadata(struct vfs_inode *source)
+{
+	struct vfs_inode *inode;
+
+	spinlock_acquire(&vfs.lock);
+	for (inode = vfs.inodes;
+	     inode != &vfs.inodes[VFS_INODE_MAX]; inode++) {
+		if (inode->ref < 1 ||
+		    !vfs_inode_same_identity(inode, source))
+			continue;
+		inode->mode = source->mode;
+		inode->uid = source->uid;
+		inode->gid = source->gid;
+		inode->ctime = source->ctime;
+	}
+	spinlock_release(&vfs.lock);
+}
+
+static int vfs_inode_apply_attributes(
+	struct vfs_inode *inode, const struct vfs_iattr *attributes)
+{
+	int result = inode->operations->setattr(inode, attributes);
+
+	if (result == VFS_OK)
+		vfs_inode_sync_metadata(inode);
+	return result;
+}
+
 static int vfs_inode_access_acquire(struct vfs_inode *inode, uint8 access)
 {
 	struct vfs_inode *candidate;
@@ -205,6 +233,58 @@ void vfs_exec_mapping_put(struct vfs_file *file)
 		PANIC("VFS exec mapping release");
 	vfs_inode_access_release(inode, VFS_INODE_ACCESS_EXEC);
 }
+
+static int vfs_inode_remove_privileges(struct vfs_inode *inode)
+{
+	struct process_credentials credentials;
+	struct vfs_iattr attributes;
+	struct vfs_stat stat;
+	sleeplock_t lock;
+	uint32 clear;
+	int result;
+
+	if (!inode || inode->type != VFS_INODE_REGULAR)
+		return VFS_OK;
+	process_credentials_get(&credentials);
+	if (!credentials.euid)
+		return VFS_OK;
+	lock = inode->superblock ? &inode->superblock->attribute_lock : 0;
+	if (lock)
+		sleeplock_acquire(lock);
+	result = vfs_inode_stat(inode, &stat);
+	if (result < 0)
+		goto out;
+	clear = stat.mode & 04000;
+	if ((stat.mode & 02010) == 02010)
+		clear |= 02000;
+	if (!clear) {
+		result = VFS_OK;
+		goto out;
+	}
+	if (!inode->operations || !inode->operations->setattr) {
+		result = VFS_ERR_NOTSUPP;
+		goto out;
+	}
+	memset(&attributes, 0, sizeof(attributes));
+	attributes.mask = VFS_ATTR_MODE;
+	attributes.mode = stat.mode & ~clear;
+	result = vfs_inode_apply_attributes(inode, &attributes);
+out:
+	if (lock)
+		sleeplock_release(lock);
+	return result;
+}
+
+static int vfs_iov_has_data(const struct vfs_iovec *iovecs, uint32 count)
+{
+	uint32 index;
+
+	for (index = 0; index < count; index++) {
+		if (iovecs[index].length)
+			return 1;
+	}
+	return 0;
+}
 static void vfs_creation_credentials(const struct vfs_inode *parent,
 				     uint32 *mode, uint32 *uid,
 				     uint32 *gid, int directory)
@@ -249,6 +329,18 @@ static sleeplock_t vfs_inode_write_lock(struct vfs_inode *inode)
 	    !inode->superblock)
 		return 0;
 	return &inode->superblock->write_lock;
+}
+
+int vfs_file_mark_shared_dirty(struct vfs_file *file, uint64 offset)
+{
+	struct vfs_inode *inode;
+	int result;
+
+	if (!file || !file->path.dentry ||
+	    !(inode = file->path.dentry->inode))
+		return VFS_ERR_INVAL;
+	result = vfs_inode_remove_privileges(inode);
+	return result < 0 ? result : page_cache_mark_dirty(file, offset);
 }
 
 void vfs_init(void)
@@ -312,6 +404,8 @@ struct vfs_super_block *vfs_super_alloc(struct vfs_filesystem_type *type,
 			memset(superblock, 0, sizeof(*superblock));
 			superblock->ref = 1;
 			sleeplock_init(&superblock->write_lock, "VFS write");
+			sleeplock_init(&superblock->attribute_lock,
+				       "VFS attributes");
 			superblock->type = type;
 			superblock->device = device;
 			spinlock_release(&vfs.lock);
@@ -639,7 +733,8 @@ static void vfs_follow_mount(struct vfs_path *path)
 	}
 }
 
-static int vfs_start_path(const char *name, struct vfs_path *path)
+static int vfs_start_path(const char *name, const struct vfs_path *base,
+			  struct vfs_path *path)
 {
 	process_t process = cur_proc();
 
@@ -649,6 +744,10 @@ static int vfs_start_path(const char *name, struct vfs_path *path)
 			return VFS_OK;
 		}
 		return vfs_get_root(path);
+	}
+	if (base) {
+		vfs_path_copy(path, base);
+		return VFS_OK;
 	}
 	if (!process || !process->cwd.dentry)
 		return VFS_ERR_NOENT;
@@ -722,7 +821,8 @@ static int vfs_join_link(char *destination, const char *target,
 
 static int vfs_walk_credentials(
 	const char *name, uint32 flags, struct vfs_path *result, char *last,
-	const struct process_credentials *credentials)
+	const struct process_credentials *credentials,
+	const struct vfs_path *base)
 {
 	struct vfs_walk_buffer *buffer;
 	struct vfs_inode *inode;
@@ -739,7 +839,7 @@ static int vfs_walk_credentials(
 	if (!buffer)
 		return VFS_ERR_NOMEM;
 	safe_strncpy(buffer->pending, name, sizeof(buffer->pending));
-	status = vfs_start_path(buffer->pending, &current);
+	status = vfs_start_path(buffer->pending, base, &current);
 	if (status < 0) {
 		pfree(buffer);
 		return status;
@@ -849,7 +949,8 @@ static int vfs_walk_credentials(
 			offset = 0;
 			if (buffer->pending[0] == '/') {
 				vfs_path_put(&current);
-				status = vfs_start_path(buffer->pending, &current);
+				status = vfs_start_path(buffer->pending, base,
+							&current);
 				if (status < 0) {
 					pfree(buffer);
 					return status;
@@ -876,7 +977,22 @@ fail:
 static int vfs_walk(const char *name, uint32 flags, struct vfs_path *result,
 		    char *last)
 {
-	return vfs_walk_credentials(name, flags, result, last, 0);
+	return vfs_walk_credentials(name, flags, result, last, 0, 0);
+}
+
+static int vfs_walk_from(const char *name, uint32 flags,
+			 const struct vfs_path *base,
+			 struct vfs_path *result, char *last)
+{
+	return vfs_walk_credentials(name, flags, result, last, 0, base);
+}
+
+static int vfs_walk_base(const char *name, uint32 flags,
+			 const struct vfs_path *base,
+			 struct vfs_path *result, char *last)
+{
+	return base ? vfs_walk_from(name, flags, base, result, last) :
+		vfs_walk(name, flags, result, last);
 }
 
 int vfs_mount(const char *filesystem, struct block_device *device,
@@ -1001,14 +1117,31 @@ static int fd_get(int fd, file_t *file)
 	return VFS_OK;
 }
 
+static int vfs_directory_fd_get(int fd, file_t *directory)
+{
+	int status;
+
+	status = fd_get(fd, directory);
+	if (status < 0)
+		return status;
+	if (!(*directory)->path.dentry ||
+	    (*directory)->path.dentry->inode->type != VFS_INODE_DIRECTORY) {
+		file_close(*directory);
+		*directory = 0;
+		return VFS_ERR_NOTDIR;
+	}
+	return VFS_OK;
+}
+
 static int vfs_leaf_valid(const char *name)
 {
 	return name && name[0] && !string_equal(name, ".") &&
 	       !string_equal(name, "..");
 }
 
-static int vfs_create_path(const char *name, uint32 mode,
-			   struct vfs_path *result)
+static int vfs_create_path_from(const char *name, uint32 mode,
+				const struct vfs_path *base,
+				struct vfs_path *result)
 {
 	struct vfs_inode *inode;
 	struct vfs_dentry *dentry;
@@ -1017,7 +1150,7 @@ static int vfs_create_path(const char *name, uint32 mode,
 	uint32 uid, gid;
 	int status;
 
-	status = vfs_walk(name, VFS_LOOKUP_PARENT, &parent, last);
+	status = vfs_walk_base(name, VFS_LOOKUP_PARENT, base, &parent, last);
 	if (status < 0)
 		return status;
 	if (!vfs_leaf_valid(last)) {
@@ -1054,6 +1187,12 @@ static int vfs_create_path(const char *name, uint32 mode,
 	spinlock_release(&vfs.lock);
 	vfs_path_put(&parent);
 	return VFS_OK;
+}
+
+static int vfs_create_path(const char *name, uint32 mode,
+			   struct vfs_path *result)
+{
+	return vfs_create_path_from(name, mode, 0, result);
 }
 
 int vfs_open_file(const char *name, uint32 flags, uint32 mode,
@@ -1279,6 +1418,10 @@ int64 vfs_file_pwrite(struct vfs_file *file, int user_source,
 		result = VFS_ERR_INVAL;
 		goto out;
 	}
+	if (count &&
+	    (result = vfs_inode_remove_privileges(
+		    file->path.dentry ? file->path.dentry->inode : 0)) < 0)
+		goto out;
 	result = vfs_file_pwrite_raw(file, user_source, source, count,
 				     offset);
 	if (result > 0 && lock)
@@ -1346,6 +1489,10 @@ int64 vfs_file_pwritev(struct vfs_file *file, int user_source,
 		result = VFS_ERR_INVAL;
 		goto out;
 	}
+	if (vfs_iov_has_data(iovecs, count) &&
+	    (result = vfs_inode_remove_privileges(
+		    file->path.dentry ? file->path.dentry->inode : 0)) < 0)
+		goto out;
 	for (index = 0; index < count; index++) {
 		start = offset;
 		result = vfs_file_pwrite_raw(file, user_source,
@@ -1689,12 +1836,17 @@ int64 vfs_file_write_current(struct vfs_file *file, int user_source,
 
 	if (!file)
 		return VFS_ERR_BADF;
+	if (!(file->flags & VFS_OPEN_WRITE))
+		return VFS_ERR_BADF;
 	if (count > 0x7fffffff)
 		return VFS_ERR_INVAL;
 	lock = vfs_regular_write_lock(file);
 	if (lock)
 		sleeplock_acquire(lock);
 	result = vfs_prepare_write(file, &old_size);
+	if (result >= 0 && count)
+		result = vfs_inode_remove_privileges(
+			file->path.dentry ? file->path.dentry->inode : 0);
 	if (result >= 0) {
 		start = file->position;
 		result = file_write(file, user_source, source, count,
@@ -1748,6 +1900,10 @@ int64 vfs_writev(int fd, int user_source,
 	lock = vfs_regular_write_lock(file);
 	if (lock)
 		sleeplock_acquire(lock);
+	if (vfs_iov_has_data(iovecs, count) &&
+	    (result = vfs_inode_remove_privileges(
+		    file->path.dentry ? file->path.dentry->inode : 0)) < 0)
+		goto out;
 	if (file->operations && file->operations->writev) {
 		result = file->operations->writev(file, user_source, iovecs,
 						  count);
@@ -1812,10 +1968,54 @@ int vfs_ftruncate(int fd, uint64 size)
 		result = VFS_ERR_IO;
 	else if (page_cache_writeback_inode_locked(inode) < 0)
 		result = VFS_ERR_IO;
-	else
-		result = inode->operations->truncate(inode, size);
+	else {
+		result = stat.size == size ? VFS_OK :
+			vfs_inode_remove_privileges(inode);
+		if (result >= 0)
+			result = inode->operations->truncate(inode, size);
+	}
 	if (result >= 0 && mmap_file_truncate(inode, stat.size, size) < 0)
 		result = VFS_ERR_IO;
+	if (lock)
+		sleeplock_release(lock);
+out:
+	vfs_file_put(file);
+	return result;
+}
+
+int vfs_fallocate(int fd, uint64 offset, uint64 length)
+{
+	struct vfs_inode *inode;
+	sleeplock_t lock;
+	file_t file;
+	int result;
+
+	if (!length || offset > (uint64)-1 - length)
+		return VFS_ERR_INVAL;
+	result = vfs_get_file_fd(fd, &file);
+	if (result < 0)
+		return result;
+	if (!(file->flags & VFS_OPEN_WRITE)) {
+		result = VFS_ERR_BADF;
+		goto out;
+	}
+	if (!file->path.dentry ||
+	    !(inode = file->path.dentry->inode) ||
+	    inode->type != VFS_INODE_REGULAR || !file->operations ||
+	    !file->operations->fallocate) {
+		result = VFS_ERR_NOTSUPP;
+		goto out;
+	}
+	lock = vfs_regular_write_lock(file);
+	if (lock)
+		sleeplock_acquire(lock);
+	if (page_cache_writeback_inode_locked(inode) < 0)
+		result = VFS_ERR_IO;
+	else {
+		result = vfs_inode_remove_privileges(inode);
+		if (result >= 0)
+			result = file->operations->fallocate(file, offset, length);
+	}
 	if (lock)
 		sleeplock_release(lock);
 out:
@@ -1906,6 +2106,176 @@ int vfs_stat_path(const char *name, int follow_symlink,
 	return status;
 }
 
+static int vfs_walk_at(int dirfd, const char *name, uint32 flags,
+		       struct vfs_path *path)
+{
+	file_t directory;
+	int status;
+
+	status = vfs_directory_fd_get(dirfd, &directory);
+	if (status < 0)
+		return status;
+	status = vfs_walk_from(name, flags, &directory->path, path, 0);
+	vfs_file_put(directory);
+	return status;
+}
+
+int vfs_stat_at(int dirfd, const char *name, int follow_symlink,
+		struct vfs_stat *stat)
+{
+	struct vfs_path path;
+	uint32 flags = follow_symlink ? 0 : VFS_LOOKUP_NOFOLLOW_FINAL;
+	int status = vfs_walk_at(dirfd, name, flags, &path);
+
+	if (status < 0)
+		return status;
+	status = vfs_inode_stat(path.dentry->inode, stat);
+	vfs_path_put(&path);
+	return status;
+}
+
+static int vfs_statfs_super(struct vfs_super_block *superblock,
+			    struct vfs_statfs *stat)
+{
+	if (!superblock || !stat)
+		return VFS_ERR_INVAL;
+	if (superblock->operations && superblock->operations->statfs)
+		return superblock->operations->statfs(superblock, stat);
+	memset(stat, 0, sizeof(*stat));
+	stat->block_size = superblock->block_size;
+	stat->fragment_size = superblock->block_size;
+	stat->name_length = VFS_NAME_MAX;
+	if (superblock->device && superblock->block_size) {
+		stat->blocks = superblock->device->sector_count *
+			superblock->device->sector_size / superblock->block_size;
+	}
+	return VFS_OK;
+}
+
+int vfs_statfs_fd(int fd, struct vfs_statfs *stat)
+{
+	file_t file;
+	int result;
+
+	result = vfs_get_file_fd(fd, &file);
+	if (result < 0)
+		return result;
+	if (!file->path.dentry)
+		result = VFS_ERR_INVAL;
+	else
+		result = vfs_statfs_super(
+			file->path.dentry->inode->superblock, stat);
+	vfs_file_put(file);
+	return result;
+}
+
+int vfs_statfs_path(const char *name, struct vfs_statfs *stat)
+{
+	struct vfs_path path;
+	int status = vfs_walk(name, 0, &path, 0);
+
+	if (status < 0)
+		return status;
+	status = vfs_statfs_super(path.dentry->inode->superblock, stat);
+	vfs_path_put(&path);
+	return status;
+}
+
+static int vfs_setattr_inode(struct vfs_inode *inode,
+			     const struct vfs_iattr *attributes)
+{
+	struct process_credentials credentials;
+	struct vfs_iattr next;
+	struct vfs_stat stat;
+	sleeplock_t attribute_lock, write_lock;
+	int owner, status;
+
+	if (!inode || !attributes || !attributes->mask ||
+	    (attributes->mask & ~(VFS_ATTR_MODE | VFS_ATTR_UID |
+				   VFS_ATTR_GID)))
+		return VFS_ERR_INVAL;
+	if (!inode->operations || !inode->operations->setattr)
+		return VFS_ERR_NOTSUPP;
+	write_lock = inode->superblock ? &inode->superblock->write_lock : 0;
+	attribute_lock = inode->superblock ?
+		&inode->superblock->attribute_lock : 0;
+	if (write_lock)
+		sleeplock_acquire(write_lock);
+	if (attribute_lock)
+		sleeplock_acquire(attribute_lock);
+	status = vfs_inode_stat(inode, &stat);
+	if (status < 0)
+		goto out;
+	process_credentials_get(&credentials);
+	owner = credentials.fsuid == stat.uid;
+	next = *attributes;
+	if (attributes->mask & VFS_ATTR_MODE) {
+		if (credentials.fsuid && !owner) {
+			status = VFS_ERR_PERM;
+			goto out;
+		}
+		next.mode &= VFS_MODE_PERMISSIONS;
+		if (credentials.fsuid && (next.mode & 02000) &&
+		    !vfs_credentials_in_group(&credentials, stat.gid, 0))
+			next.mode &= ~02000U;
+	}
+	if (attributes->mask & (VFS_ATTR_UID | VFS_ATTR_GID)) {
+		if (credentials.fsuid) {
+			if (!owner || ((attributes->mask & VFS_ATTR_UID) &&
+				       attributes->uid != stat.uid) ||
+			    ((attributes->mask & VFS_ATTR_GID) &&
+			     attributes->gid != stat.gid &&
+			     !vfs_credentials_in_group(&credentials,
+						       attributes->gid, 0))) {
+				status = VFS_ERR_PERM;
+				goto out;
+			}
+		}
+		if (((attributes->mask & VFS_ATTR_UID) &&
+		     attributes->uid != stat.uid) ||
+		    ((attributes->mask & VFS_ATTR_GID) &&
+		     attributes->gid != stat.gid)) {
+			next.mask |= VFS_ATTR_MODE;
+			next.mode = (attributes->mask & VFS_ATTR_MODE ?
+				next.mode : stat.mode) & ~06000U;
+		}
+	}
+	status = vfs_inode_apply_attributes(inode, &next);
+out:
+	if (attribute_lock)
+		sleeplock_release(attribute_lock);
+	if (write_lock)
+		sleeplock_release(write_lock);
+	return status;
+}
+
+int vfs_setattr_path(const char *name, int follow_symlink,
+		     const struct vfs_iattr *attributes)
+{
+	struct vfs_path path;
+	uint32 flags = follow_symlink ? 0 : VFS_LOOKUP_NOFOLLOW_FINAL;
+	int status = vfs_walk(name, flags, &path, 0);
+
+	if (status < 0)
+		return status;
+	status = vfs_setattr_inode(path.dentry->inode, attributes);
+	vfs_path_put(&path);
+	return status;
+}
+
+int vfs_setattr_at(int dirfd, const char *name, int follow_symlink,
+		   const struct vfs_iattr *attributes)
+{
+	struct vfs_path path;
+	uint32 flags = follow_symlink ? 0 : VFS_LOOKUP_NOFOLLOW_FINAL;
+	int status = vfs_walk_at(dirfd, name, flags, &path);
+
+	if (status < 0)
+		return status;
+	status = vfs_setattr_inode(path.dentry->inode, attributes);
+	vfs_path_put(&path);
+	return status;
+}
 static int vfs_time_permission(struct vfs_inode *inode, int owner_only)
 {
 	struct process_credentials credentials;
@@ -1924,12 +2294,39 @@ static int vfs_time_permission(struct vfs_inode *inode, int owner_only)
 						&credentials, 0);
 }
 
+static int vfs_set_times_inode(
+	struct vfs_inode *inode, const struct vfs_timespec times[2],
+	uint32 mask, int owner_only)
+{
+	sleeplock_t lock;
+	int status;
+
+	if (!inode || !times ||
+	    (mask & ~(VFS_TIME_ATIME | VFS_TIME_MTIME)))
+		return VFS_ERR_INVAL;
+	if (!mask)
+		return VFS_OK;
+	lock = inode->superblock ? &inode->superblock->attribute_lock : 0;
+	if (lock)
+		sleeplock_acquire(lock);
+	status = vfs_time_permission(inode, owner_only);
+	if (status < 0)
+		goto out;
+	if (!inode->operations || !inode->operations->set_times)
+		status = VFS_ERR_NOTSUPP;
+	else
+		status = inode->operations->set_times(inode, times, mask);
+out:
+	if (lock)
+		sleeplock_release(lock);
+	return status;
+}
+
 int vfs_set_times_path(const char *name, int follow_symlink,
 		       const struct vfs_timespec times[2], uint32 mask,
 		       int owner_only)
 {
 	struct vfs_path path;
-	struct vfs_inode *inode;
 	uint32 flags = follow_symlink ? 0 : VFS_LOOKUP_NOFOLLOW_FINAL;
 	int status;
 
@@ -1938,18 +2335,27 @@ int vfs_set_times_path(const char *name, int follow_symlink,
 	status = vfs_walk(name, flags, &path, 0);
 	if (status < 0)
 		return status;
-	inode = path.dentry->inode;
-	if (!mask)
-		status = VFS_OK;
-	else {
-		status = vfs_time_permission(inode, owner_only);
-		if (status == VFS_OK) {
-			status = !inode->operations ||
-				 !inode->operations->set_times ?
-				 VFS_ERR_NOTSUPP :
-				 inode->operations->set_times(inode, times, mask);
-		}
-	}
+	status = vfs_set_times_inode(path.dentry->inode, times, mask,
+				     owner_only);
+	vfs_path_put(&path);
+	return status;
+}
+
+int vfs_set_times_at(int dirfd, const char *name, int follow_symlink,
+		     const struct vfs_timespec times[2], uint32 mask,
+		     int owner_only)
+{
+	struct vfs_path path;
+	uint32 flags = follow_symlink ? 0 : VFS_LOOKUP_NOFOLLOW_FINAL;
+	int status;
+
+	if (!times || (mask & ~(VFS_TIME_ATIME | VFS_TIME_MTIME)))
+		return VFS_ERR_INVAL;
+	status = vfs_walk_at(dirfd, name, flags, &path);
+	if (status < 0)
+		return status;
+	status = vfs_set_times_inode(path.dentry->inode, times, mask,
+				     owner_only);
 	vfs_path_put(&path);
 	return status;
 }
@@ -1970,17 +2376,7 @@ int vfs_set_times_fd(int fd, const struct vfs_timespec times[2],
 		goto out;
 	}
 	inode = file->path.dentry->inode;
-	if (!mask) {
-		status = VFS_OK;
-		goto out;
-	}
-	status = vfs_time_permission(inode, owner_only);
-	if (status < 0)
-		goto out;
-	if (!inode->operations || !inode->operations->set_times)
-		status = VFS_ERR_NOTSUPP;
-	else
-		status = inode->operations->set_times(inode, times, mask);
+	status = vfs_set_times_inode(inode, times, mask, owner_only);
 out:
 	vfs_file_put(file);
 	return status;
@@ -2058,6 +2454,79 @@ int vfs_mkdir(const char *name, uint32 mode)
 	if (status == VFS_OK)
 		vfs_inode_put(inode);
 	vfs_path_put(&parent);
+	return status;
+}
+
+static int vfs_mknod_from(const char *name, enum vfs_inode_type type,
+			  uint32 mode, uint64 device,
+			  const struct vfs_path *base)
+{
+	struct process_credentials credentials;
+	struct vfs_inode *inode;
+	struct vfs_path parent, path;
+	char last[VFS_NAME_MAX + 1];
+	uint32 uid, gid;
+	int status;
+
+	if (type != VFS_INODE_REGULAR && type != VFS_INODE_CHAR_DEVICE &&
+	    type != VFS_INODE_BLOCK_DEVICE && type != VFS_INODE_FIFO &&
+	    type != VFS_INODE_SOCKET)
+		return VFS_ERR_INVAL;
+	if (type == VFS_INODE_REGULAR) {
+		status = vfs_create_path_from(name, mode, base, &path);
+		if (status == VFS_OK)
+			vfs_path_put(&path);
+		return status;
+	}
+	if (type == VFS_INODE_FIFO)
+		return VFS_ERR_NOTSUPP;
+	process_credentials_get(&credentials);
+	if ((type == VFS_INODE_CHAR_DEVICE ||
+	     type == VFS_INODE_BLOCK_DEVICE) && credentials.euid)
+		return VFS_ERR_PERM;
+	status = vfs_walk_base(name, VFS_LOOKUP_PARENT, base, &parent, last);
+	if (status < 0)
+		return status;
+	if (!vfs_leaf_valid(last)) {
+		status = VFS_ERR_INVAL;
+		goto out;
+	}
+	status = vfs_mutation_permission(parent.dentry->inode);
+	if (status < 0)
+		goto out;
+	if (!parent.dentry->inode->operations ||
+	    !parent.dentry->inode->operations->mknod) {
+		status = VFS_ERR_NOTSUPP;
+		goto out;
+	}
+	vfs_creation_credentials(parent.dentry->inode, &mode, &uid, &gid, 0);
+	status = parent.dentry->inode->operations->mknod(
+		parent.dentry->inode, last, type, mode, uid, gid, device,
+		&inode);
+	if (status == VFS_OK)
+		vfs_inode_put(inode);
+out:
+	vfs_path_put(&parent);
+	return status;
+}
+
+int vfs_mknod(const char *name, enum vfs_inode_type type, uint32 mode,
+	      uint64 device)
+{
+	return vfs_mknod_from(name, type, mode, device, 0);
+}
+
+int vfs_mknod_at(int dirfd, const char *name, enum vfs_inode_type type,
+		 uint32 mode, uint64 device)
+{
+	file_t directory;
+	int status;
+
+	status = vfs_directory_fd_get(dirfd, &directory);
+	if (status < 0)
+		return status;
+	status = vfs_mknod_from(name, type, mode, device, &directory->path);
+	vfs_file_put(directory);
 	return status;
 }
 
@@ -2413,7 +2882,7 @@ int vfs_access(const char *name, uint32 mode, int use_effective_ids)
 		credentials.uid;
 	credentials.fsgid = use_effective_ids ? credentials.egid :
 		credentials.gid;
-	status = vfs_walk_credentials(name, 0, &path, 0, &credentials);
+	status = vfs_walk_credentials(name, 0, &path, 0, &credentials, 0);
 	if (status == VFS_OK) {
 		status = vfs_inode_permission_credentials(path.dentry->inode,
 						      mode, &credentials, 0);
