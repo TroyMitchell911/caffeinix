@@ -420,6 +420,11 @@ struct ext4_inode {
 
 #pragma pack(pop)
 
+struct ext4_timespec {
+	int64_t seconds;
+	uint32_t nanoseconds;
+};
+
 #define EXT4_INODE_MODE_FIFO 0x1000
 #define EXT4_INODE_MODE_CHARDEV 0x2000
 #define EXT4_INODE_MODE_DIRECTORY 0x4000

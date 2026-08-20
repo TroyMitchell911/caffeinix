@@ -48,6 +48,8 @@
 #include <ext4_inode.h>
 #include <ext4_super.h>
 
+#include <stddef.h>
+
 /**@brief  Compute number of bits for block count.
  * @param block_size Filesystem block_size
  * @return Number of bits
@@ -161,6 +163,118 @@ uint32_t ext4_inode_get_modif_time(struct ext4_inode *inode)
 void ext4_inode_set_modif_time(struct ext4_inode *inode, uint32_t time)
 {
 	inode->modification_time = to_le32(time);
+}
+
+#define EXT4_EPOCH_BITS 2
+#define EXT4_EPOCH_MASK ((1U << EXT4_EPOCH_BITS) - 1)
+#define EXT4_TIME_MIN_SECONDS (-2147483647LL - 1)
+
+static bool ext4_inode_time_extra_fits(struct ext4_sblock *sb,
+				       struct ext4_inode *inode,
+				       size_t offset)
+{
+	uint16_t size = EXT4_GOOD_OLD_INODE_SIZE +
+		ext4_inode_get_extra_isize(sb, inode);
+
+	return offset + sizeof(uint32_t) <= size;
+}
+
+static void ext4_inode_time_get(struct ext4_sblock *sb,
+				struct ext4_inode *inode, uint32_t base,
+				uint32_t extra, size_t extra_offset,
+				struct ext4_timespec *time)
+{
+	time->seconds = (int32_t)base;
+	time->nanoseconds = 0;
+	if (!ext4_inode_time_extra_fits(sb, inode, extra_offset))
+		return;
+	extra = to_le32(extra);
+	time->seconds += (int64_t)((uint64_t)(extra & EXT4_EPOCH_MASK)
+				   << 32);
+	time->nanoseconds = extra >> EXT4_EPOCH_BITS;
+}
+
+static int ext4_inode_time_set(struct ext4_sblock *sb,
+			       struct ext4_inode *inode, uint32_t *base,
+			       uint32_t *extra, size_t extra_offset,
+			       const struct ext4_timespec *time)
+{
+	int64_t low;
+	uint64_t epoch;
+
+	if (time->nanoseconds >= 1000000000U)
+		return ERANGE;
+	low = (int32_t)(uint32_t)time->seconds;
+	if (!ext4_inode_time_extra_fits(sb, inode, extra_offset)) {
+		if (time->seconds != low)
+			return ERANGE;
+		*base = to_le32((uint32_t)time->seconds);
+		return EOK;
+	}
+	if (time->seconds < EXT4_TIME_MIN_SECONDS)
+		return ERANGE;
+	epoch = ((uint64_t)(time->seconds - low)) >> 32;
+	if (epoch > EXT4_EPOCH_MASK)
+		return ERANGE;
+	*base = to_le32((uint32_t)time->seconds);
+	*extra = to_le32((time->nanoseconds << EXT4_EPOCH_BITS) |
+			   epoch);
+	return EOK;
+}
+
+void ext4_inode_get_access_time_ext(struct ext4_sblock *sb,
+				    struct ext4_inode *inode,
+				    struct ext4_timespec *time)
+{
+	ext4_inode_time_get(sb, inode, ext4_inode_get_access_time(inode),
+			    inode->atime_extra,
+			    offsetof(struct ext4_inode, atime_extra), time);
+}
+
+void ext4_inode_get_modif_time_ext(struct ext4_sblock *sb,
+				   struct ext4_inode *inode,
+				   struct ext4_timespec *time)
+{
+	ext4_inode_time_get(sb, inode, ext4_inode_get_modif_time(inode),
+			    inode->mtime_extra,
+			    offsetof(struct ext4_inode, mtime_extra), time);
+}
+
+void ext4_inode_get_change_time_ext(struct ext4_sblock *sb,
+				    struct ext4_inode *inode,
+				    struct ext4_timespec *time)
+{
+	ext4_inode_time_get(sb, inode,
+			    ext4_inode_get_change_inode_time(inode),
+			    inode->ctime_extra,
+			    offsetof(struct ext4_inode, ctime_extra), time);
+}
+
+int ext4_inode_set_access_time_ext(struct ext4_sblock *sb,
+				   struct ext4_inode *inode,
+				   const struct ext4_timespec *time)
+{
+	return ext4_inode_time_set(sb, inode, &inode->access_time,
+				   &inode->atime_extra,
+				   offsetof(struct ext4_inode, atime_extra), time);
+}
+
+int ext4_inode_set_modif_time_ext(struct ext4_sblock *sb,
+				  struct ext4_inode *inode,
+				  const struct ext4_timespec *time)
+{
+	return ext4_inode_time_set(sb, inode, &inode->modification_time,
+				   &inode->mtime_extra,
+				   offsetof(struct ext4_inode, mtime_extra), time);
+}
+
+int ext4_inode_set_change_time_ext(struct ext4_sblock *sb,
+				   struct ext4_inode *inode,
+				   const struct ext4_timespec *time)
+{
+	return ext4_inode_time_set(sb, inode, &inode->change_inode_time,
+				   &inode->ctime_extra,
+				   offsetof(struct ext4_inode, ctime_extra), time);
 }
 
 uint32_t ext4_inode_get_del_time(struct ext4_inode *inode)

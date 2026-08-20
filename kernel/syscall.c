@@ -110,6 +110,8 @@ int64 linux_error(int result)
 		return -LINUX_EPIPE;
 	case VFS_ERR_INTR:
 		return -LINUX_EINTR;
+	case VFS_ERR_OVERFLOW:
+		return -LINUX_EOVERFLOW;
 	default:
 		return -LINUX_EIO;
 	}

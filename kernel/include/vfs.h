@@ -30,6 +30,9 @@
 
 #define VFS_MODE_PERMISSIONS 07777U
 
+#define VFS_TIME_ATIME (1U << 0)
+#define VFS_TIME_MTIME (1U << 1)
+
 #define VFS_MAKE_DEVICE(major, minor) \
 	(((uint64)(uint32)(major) << 32) | (uint32)(minor))
 #define VFS_DEVICE_MAJOR(device) ((uint32)((device) >> 32))
@@ -86,6 +89,7 @@ enum vfs_result {
 	VFS_ERR_INPROGRESS = -47,
 	VFS_ERR_PIPE = -48,
 	VFS_ERR_INTR = -49,
+	VFS_ERR_OVERFLOW = -50,
 };
 
 #define VFS_RENAME_NOREPLACE (1U << 0)
@@ -119,6 +123,11 @@ struct vfs_inode;
 struct vfs_mount;
 struct vfs_super_block;
 
+struct vfs_timespec {
+	int64 seconds;
+	uint32 nanoseconds;
+};
+
 struct vfs_stat {
 	uint64 dev;
 	uint64 ino;
@@ -131,6 +140,9 @@ struct vfs_stat {
 	uint64 size;
 	uint64 blocks;
 	uint32 block_size;
+	struct vfs_timespec atime;
+	struct vfs_timespec mtime;
+	struct vfs_timespec ctime;
 };
 
 struct vfs_dirent {
@@ -172,6 +184,9 @@ struct vfs_inode_operations {
 	               const char *target, struct vfs_inode **result);
 	int (*readlink)(struct vfs_inode *inode, char *buffer, uint32 size);
 	int (*truncate)(struct vfs_inode *inode, uint64 size);
+	int (*set_times)(struct vfs_inode *inode,
+	                 const struct vfs_timespec times[2],
+	                 uint32 mask);
 	int (*getattr)(struct vfs_inode *inode, struct vfs_stat *stat);
 };
 
@@ -237,6 +252,9 @@ struct vfs_inode {
 	uint64 device;
 	uint64 size;
 	uint64 blocks;
+	struct vfs_timespec atime;
+	struct vfs_timespec mtime;
+	struct vfs_timespec ctime;
 	const struct vfs_inode_operations *operations;
 	const struct vfs_file_operations *file_operations;
 	void *private;
@@ -343,6 +361,11 @@ int vfs_seek(int fd, int64 offset, int whence, uint64 *result);
 int vfs_stat_fd(int fd, struct vfs_stat *stat);
 int vfs_stat_path(const char *path, int follow_symlink,
 		  struct vfs_stat *stat);
+int vfs_set_times_path(const char *path, int follow_symlink,
+		       const struct vfs_timespec times[2], uint32 mask);
+int vfs_set_times_fd(int fd, const struct vfs_timespec times[2],
+		     uint32 mask);
+int vfs_current_time(struct vfs_timespec *time);
 int vfs_next_dirent(int fd, vfs_dirent_emit_t emit, void *context);
 int vfs_mkdir(const char *path, uint32 mode);
 int vfs_unlink(const char *path, int remove_directory);

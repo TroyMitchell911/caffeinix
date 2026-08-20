@@ -1,4 +1,5 @@
 #include <file.h>
+#include <ktime.h>
 #include <linux_uapi.h>
 #include <mystring.h>
 #include <palloc.h>
@@ -102,6 +103,12 @@ static void make_linux_stat(struct linux_stat *linux_stat,
 	linux_stat->size = vfs_stat->size;
 	linux_stat->blksize = vfs_stat->block_size;
 	linux_stat->blocks = vfs_stat->blocks;
+	linux_stat->atime = vfs_stat->atime.seconds;
+	linux_stat->atime_nsec = vfs_stat->atime.nanoseconds;
+	linux_stat->mtime = vfs_stat->mtime.seconds;
+	linux_stat->mtime_nsec = vfs_stat->mtime.nanoseconds;
+	linux_stat->ctime = vfs_stat->ctime.seconds;
+	linux_stat->ctime_nsec = vfs_stat->ctime.nanoseconds;
 	linux_stat->mode = vfs_stat->mode & VFS_MODE_PERMISSIONS;
 	if (vfs_stat->type == VFS_INODE_DIRECTORY)
 		linux_stat->mode |= LINUX_S_IFDIR;
@@ -607,16 +614,71 @@ uint64 sys_linux_faccessat(void)
 
 uint64 sys_linux_utimensat(void)
 {
+	struct linux_timespec linux_times[2];
+	struct vfs_timespec times[2], now;
+	process_t process = cur_proc();
 	char path[MAXPATH];
-	int dirfd, result;
+	uint64 address, path_address;
+	uint32 mask = 0;
+	int use_fd = 0;
+	int dirfd, flags, i, result;
 
 	argint(0, &dirfd);
-	if (argstr(1, path, sizeof(path)) < 0)
-		return -LINUX_EFAULT;
-	if (path[0] != '/' && dirfd != LINUX_AT_FDCWD)
-		return -LINUX_EBADF;
-	/* Caffeinix does not persist inode timestamps yet. */
-	result = vfs_access(path);
+	argaddr(1, &path_address);
+	argaddr(2, &address);
+	argint(3, &flags);
+	if (flags & ~(LINUX_AT_SYMLINK_NOFOLLOW | LINUX_AT_EMPTY_PATH))
+		return -LINUX_EINVAL;
+	if (!address) {
+		if (vfs_current_time(&now) < 0)
+			return -LINUX_EIO;
+		times[0] = now;
+		times[1] = now;
+		mask = VFS_TIME_ATIME | VFS_TIME_MTIME;
+	} else {
+		if (copyin(process->pagetable, (char *)linux_times, address,
+		           sizeof(linux_times)) < 0)
+			return -LINUX_EFAULT;
+		for (i = 0; i < 2; i++) {
+			if (linux_times[i].nanoseconds == LINUX_UTIME_OMIT)
+				continue;
+			if (linux_times[i].nanoseconds == LINUX_UTIME_NOW) {
+				if (vfs_current_time(&times[i]) < 0)
+					return -LINUX_EIO;
+			} else {
+				if (linux_times[i].nanoseconds < 0 ||
+				    linux_times[i].nanoseconds >= NSEC_PER_SEC)
+					return -LINUX_EINVAL;
+				times[i].seconds = linux_times[i].seconds;
+				times[i].nanoseconds =
+					linux_times[i].nanoseconds;
+			}
+			mask |= i ? VFS_TIME_MTIME : VFS_TIME_ATIME;
+		}
+		if (!mask)
+			return 0;
+	}
+	if (!path_address) {
+		if (flags)
+			return -LINUX_EINVAL;
+		use_fd = 1;
+	} else {
+		if (fetch_str_from_user(path_address, path, sizeof(path)) < 0)
+			return -LINUX_EFAULT;
+		if (!path[0]) {
+			if (!(flags & LINUX_AT_EMPTY_PATH))
+				return -LINUX_ENOENT;
+			use_fd = 1;
+		} else if (path[0] != '/' && dirfd != LINUX_AT_FDCWD) {
+			return -LINUX_EBADF;
+		}
+	}
+	if (use_fd)
+		result = vfs_set_times_fd(dirfd, times, mask);
+	else
+		result = vfs_set_times_path(path,
+				!(flags & LINUX_AT_SYMLINK_NOFOLLOW),
+				times, mask);
 	return result < 0 ? linux_error(result) : 0;
 }
 

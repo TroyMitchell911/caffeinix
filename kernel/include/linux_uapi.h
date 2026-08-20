@@ -274,6 +274,9 @@ struct linux_linger {
 #define LINUX_AT_SYMLINK_FOLLOW    0x400
 #define LINUX_AT_EMPTY_PATH       0x1000
 
+#define LINUX_UTIME_NOW      1073741823L
+#define LINUX_UTIME_OMIT     1073741822L
+
 #define LINUX_RENAME_NOREPLACE       0x1
 
 #define LINUX_O_ACCMODE          00000003

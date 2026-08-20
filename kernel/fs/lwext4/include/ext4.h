@@ -480,6 +480,13 @@ int ext4_mtime_set(const char *path, uint32_t mtime);
  * @return  Standard error code.*/
 int ext4_ctime_set(const char *path, uint32_t ctime);
 
+#define EXT4_TIME_ATIME (1U << 0)
+#define EXT4_TIME_MTIME (1U << 1)
+#define EXT4_TIME_CTIME (1U << 2)
+
+int ext4_times_set(const char *path, const struct ext4_timespec times[3],
+		   uint32_t mask);
+
 /**@brief Get file/directory/link access time.
  *
  * @param path  Path to file/dir/link.

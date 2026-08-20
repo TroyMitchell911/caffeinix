@@ -2370,6 +2370,47 @@ int ext4_ctime_set(const char *path, uint32_t ctime)
 	return r;
 }
 
+int ext4_times_set(const char *path, const struct ext4_timespec times[3],
+		   uint32_t mask)
+{
+	struct ext4_inode_ref inode_ref;
+	struct ext4_mountpoint *mp = ext4_get_mount(path);
+	int r;
+
+	if (!mp)
+		return ENOENT;
+	if (mp->fs.read_only)
+		return EROFS;
+	if (!times || (mask & ~(EXT4_TIME_ATIME | EXT4_TIME_MTIME |
+			       EXT4_TIME_CTIME)))
+		return EINVAL;
+
+	EXT4_MP_LOCK(mp);
+	r = ext4_trans_get_inode_ref(path, mp, &inode_ref);
+	if (r != EOK)
+		goto Finish;
+	if (mask & EXT4_TIME_ATIME)
+		r = ext4_inode_set_access_time_ext(&mp->fs.sb,
+						  inode_ref.inode, &times[0]);
+	if (r == EOK && (mask & EXT4_TIME_MTIME))
+		r = ext4_inode_set_modif_time_ext(&mp->fs.sb,
+						 inode_ref.inode, &times[1]);
+	if (r == EOK && (mask & EXT4_TIME_CTIME))
+		r = ext4_inode_set_change_time_ext(&mp->fs.sb,
+						  inode_ref.inode, &times[2]);
+	if (r == EOK) {
+		inode_ref.dirty = true;
+		r = ext4_trans_put_inode_ref(mp, &inode_ref);
+	} else {
+		ext4_fs_put_inode_ref(&inode_ref);
+		ext4_trans_abort(mp);
+	}
+
+Finish:
+	EXT4_MP_UNLOCK(mp);
+	return r;
+}
+
 int ext4_atime_get(const char *path, uint32_t *atime)
 {
 	struct ext4_inode_ref inode_ref;

@@ -220,6 +220,20 @@ int vfs_inode_stat_default(struct vfs_inode *inode, struct vfs_stat *stat)
 	stat->size = inode->size;
 	stat->blocks = inode->blocks;
 	stat->block_size = inode->superblock->block_size;
+	stat->atime = inode->atime;
+	stat->mtime = inode->mtime;
+	stat->ctime = inode->ctime;
+	return VFS_OK;
+}
+
+int vfs_current_time(struct vfs_timespec *time)
+{
+	uint64 nanoseconds;
+
+	if (!time || ktime_get_realtime_ns(&nanoseconds) < 0)
+		return VFS_ERR_IO;
+	time->seconds = nanoseconds / NSEC_PER_SEC;
+	time->nanoseconds = nanoseconds % NSEC_PER_SEC;
 	return VFS_OK;
 }
 
@@ -1605,6 +1619,50 @@ int vfs_stat_path(const char *name, int follow_symlink,
 	status = vfs_inode_stat(path.dentry->inode, stat);
 	vfs_path_put(&path);
 	return status;
+}
+
+int vfs_set_times_path(const char *name, int follow_symlink,
+		       const struct vfs_timespec times[2], uint32 mask)
+{
+	struct vfs_path path;
+	struct vfs_inode *inode;
+	uint32 flags = follow_symlink ? 0 : VFS_LOOKUP_NOFOLLOW_FINAL;
+	int status;
+
+	if (!times || (mask & ~(VFS_TIME_ATIME | VFS_TIME_MTIME)))
+		return VFS_ERR_INVAL;
+	status = vfs_walk(name, flags, &path, 0);
+	if (status < 0)
+		return status;
+	inode = path.dentry->inode;
+	if (!mask)
+		status = VFS_OK;
+	else if (!inode->operations || !inode->operations->set_times)
+		status = VFS_ERR_NOTSUPP;
+	else
+		status = inode->operations->set_times(inode, times, mask);
+	vfs_path_put(&path);
+	return status;
+}
+
+int vfs_set_times_fd(int fd, const struct vfs_timespec times[2],
+		     uint32 mask)
+{
+	struct vfs_inode *inode;
+	file_t file;
+
+	if (!times || (mask & ~(VFS_TIME_ATIME | VFS_TIME_MTIME)))
+		return VFS_ERR_INVAL;
+	if (fd_get(fd, &file) != VFS_OK)
+		return VFS_ERR_BADF;
+	if (!file->path.dentry)
+		return VFS_ERR_INVAL;
+	inode = file->path.dentry->inode;
+	if (!mask)
+		return VFS_OK;
+	if (!inode->operations || !inode->operations->set_times)
+		return VFS_ERR_NOTSUPP;
+	return inode->operations->set_times(inode, times, mask);
 }
 
 int vfs_next_dirent(int fd, vfs_dirent_emit_t emit, void *context)
