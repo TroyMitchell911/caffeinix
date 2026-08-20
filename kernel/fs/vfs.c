@@ -15,8 +15,8 @@
 
 #define VFS_FILESYSTEM_MAX 8
 #define VFS_SUPER_MAX 16
-#define VFS_INODE_MAX 256
-#define VFS_DENTRY_MAX 256
+#define VFS_INODE_MAX 1024
+#define VFS_DENTRY_MAX 512
 #define VFS_MOUNT_MAX 16
 #define VFS_SYMLINK_MAX 8
 
@@ -47,6 +47,7 @@ static struct {
 	struct vfs_dentry dentries[VFS_DENTRY_MAX];
 	struct vfs_mount mounts[VFS_MOUNT_MAX];
 	struct vfs_mount *root;
+	uint64 dentry_clock;
 } vfs;
 
 static struct {
@@ -438,6 +439,7 @@ struct vfs_super_block *vfs_super_alloc(struct vfs_filesystem_type *type,
 		if (!superblock->ref) {
 			memset(superblock, 0, sizeof(*superblock));
 			superblock->ref = 1;
+			superblock->namespace_generation = 1;
 			sleeplock_init(&superblock->write_lock, "VFS write");
 			sleeplock_init(&superblock->attribute_lock,
 				       "VFS attributes");
@@ -656,6 +658,37 @@ int vfs_inode_stat(struct vfs_inode *inode, struct vfs_stat *stat)
 	return vfs_inode_stat_default(inode, stat);
 }
 
+static void vfs_dentry_put(struct vfs_dentry *dentry);
+
+static int vfs_dentry_evict_one(void)
+{
+	struct vfs_dentry *candidate = 0;
+	struct vfs_dentry *dentry;
+	uint64 oldest = ~0ULL;
+
+	spinlock_acquire(&vfs.lock);
+	for (dentry = vfs.dentries;
+	     dentry != &vfs.dentries[VFS_DENTRY_MAX]; dentry++) {
+		if (!dentry->cached || dentry->ref != 1)
+			continue;
+		if (dentry->generation !=
+		    dentry->inode->superblock->namespace_generation) {
+			candidate = dentry;
+			break;
+		}
+		if (dentry->last_used < oldest) {
+			candidate = dentry;
+			oldest = dentry->last_used;
+		}
+	}
+	if (candidate)
+		candidate->cached = 0;
+	spinlock_release(&vfs.lock);
+	if (candidate)
+		vfs_dentry_put(candidate);
+	return candidate != 0;
+}
+
 static struct vfs_dentry *vfs_dentry_alloc(struct vfs_dentry *parent,
 					    const char *name,
 					    struct vfs_inode *inode)
@@ -664,6 +697,8 @@ static struct vfs_dentry *vfs_dentry_alloc(struct vfs_dentry *parent,
 
 	if (strlen(name) > VFS_NAME_MAX)
 		return 0;
+
+retry:
 	spinlock_acquire(&vfs.lock);
 	for (dentry = vfs.dentries;
 	     dentry != &vfs.dentries[VFS_DENTRY_MAX]; dentry++) {
@@ -681,7 +716,128 @@ static struct vfs_dentry *vfs_dentry_alloc(struct vfs_dentry *parent,
 		}
 	}
 	spinlock_release(&vfs.lock);
+	if (vfs_dentry_evict_one())
+		goto retry;
 	return 0;
+}
+
+static int vfs_dentry_same_parent(const struct vfs_dentry *left,
+				  const struct vfs_dentry *right)
+{
+	if (left == right)
+		return 1;
+	if (!left || !right || !left->inode || !right->inode)
+		return 0;
+	return left->inode->number &&
+	       left->inode->superblock == right->inode->superblock &&
+	       left->inode->number == right->inode->number;
+}
+
+static struct vfs_dentry *vfs_dentry_cache(struct vfs_dentry *dentry)
+{
+	struct vfs_dentry *cached;
+	struct vfs_super_block *superblock;
+	uint64 generation;
+
+	if (!dentry || !dentry->parent || !dentry->inode)
+		return dentry;
+	superblock = dentry->inode->superblock;
+	if (superblock->type->flags & VFS_FS_NO_DENTRY_CACHE)
+		return dentry;
+	spinlock_acquire(&vfs.lock);
+	generation = superblock->namespace_generation;
+	for (cached = vfs.dentries;
+	     cached != &vfs.dentries[VFS_DENTRY_MAX]; cached++) {
+		if (cached != dentry && cached->cached &&
+		    vfs_dentry_same_parent(cached->parent,
+					   dentry->parent) &&
+		    cached->generation == generation &&
+		    string_equal(cached->name, dentry->name)) {
+			cached->ref++;
+			cached->last_used = ++vfs.dentry_clock;
+			spinlock_release(&vfs.lock);
+			vfs_dentry_put(dentry);
+			return cached;
+		}
+	}
+	if (!dentry->cached) {
+		dentry->cached = 1;
+		dentry->ref++;
+		dentry->generation = generation;
+		dentry->last_used = ++vfs.dentry_clock;
+	}
+	spinlock_release(&vfs.lock);
+	return dentry;
+}
+
+static void vfs_dentry_uncache(struct vfs_dentry *dentry)
+{
+	int put = 0;
+
+	if (!dentry)
+		return;
+	spinlock_acquire(&vfs.lock);
+	if (dentry->cached) {
+		dentry->cached = 0;
+		put = 1;
+	}
+	spinlock_release(&vfs.lock);
+	if (put)
+		vfs_dentry_put(dentry);
+}
+
+static struct vfs_dentry *vfs_dentry_lookup(struct vfs_dentry *parent,
+					     const char *name)
+{
+	struct vfs_dentry *dentry;
+	struct vfs_super_block *superblock = parent->inode->superblock;
+
+	if (superblock->type->flags & VFS_FS_NO_DENTRY_CACHE)
+		return 0;
+	spinlock_acquire(&vfs.lock);
+	for (dentry = vfs.dentries;
+	     dentry != &vfs.dentries[VFS_DENTRY_MAX]; dentry++) {
+		if (dentry->cached &&
+		    vfs_dentry_same_parent(dentry->parent, parent) &&
+		    dentry->generation == superblock->namespace_generation &&
+		    string_equal(dentry->name, name)) {
+			dentry->ref++;
+			dentry->last_used = ++vfs.dentry_clock;
+			spinlock_release(&vfs.lock);
+			return dentry;
+		}
+	}
+	spinlock_release(&vfs.lock);
+	return 0;
+}
+
+static void vfs_namespace_changed(struct vfs_inode *inode)
+{
+	struct vfs_super_block *superblock = inode->superblock;
+	struct vfs_dentry *dentry;
+
+	spinlock_acquire(&vfs.lock);
+	if (!++superblock->namespace_generation)
+		superblock->namespace_generation = 1;
+	spinlock_release(&vfs.lock);
+
+	for (;;) {
+		spinlock_acquire(&vfs.lock);
+		for (dentry = vfs.dentries;
+		     dentry != &vfs.dentries[VFS_DENTRY_MAX]; dentry++) {
+			if (dentry->cached && dentry->inode &&
+			    dentry->inode->superblock == superblock &&
+			    dentry->generation !=
+				    superblock->namespace_generation) {
+				dentry->cached = 0;
+				break;
+			}
+		}
+		spinlock_release(&vfs.lock);
+		if (dentry == &vfs.dentries[VFS_DENTRY_MAX])
+			return;
+		vfs_dentry_put(dentry);
+	}
 }
 
 static void vfs_dentry_put(struct vfs_dentry *dentry)
@@ -705,6 +861,28 @@ static void vfs_dentry_put(struct vfs_dentry *dentry)
 		spinlock_release(&vfs.lock);
 		vfs_inode_put(inode);
 		dentry = parent;
+	}
+}
+
+static void vfs_dentry_drop_super(struct vfs_super_block *superblock)
+{
+	struct vfs_dentry *dentry;
+
+	for (;;) {
+		spinlock_acquire(&vfs.lock);
+		for (dentry = vfs.dentries;
+		     dentry != &vfs.dentries[VFS_DENTRY_MAX]; dentry++) {
+			if (dentry->cached && dentry->inode &&
+			    dentry->inode->superblock == superblock)
+				break;
+		}
+		if (dentry == &vfs.dentries[VFS_DENTRY_MAX]) {
+			spinlock_release(&vfs.lock);
+			return;
+		}
+		dentry->cached = 0;
+		spinlock_release(&vfs.lock);
+		vfs_dentry_put(dentry);
 	}
 }
 
@@ -776,6 +954,7 @@ static void vfs_mount_destroy(struct vfs_mount *mount)
 	if (mount->root)
 		vfs_dentry_put(mount->root);
 	mount->root = 0;
+	vfs_dentry_drop_super(superblock);
 	vfs_super_destroy(superblock);
 	mount->superblock = 0;
 	vfs_path_put(&mount->mountpoint);
@@ -1203,21 +1382,26 @@ static int vfs_walk_credentials(
 			}
 			continue;
 		}
-		if (!current.dentry->inode->operations ||
-		    !current.dentry->inode->operations->lookup) {
-			status = VFS_ERR_NOTSUPP;
-			goto fail;
-		}
-		status = current.dentry->inode->operations->lookup(
-			current.dentry->inode, buffer->component, &inode);
-		if (status < 0)
-			goto fail;
-		dentry = vfs_dentry_alloc(current.dentry, buffer->component,
-		                           inode);
-		vfs_inode_put(inode);
+		dentry = vfs_dentry_lookup(current.dentry,
+					    buffer->component);
 		if (!dentry) {
-			status = VFS_ERR_NOMEM;
-			goto fail;
+			if (!current.dentry->inode->operations ||
+			    !current.dentry->inode->operations->lookup) {
+				status = VFS_ERR_NOTSUPP;
+				goto fail;
+			}
+			status = current.dentry->inode->operations->lookup(
+				current.dentry->inode, buffer->component, &inode);
+			if (status < 0)
+				goto fail;
+			dentry = vfs_dentry_alloc(current.dentry,
+						   buffer->component, inode);
+			vfs_inode_put(inode);
+			if (!dentry) {
+				status = VFS_ERR_NOMEM;
+				goto fail;
+			}
+			dentry = vfs_dentry_cache(dentry);
 		}
 		next.mount = current.mount;
 		next.dentry = dentry;
@@ -1661,12 +1845,14 @@ static int vfs_create_path_from(const char *name, uint32 mode,
 		vfs_path_put(&parent);
 		return status;
 	}
+	vfs_namespace_changed(parent.dentry->inode);
 	dentry = vfs_dentry_alloc(parent.dentry, last, inode);
 	vfs_inode_put(inode);
 	if (!dentry) {
 		vfs_path_put(&parent);
 		return VFS_ERR_NOMEM;
 	}
+	dentry = vfs_dentry_cache(dentry);
 	result->mount = parent.mount;
 	result->dentry = dentry;
 	spinlock_acquire(&vfs.lock);
@@ -2952,8 +3138,10 @@ int vfs_mkdir(const char *name, uint32 mode)
 	vfs_creation_credentials(parent.dentry->inode, &mode, &uid, &gid, 1);
 	status = parent.dentry->inode->operations->mkdir(
 		parent.dentry->inode, last, mode, uid, gid, &inode);
-	if (status == VFS_OK)
+	if (status == VFS_OK) {
+		vfs_namespace_changed(parent.dentry->inode);
 		vfs_inode_put(inode);
+	}
 	vfs_path_put(&parent);
 	return status;
 }
@@ -3004,8 +3192,10 @@ static int vfs_mknod_from(const char *name, enum vfs_inode_type type,
 	status = parent.dentry->inode->operations->mknod(
 		parent.dentry->inode, last, type, mode, uid, gid, device,
 		&inode);
-	if (status == VFS_OK)
+	if (status == VFS_OK) {
+		vfs_namespace_changed(parent.dentry->inode);
 		vfs_inode_put(inode);
+	}
 out:
 	vfs_path_put(&parent);
 	return status;
@@ -3077,6 +3267,10 @@ int vfs_unlink(const char *name, int remove_directory)
 			operations->unlink(parent.dentry->inode, last) :
 			VFS_ERR_NOTSUPP;
 	}
+	if (status == VFS_OK) {
+		vfs_dentry_uncache(target.dentry);
+		vfs_namespace_changed(parent.dentry->inode);
+	}
 out_unlink:
 	vfs_path_put(&parent);
 	vfs_path_put(&target);
@@ -3122,6 +3316,8 @@ int vfs_link(const char *old_name, const char *new_name,
 		operations->link(source.dentry->inode,
 		                 parent.dentry->inode, last) :
 		VFS_ERR_NOTSUPP;
+	if (status == VFS_OK)
+		vfs_namespace_changed(parent.dentry->inode);
 out:
 	vfs_path_put(&parent);
 	vfs_path_put(&source);
@@ -3156,8 +3352,10 @@ int vfs_symlink(const char *target, const char *link_name)
 	status = operations && operations->symlink ?
 		operations->symlink(parent.dentry->inode, last, target,
 		                    uid, gid, &inode) : VFS_ERR_NOTSUPP;
-	if (status == VFS_OK)
+	if (status == VFS_OK) {
+		vfs_namespace_changed(parent.dentry->inode);
 		vfs_inode_put(inode);
+	}
 	vfs_path_put(&parent);
 	return status;
 }
@@ -3271,6 +3469,10 @@ int vfs_rename(const char *old_name, const char *new_name,
 		vfs_finish_renamed_dentries(
 			source.dentry->inode, old_parent.dentry->inode,
 			old_last, new_parent.dentry, new_last);
+		vfs_dentry_uncache(source.dentry);
+		if (destination_found)
+			vfs_dentry_uncache(destination.dentry);
+		vfs_namespace_changed(old_parent.dentry->inode);
 	}
 out:
 	if (destination_found)

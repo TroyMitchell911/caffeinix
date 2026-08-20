@@ -870,6 +870,7 @@ static int procfs_mount(struct vfs_filesystem_type *type,
 
 static struct vfs_filesystem_type procfs_type = {
 	.name = "proc",
+	.flags = VFS_FS_NO_DENTRY_CACHE,
 	.mount = procfs_mount,
 };
 

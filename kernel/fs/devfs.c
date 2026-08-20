@@ -187,6 +187,7 @@ static int devfs_mount(struct vfs_filesystem_type *type,
 
 static struct vfs_filesystem_type devfs_type = {
 	.name = "devfs",
+	.flags = VFS_FS_NO_DENTRY_CACHE,
 	.mount = devfs_mount,
 };
 

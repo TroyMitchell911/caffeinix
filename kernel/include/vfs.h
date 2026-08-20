@@ -280,6 +280,7 @@ struct vfs_filesystem_type {
 };
 
 #define VFS_FS_REQUIRES_DEVICE (1U << 0)
+#define VFS_FS_NO_DENTRY_CACHE (1U << 1)
 #define VFS_FS_SUPPORTS_ATIME  (1U << 2)
 
 struct vfs_super_block {
@@ -292,6 +293,7 @@ struct vfs_super_block {
 	struct vfs_inode *root;
 	const struct vfs_super_operations *operations;
 	uint32 block_size;
+	uint64 namespace_generation;
 	void *private;
 };
 
@@ -319,8 +321,11 @@ struct vfs_inode {
 
 struct vfs_dentry {
 	int ref;
+	int cached;
 	struct vfs_dentry *parent;
 	struct vfs_inode *inode;
+	uint64 generation;
+	uint64 last_used;
 	char name[VFS_NAME_MAX + 1];
 };
 
