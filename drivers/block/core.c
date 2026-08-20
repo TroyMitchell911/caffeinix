@@ -7,6 +7,31 @@ static struct {
 	struct block_device *devices[BLOCK_DEVICE_MAX];
 } block_devices;
 
+static void block_request_end_io_work(struct work_struct *work)
+{
+	struct block_request *request =
+		container_of(work, struct block_request, end_io_work);
+	block_end_io_t end_io;
+	void *private;
+
+	spinlock_acquire(&request->lock);
+	if (!request->submitted || !request->completed ||
+	    request->completion_done || !request->end_io)
+		PANIC("invalid deferred block completion");
+	end_io = request->end_io;
+	private = request->private;
+	spinlock_release(&request->lock);
+
+	end_io(request, private);
+
+	spinlock_acquire(&request->lock);
+	if (request->completion_done)
+		PANIC("duplicate deferred block completion");
+	request->completion_done = 1;
+	wait_queue_wake_all(&request->completion);
+	spinlock_release(&request->lock);
+}
+
 void block_device_init(void)
 {
 	spinlock_init(&block_devices.lock, "block devices");
@@ -17,8 +42,9 @@ int block_device_register(struct block_device *device)
 	uint32 id, first, last;
 
 	if (!device || !device->name || !device->operations ||
-	    !device->operations->read || !device->operations->write ||
+	    !device->operations->submit ||
 	    !device->sector_size || !device->sector_count ||
+	    device->max_segments > BLOCK_REQUEST_MAX_SEGMENTS ||
 	    device->sector_count > (uint64)-1 / device->sector_size)
 		return -1;
 	first = device->id ? device->id : 1;
@@ -108,27 +134,188 @@ static int block_device_range_valid(struct block_device *device,
 	return count <= device->sector_count - sector;
 }
 
+void block_request_init(struct block_request *request,
+			struct block_device *device,
+			enum block_request_operation operation,
+			uint64 sector,
+			const struct block_segment *segments,
+			uint16 segment_count)
+{
+	request->device = device;
+	request->operation = operation;
+	request->sector = sector;
+	request->segments = segments;
+	request->segment_count = segment_count;
+	request->sector_count = 0;
+	request->end_io = 0;
+	request->private = 0;
+	request->submitted = 0;
+	request->completed = 0;
+	request->completion_done = 0;
+	request->status = -1;
+	spinlock_init(&request->lock, "block request");
+	wait_queue_init(&request->completion, "block completion");
+	work_init(&request->end_io_work, block_request_end_io_work);
+}
+
+static int block_request_validate(struct block_request *request)
+{
+	uint64 count = 0;
+	uint16 index;
+
+	if (!request || !request->device ||
+	    !request->device->operations ||
+	    !request->device->operations->submit)
+		return -1;
+	if (request->operation == BLOCK_REQUEST_FLUSH)
+		return request->segments || request->segment_count ? -1 : 0;
+	if (request->operation != BLOCK_REQUEST_READ &&
+	    request->operation != BLOCK_REQUEST_WRITE)
+		return -1;
+	if (!request->segments || !request->segment_count ||
+	    request->segment_count > BLOCK_REQUEST_MAX_SEGMENTS ||
+	    (request->device->max_segments &&
+	     request->segment_count > request->device->max_segments))
+		return -1;
+	for (index = 0; index < request->segment_count; index++) {
+		if (!request->segments[index].buffer ||
+		    !request->segments[index].sector_count)
+			return -1;
+		count += request->segments[index].sector_count;
+		if (count > 0xffffffffU)
+			return -1;
+	}
+	request->sector_count = count;
+	return block_device_range_valid(request->device, request->sector,
+					request->sector_count) ? 0 : -1;
+}
+
+void block_request_complete(struct block_request *request, int status)
+{
+	int deferred;
+
+	if (!request)
+		PANIC("complete null block request");
+	spinlock_acquire(&request->lock);
+	if (!request->submitted || request->completed)
+		PANIC("invalid block request completion");
+	request->status = status;
+	request->completed = 1;
+	deferred = request->end_io != 0;
+	if (!deferred) {
+		request->completion_done = 1;
+		wait_queue_wake_all(&request->completion);
+	}
+	spinlock_release(&request->lock);
+	if (deferred && schedule_work(&request->end_io_work) != 1)
+		PANIC("schedule deferred block completion");
+}
+
+int block_request_submit(struct block_request *request)
+{
+	int status;
+
+	if (block_request_validate(request) < 0)
+		return -1;
+	spinlock_acquire(&request->lock);
+	if (request->submitted) {
+		spinlock_release(&request->lock);
+		return -1;
+	}
+	request->submitted = 1;
+	spinlock_release(&request->lock);
+	status = request->device->operations->submit(request->device,
+						      request);
+	if (status < 0) {
+		spinlock_acquire(&request->lock);
+		if (!request->completed) {
+			request->status = status;
+			request->completed = 1;
+			request->completion_done = 1;
+			wait_queue_wake_all(&request->completion);
+		}
+		spinlock_release(&request->lock);
+	}
+	return status;
+}
+
+int block_request_wait(struct block_request *request)
+{
+	int deferred;
+	int status;
+
+	if (!request)
+		return -1;
+	spinlock_acquire(&request->lock);
+	if (!request->submitted) {
+		spinlock_release(&request->lock);
+		return -1;
+	}
+	while (!request->completion_done)
+		wait_queue_sleep(&request->completion, &request->lock);
+	status = request->status;
+	deferred = request->end_io != 0;
+	spinlock_release(&request->lock);
+	if (deferred)
+		cancel_work_sync(&request->end_io_work);
+	return status;
+}
+
+static int block_device_submit_wait(
+	struct block_device *device, enum block_request_operation operation,
+	uint64 sector, const struct block_segment *segments,
+	uint16 segment_count)
+{
+	struct block_request request;
+
+	block_request_init(&request, device, operation, sector, segments,
+			   segment_count);
+	if (block_request_submit(&request) < 0)
+		return -1;
+	return block_request_wait(&request);
+}
+
+int block_device_readv(struct block_device *device, uint64 sector,
+		       const struct block_segment *segments,
+		       uint16 segment_count)
+{
+	return block_device_submit_wait(device, BLOCK_REQUEST_READ, sector,
+					segments, segment_count);
+}
+
+int block_device_writev(struct block_device *device, uint64 sector,
+			const struct block_segment *segments,
+			uint16 segment_count)
+{
+	return block_device_submit_wait(device, BLOCK_REQUEST_WRITE, sector,
+					segments, segment_count);
+}
+
 int block_device_read(struct block_device *device, uint64 sector,
 		      void *buffer, uint32 count)
 {
-	if (!buffer || !block_device_range_valid(device, sector, count))
-		return -1;
-	return device->operations->read(device, sector, buffer, count);
+	struct block_segment segment = {
+		.buffer = buffer,
+		.sector_count = count,
+	};
+
+	return block_device_readv(device, sector, &segment, 1);
 }
 
 int block_device_write(struct block_device *device, uint64 sector,
 		       const void *buffer, uint32 count)
 {
-	if (!buffer || !block_device_range_valid(device, sector, count))
-		return -1;
-	return device->operations->write(device, sector, buffer, count);
+	struct block_segment segment = {
+		.buffer = (void *)buffer,
+		.sector_count = count,
+	};
+
+	return block_device_writev(device, sector, &segment, 1);
 }
 
 int block_device_flush(struct block_device *device)
 {
 	if (!device)
 		return -1;
-	if (!device->operations->flush)
-		return 0;
-	return device->operations->flush(device);
+	return block_device_submit_wait(device, BLOCK_REQUEST_FLUSH, 0, 0, 0);
 }
