@@ -437,6 +437,7 @@ int vfs_setattr_path(const char *path, int follow_symlink,
 		     const struct vfs_iattr *attributes);
 int vfs_setattr_at(int dirfd, const char *path, int follow_symlink,
 		   const struct vfs_iattr *attributes);
+int vfs_setattr_fd(int fd, const struct vfs_iattr *attributes);
 int vfs_set_times_path(const char *path, int follow_symlink,
 		       const struct vfs_timespec times[2], uint32 mask,
 		       int owner_only);

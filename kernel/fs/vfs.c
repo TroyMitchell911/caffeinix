@@ -2588,6 +2588,23 @@ int vfs_setattr_at(int dirfd, const char *name, int follow_symlink,
 	vfs_path_put(&path);
 	return status;
 }
+
+int vfs_setattr_fd(int fd, const struct vfs_iattr *attributes)
+{
+	file_t file;
+	int status;
+
+	status = vfs_get_file_fd(fd, &file);
+	if (status < 0)
+		return status;
+	if (!file->path.dentry)
+		status = VFS_ERR_INVAL;
+	else
+		status = vfs_setattr_inode(file->path.dentry->inode,
+					   attributes);
+	vfs_file_put(file);
+	return status;
+}
 static int vfs_time_permission(struct vfs_inode *inode, int owner_only)
 {
 	struct process_credentials credentials;

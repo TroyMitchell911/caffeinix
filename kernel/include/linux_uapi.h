@@ -23,8 +23,10 @@
 #define LINUX_SYS_fallocate          47
 #define LINUX_SYS_faccessat          48
 #define LINUX_SYS_chdir              49
+#define LINUX_SYS_fchmod             52
 #define LINUX_SYS_fchmodat           53
 #define LINUX_SYS_fchownat           54
+#define LINUX_SYS_fchown             55
 #define LINUX_SYS_openat             56
 #define LINUX_SYS_close              57
 #define LINUX_SYS_pipe2              59

@@ -335,7 +335,9 @@ extern uint64 sys_linux_fallocate(void);
 extern uint64 sys_linux_statfs(void);
 extern uint64 sys_linux_fstatfs(void);
 extern uint64 sys_linux_fchmodat(void);
+extern uint64 sys_linux_fchmod(void);
 extern uint64 sys_linux_fchownat(void);
+extern uint64 sys_linux_fchown(void);
 
 typedef uint64 (*syscall_t)(void);
 
@@ -357,8 +359,10 @@ static syscall_t linux_syscalls[LINUX_SYS_pwritev2 + 1] = {
 	[LINUX_SYS_fallocate] = sys_linux_fallocate,
 	[LINUX_SYS_statfs] = sys_linux_statfs,
 	[LINUX_SYS_fstatfs] = sys_linux_fstatfs,
+	[LINUX_SYS_fchmod] = sys_linux_fchmod,
 	[LINUX_SYS_fchmodat] = sys_linux_fchmodat,
 	[LINUX_SYS_fchownat] = sys_linux_fchownat,
+	[LINUX_SYS_fchown] = sys_linux_fchown,
 	[LINUX_SYS_faccessat] = sys_linux_faccessat,
 	[LINUX_SYS_chdir] = sys_linux_chdir,
 	[LINUX_SYS_openat] = sys_linux_openat,

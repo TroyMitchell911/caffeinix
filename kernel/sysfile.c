@@ -697,6 +697,18 @@ uint64 sys_linux_fchmodat(void)
 	return result < 0 ? linux_error(result) : 0;
 }
 
+uint64 sys_linux_fchmod(void)
+{
+	struct vfs_iattr attributes = { .mask = VFS_ATTR_MODE };
+	int fd, mode, result;
+
+	argint(0, &fd);
+	argint(1, &mode);
+	attributes.mode = mode & VFS_MODE_PERMISSIONS;
+	result = vfs_setattr_fd(fd, &attributes);
+	return result < 0 ? linux_error(result) : 0;
+}
+
 uint64 sys_linux_fchownat(void)
 {
 	struct vfs_iattr attributes = { 0 };
@@ -738,6 +750,31 @@ uint64 sys_linux_fchownat(void)
 		result = vfs_setattr_at(
 			dirfd, path, !(flags & LINUX_AT_SYMLINK_NOFOLLOW),
 			&attributes);
+	return result < 0 ? linux_error(result) : 0;
+}
+
+uint64 sys_linux_fchown(void)
+{
+	struct vfs_iattr attributes = { 0 };
+	struct vfs_stat stat;
+	int fd, group, owner, result;
+
+	argint(0, &fd);
+	argint(1, &owner);
+	argint(2, &group);
+	if (owner != -1) {
+		attributes.mask |= VFS_ATTR_UID;
+		attributes.uid = owner;
+	}
+	if (group != -1) {
+		attributes.mask |= VFS_ATTR_GID;
+		attributes.gid = group;
+	}
+	if (!attributes.mask) {
+		result = vfs_stat_fd(fd, &stat);
+		return result < 0 ? linux_error(result) : 0;
+	}
+	result = vfs_setattr_fd(fd, &attributes);
 	return result < 0 ? linux_error(result) : 0;
 }
 
