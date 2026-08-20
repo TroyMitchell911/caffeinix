@@ -22,6 +22,51 @@
 
 struct tty;
 
+#define PROCESS_CMDLINE_MAX PGSIZE
+
+struct process_snapshot {
+	char name[MAXNAME];
+	int pid;
+	int ppid;
+	int pgid;
+	int sid;
+	int tty;
+	int tty_pgid;
+	char state;
+	int nice;
+	uint32 uid;
+	uint32 euid;
+	uint32 gid;
+	uint32 egid;
+	uint32 threads;
+	uint32 runnable_threads;
+	uint32 blocked_threads;
+	uint64 start_time_ns;
+	uint64 user_time_ns;
+	uint64 system_time_ns;
+	uint64 children_user_time_ns;
+	uint64 children_system_time_ns;
+	uint64 virtual_size;
+	uint64 resident_pages;
+	uint64 signal_pending;
+	uint64 signal_shared_pending;
+	uint64 signal_blocked;
+	uint64 signal_ignored;
+	uint64 signal_caught;
+};
+
+struct process_system_snapshot {
+	uint32 processes;
+	uint32 running;
+	uint32 blocked;
+	int last_pid;
+	uint64 total_forks;
+	uint64 context_switches;
+	uint64 idle_time_ns;
+	uint64 user_time_ns;
+	uint64 system_time_ns;
+};
+
 typedef enum process_state{
 	PROCESS_EMBRYO,
         PROCESS_LIVE,
@@ -58,6 +103,10 @@ typedef struct process{
 	struct vfs_path root;
 	struct vfs_path cwd;
 	uint32 umask;
+	void *cmdline;
+	uint32 cmdline_length;
+	uint64 start_time_ns;
+	uint64 retired_user_time_ns;
 	struct spinlock files_lock;
         file_t ofile[NOFILE];
 	uint8 fd_flags[NOFILE];
@@ -126,6 +175,13 @@ int process_get_nice(int pid, int *nice);
 void process_expire_timers(uint64 now);
 int process_task_exists(int tid);
 uint32 process_task_count(void);
+int process_snapshot_pid(int pid, struct process_snapshot *snapshot,
+			 char *cmdline, uint32 cmdline_size,
+			 uint32 *cmdline_length);
+uint32 process_snapshot_pids(int *pids, uint32 capacity);
+void process_snapshot_system(struct process_system_snapshot *snapshot);
+void process_set_cmdline(process_t process, void *cmdline,
+			 uint32 length);
 
 int either_copyout(int user_dst, uint64 dst, void* src, uint64 len);
 int either_copyin(void *dst, int user_src, uint64 src, uint64 len);

@@ -233,6 +233,8 @@ struct linux_sysinfo {
 	uint32 reserved;
 };
 
+#define LINUX_SI_LOAD_SHIFT 16
+
 struct linux_pollfd {
 	int32 fd;
 	int16 events;

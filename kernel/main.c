@@ -26,6 +26,8 @@
 #include <fatfs.h>
 #include <devfs.h>
 #include <tmpfs.h>
+#include <procfs.h>
+#include <loadavg.h>
 #include <vfs.h>
 #include <device_model.h>
 #include <boot.h>
@@ -45,6 +47,7 @@
 #include <virtio.h>
 #include <netdevice.h>
 #include <network_stack.h>
+#include <ksocket.h>
 #include <futex.h>
 #include <page_cache.h>
 #include <mmap.h>
@@ -105,11 +108,14 @@ static void main_boot(void)
 	if (virtio_mmio_init() < 0)
 		PANIC("register virtio-mmio driver");
 	random_finalize_boot();
+	ksocket_init();
 	network_stack_init();
 	ext4fs_init();
 	fatfs_init();
 	devfs_init();
 	tmpfs_init();
+	loadavg_init();
+	procfs_init();
 	userinit();
 
 	timer_wait_for_interrupt();

@@ -41,6 +41,7 @@ uint64 vm_alloc(pagedir_t pgdir, uint64 oldsz, uint64 newsz, int eperm);
 uint64 vm_dealloc(pagedir_t pgdir, uint64 oldsz, uint64 newsz);
 void vm_clear(pagedir_t pgdir, uint64 va);
 int vm_copy(pagedir_t old, pagedir_t new, const struct vma_set *vmas);
+uint64 vm_user_resident_pages(pagedir_t pgdir);
 void vm_free_user(pagedir_t pgdir);
 /* For page-table */
 pagedir_t pagedir_alloc(void);

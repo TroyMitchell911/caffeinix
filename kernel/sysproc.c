@@ -1,6 +1,7 @@
 #include <cpu.h>
 #include <ktime.h>
 #include <linux_uapi.h>
+#include <loadavg.h>
 #include <mem_layout.h>
 #include <mystring.h>
 #include <process.h>
@@ -322,11 +323,15 @@ uint64 sys_linux_sysinfo(void)
 {
 	struct linux_sysinfo information;
 	uint64 address, free_bytes;
-	uint32 count;
+	uint32 count, index, loads[3];
 
 	argaddr(0, &address);
 	memset(&information, 0, sizeof(information));
 	information.uptime = ktime_get_boot_ns() / NSEC_PER_SEC;
+	loadavg_get(loads);
+	for (index = 0; index < NELEM(loads); index++)
+		information.loads[index] = (uint64)loads[index] <<
+			(LINUX_SI_LOAD_SHIFT - LOADAVG_FIXED_SHIFT);
 	information.totalram = palloc_usable_bytes();
 	free_bytes = palloc_free_pages();
 	information.freeram = free_bytes > ~(uint64)0 / PGSIZE ?

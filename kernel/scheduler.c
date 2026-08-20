@@ -40,6 +40,8 @@ static struct {
 	uint32 count;
 } runqueue;
 
+static volatile uint64 context_switches;
+
 int cpuid(void)
 {
 	return (int)tp_r();
@@ -76,6 +78,31 @@ void scheduler_init(void)
 	runqueue.total_weight = 0;
 	runqueue.min_vruntime = 0;
 	runqueue.count = 0;
+	context_switches = 0;
+}
+
+uint64 scheduler_idle_time_ns(void)
+{
+	uint64 idle = 0;
+	uint64 now = ktime_get_ns();
+	int logical;
+
+	for (logical = 0; logical < cpu_count(); logical++) {
+		uint64 since;
+
+		idle += __atomic_load_n(&cpus[logical]->idle_time_ns,
+					__ATOMIC_SEQ_CST);
+		since = __atomic_load_n(&cpus[logical]->idle_since_ns,
+					__ATOMIC_SEQ_CST);
+		if (since && now > since)
+			idle += now - since;
+	}
+	return idle;
+}
+
+uint64 scheduler_context_switches(void)
+{
+	return __atomic_load_n(&context_switches, __ATOMIC_RELAXED);
 }
 
 static uint64 add_saturate(uint64 left, uint64 right)
@@ -447,6 +474,8 @@ void scheduler(void)
 	cpu->selected = 0;
 	cpu->idle = 0;
 	for (;;) {
+		uint64 idle_start;
+
 		/*
 		 * Keep global interrupts disabled through WFI. An IPI arriving
 		 * after the empty check remains pending and makes WFI return.
@@ -455,7 +484,20 @@ void scheduler(void)
 		next = scheduler_next(cpu);
 		if (!next) {
 			timer_set_idle();
+			idle_start = ktime_get_ns();
+			__atomic_store_n(&cpu->idle_since_ns, idle_start,
+					 __ATOMIC_SEQ_CST);
 			wait_for_interrupt();
+			idle_start = __atomic_exchange_n(&cpu->idle_since_ns, 0,
+						 __ATOMIC_SEQ_CST);
+			if (idle_start) {
+				uint64 now = ktime_get_ns();
+
+				if (now > idle_start)
+					__atomic_add_fetch(&cpu->idle_time_ns,
+						now - idle_start,
+						__ATOMIC_SEQ_CST);
+			}
 			intr_on();
 			continue;
 		}
@@ -474,6 +516,7 @@ void scheduler(void)
 		cpu->selected = 0;
 		__atomic_store_n(&cpu->need_resched, 0, __ATOMIC_RELEASE);
 		cpu->current = next;
+		__atomic_add_fetch(&context_switches, 1, __ATOMIC_RELAXED);
 		spinlock_release(&runqueue.lock);
 		switchto(&cpu->context, &next->context);
 		spinlock_acquire(&runqueue.lock);

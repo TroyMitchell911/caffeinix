@@ -279,6 +279,14 @@ struct vfs_mount {
 	struct vfs_mount *parent;
 	struct vfs_path mountpoint;
 	uint32 flags;
+	char target[VFS_PATH_MAX];
+};
+
+struct vfs_mount_snapshot {
+	char source[32];
+	char target[VFS_PATH_MAX];
+	char filesystem[32];
+	uint32 flags;
 };
 
 struct vfs_file {
@@ -309,6 +317,8 @@ int vfs_mount_root(const char *filesystem, struct block_device *device,
 		   const void *data);
 int vfs_mount(const char *filesystem, struct block_device *device,
 	      const char *target, const void *data);
+uint32 vfs_snapshot_mounts(struct vfs_mount_snapshot *snapshots,
+			   uint32 capacity);
 int vfs_get_root(struct vfs_path *path);
 void vfs_path_copy(struct vfs_path *destination,
 		   const struct vfs_path *source);

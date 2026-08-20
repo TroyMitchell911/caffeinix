@@ -228,6 +228,7 @@ struct ifreq {
 #define SO_CONTIMEO     0x1009 /* Unimplemented: connect timeout */
 #define SO_NO_CHECK     0x100a /* don't create UDP checksum */
 #define SO_BINDTODEVICE 0x100b /* bind to device */
+#define SO_LWIP_TCP_STATE 0x100c /* get the internal TCP state */
 
 /*
  * Structure used for manipulating linger option.

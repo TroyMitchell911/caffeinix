@@ -23,6 +23,7 @@
 #include <futex.h>
 #include <mmap.h>
 #include <tty.h>
+#include <ktime.h>
 
 #define PROCESS_CHILD_EVENT_NONE       0
 #define PROCESS_CHILD_EVENT_STOPPED    1
@@ -38,6 +39,8 @@ static struct spinlock wait_lock;
 // struct process proc[NPROC];
 struct list proc;
 static process_t first;
+static volatile uint64 retired_process_time_ns;
+static volatile uint64 total_user_tasks;
 
 static void process_notify_parent_locked(process_t child, int code,
 					 int status);
@@ -257,6 +260,11 @@ static void proc_first_start(void)
 			pr_err("VFS: cannot mount tmpfs on /tmp: %d", status);
 			PANIC("mount tmpfs");
 		}
+		status = vfs_mount("procfs", 0, "/proc", 0);
+		if (status < 0) {
+			pr_err("VFS: cannot mount procfs on /proc: %d", status);
+			PANIC("mount procfs");
+		}
 		mount_fat_device(root_device);
 		status = setup_stdio();
 		if (status < 0) {
@@ -297,6 +305,7 @@ static process_t process_alloc(void)
 	}
 	signal_process_init(p);
 	p->umask = 0022;
+	p->start_time_ns = ktime_get_boot_ns();
 	p->state = PROCESS_EMBRYO;
 	wait_queue_init(&p->child_wait, "child wait");
 	wait_queue_init(&p->thread_reap_wait, "thread reap");
@@ -370,6 +379,9 @@ static void process_free(process_t p)
 	signal_process_destroy(p);
 	pfree(p->signal_pending);
 	p->signal_pending = 0;
+	if (p->cmdline)
+		pfree(p->cmdline);
+	p->cmdline = 0;
         if(p->pagetable) {
                 process_freepagedir(p->pagetable, p->sz);
         }
@@ -381,6 +393,8 @@ static void process_free(process_t p)
                 thread_free(thread);
                 spinlock_release(&thread->lock);
         }
+	__atomic_add_fetch(&retired_process_time_ns,
+			   p->retired_user_time_ns, __ATOMIC_RELAXED);
         list_remove(&p->all_tag);
         spinlock_release(&p->lock);
         free(p);
@@ -396,6 +410,8 @@ void process_init(void)
 	/* Init the spinlock */
 	spinlock_init(&wait_lock, "wait_lock");
 	list_init(&proc);
+	retired_process_time_ns = 0;
+	total_user_tasks = 0;
 }
 
 void userinit(void)
@@ -423,6 +439,7 @@ void userinit(void)
 	p->state = PROCESS_LIVE;
 	spinlock_release(&p->lock);
 	spinlock_acquire(&t->lock);
+	__atomic_add_fetch(&total_user_tasks, 1, __ATOMIC_RELAXED);
 	scheduler_make_runnable(t);
 	spinlock_release(&t->lock);
 }
@@ -539,15 +556,214 @@ uint32 process_task_count(void)
 		spinlock_acquire(&process->lock);
 		if (process->state == PROCESS_LIVE)
 			count += process->live_threads;
+		else if (process->state == PROCESS_ZOMBIE)
+			count++;
 		spinlock_release(&process->lock);
 	}
 	spinlock_release(&wait_lock);
 	return count > 0xffffffffU ? 0xffffffffU : count;
 }
 
+static uint64 process_thread_runtime_locked(thread_t thread, uint64 now)
+{
+	uint64 runtime = thread->sched.sum_exec_runtime;
+
+	if (thread->state == THREAD_RUNNING && thread->sched.exec_start &&
+	    now > thread->sched.exec_start) {
+		uint64 delta = now - thread->sched.exec_start;
+
+		runtime = runtime > ~(uint64)0 - delta ?
+			~(uint64)0 : runtime + delta;
+	}
+	return runtime;
+}
+
+static void process_snapshot_locked(process_t process,
+				    struct process_snapshot *snapshot,
+				    uint64 now)
+{
+	uint64 caught = 0, ignored = 0;
+	uint64 runtime = process->retired_user_time_ns;
+	thread_t thread;
+	int index;
+
+	memset(snapshot, 0, sizeof(*snapshot));
+	safe_strncpy(snapshot->name, process->name, sizeof(snapshot->name));
+	snapshot->pid = process->pid;
+	snapshot->ppid = process->parent ? process->parent->pid : 0;
+	snapshot->pgid = process->pgid;
+	snapshot->sid = process->sid;
+	snapshot->tty = tty_device_number(process->controlling_tty);
+	snapshot->tty_pgid = process->controlling_tty ?
+		process->controlling_tty->foreground_pgid : -1;
+	snapshot->threads = process->live_threads;
+	snapshot->start_time_ns = process->start_time_ns;
+	snapshot->children_user_time_ns = process->children_user_time_ns;
+	snapshot->children_system_time_ns =
+		process->children_system_time_ns;
+	snapshot->virtual_size = process->sz;
+	snapshot->signal_shared_pending = process->signal_pending ?
+		process->signal_pending->bits : 0;
+	for (index = 0; index < 64; index++) {
+		if (process->signal_actions[index].handler == LINUX_SIG_IGN)
+			ignored |= 1ULL << index;
+		else if (process->signal_actions[index].handler != LINUX_SIG_DFL)
+			caught |= 1ULL << index;
+	}
+	snapshot->signal_ignored = ignored;
+	snapshot->signal_caught = caught;
+	for (index = 0; index < PROC_MAXTHREAD; index++) {
+		thread = process->thread[index];
+		if (!thread)
+			continue;
+		spinlock_acquire(&thread->lock);
+		if (thread->tid == process->pid)
+			snapshot->nice = thread->sched.nice;
+		runtime += process_thread_runtime_locked(thread, now);
+		if (thread->tid == process->pid) {
+			snapshot->signal_pending = thread->signal_pending.bits;
+			snapshot->signal_blocked = thread->signal_mask;
+		}
+		if (thread->state == THREAD_RUNNING ||
+		    thread->state == THREAD_RUNNABLE)
+			snapshot->runnable_threads++;
+		else if (thread->state == THREAD_SLEEPING &&
+			 !thread->wait_interruptible)
+			snapshot->blocked_threads++;
+		spinlock_release(&thread->lock);
+	}
+	if (process->state == PROCESS_ZOMBIE)
+		snapshot->state = 'Z';
+	else if (process->stopped)
+		snapshot->state = 'T';
+	else if (snapshot->runnable_threads)
+		snapshot->state = 'R';
+	else if (snapshot->blocked_threads)
+		snapshot->state = 'D';
+	else
+		snapshot->state = 'S';
+	snapshot->user_time_ns = runtime;
+}
+
+int process_snapshot_pid(int pid, struct process_snapshot *snapshot,
+			 char *cmdline, uint32 cmdline_size,
+			 uint32 *cmdline_length)
+{
+	process_t process;
+	list_t entry;
+	int found = 0;
+
+	if (pid <= 0 || !snapshot)
+		return -1;
+	if (cmdline_length)
+		*cmdline_length = 0;
+	spinlock_acquire(&wait_lock);
+	for (entry = proc.next; entry != &proc; entry = entry->next) {
+		process = list_entry(entry, struct process, all_tag);
+		spinlock_acquire(&process->lock);
+		if (process->pid != pid ||
+		    process->state == PROCESS_EMBRYO) {
+			spinlock_release(&process->lock);
+			continue;
+		}
+		process_snapshot_locked(process, snapshot, ktime_get_ns());
+		if (process->state != PROCESS_ZOMBIE && cmdline &&
+		    cmdline_size && process->cmdline) {
+			uint32 length = process->cmdline_length;
+
+			if (length > cmdline_size)
+				length = cmdline_size;
+			memmove(cmdline, process->cmdline, length);
+			if (cmdline_length)
+				*cmdline_length = length;
+		}
+		spinlock_release(&process->lock);
+		found = 1;
+		break;
+	}
+	spinlock_release(&wait_lock);
+	if (found)
+		(void)mmap_process_usage(pid, &snapshot->virtual_size,
+					 &snapshot->resident_pages);
+	return found ? 0 : -1;
+}
+
+uint32 process_snapshot_pids(int *pids, uint32 capacity)
+{
+	process_t process;
+	list_t entry;
+	uint32 count = 0;
+
+	if (!pids || !capacity)
+		return 0;
+	spinlock_acquire(&wait_lock);
+	for (entry = proc.next;
+	     entry != &proc && count < capacity; entry = entry->next) {
+		process = list_entry(entry, struct process, all_tag);
+		spinlock_acquire(&process->lock);
+		if (process->state != PROCESS_EMBRYO)
+			pids[count++] = process->pid;
+		spinlock_release(&process->lock);
+	}
+	spinlock_release(&wait_lock);
+	return count;
+}
+
+void process_snapshot_system(struct process_system_snapshot *snapshot)
+{
+	struct process_snapshot process_snapshot;
+	process_t process;
+	list_t entry;
+	uint64 now = ktime_get_ns();
+
+	if (!snapshot)
+		return;
+	memset(snapshot, 0, sizeof(*snapshot));
+	spinlock_acquire(&wait_lock);
+	snapshot->user_time_ns = __atomic_load_n(
+		&retired_process_time_ns, __ATOMIC_RELAXED);
+	for (entry = proc.next; entry != &proc; entry = entry->next) {
+		process = list_entry(entry, struct process, all_tag);
+		spinlock_acquire(&process->lock);
+		if (process->state == PROCESS_EMBRYO) {
+			spinlock_release(&process->lock);
+			continue;
+		}
+		process_snapshot_locked(process, &process_snapshot, now);
+		snapshot->processes += process_snapshot.threads;
+		snapshot->running += process_snapshot.runnable_threads;
+		snapshot->blocked += process_snapshot.blocked_threads;
+		snapshot->user_time_ns += process_snapshot.user_time_ns;
+		snapshot->system_time_ns += process_snapshot.system_time_ns;
+		spinlock_release(&process->lock);
+	}
+	spinlock_release(&wait_lock);
+	snapshot->last_pid = thread_last_user_tid();
+	snapshot->total_forks = __atomic_load_n(&total_user_tasks,
+						 __ATOMIC_RELAXED);
+	snapshot->context_switches = scheduler_context_switches();
+	snapshot->idle_time_ns = scheduler_idle_time_ns();
+}
+
+void process_set_cmdline(process_t process, void *cmdline, uint32 length)
+{
+	void *old;
+
+	if (!process || !cmdline || length > PROCESS_CMDLINE_MAX)
+		PANIC("invalid process command line");
+	spinlock_acquire(&process->lock);
+	old = process->cmdline;
+	process->cmdline = cmdline;
+	process->cmdline_length = length;
+	spinlock_release(&process->lock);
+	if (old)
+		pfree(old);
+}
+
 int process_fork(uint64 child_stack)
 {
         int pid, i;
+	int had_cmdline;
         process_t oldp, newp;
         thread_t oldt, newt;
 
@@ -570,6 +786,23 @@ int process_fork(uint64 child_stack)
 	}
 
 	newp->umask = oldp->umask;
+	spinlock_acquire(&oldp->lock);
+	had_cmdline = oldp->cmdline != 0;
+	if (had_cmdline) {
+		newp->cmdline = palloc_zero();
+		if (newp->cmdline) {
+			newp->cmdline_length = oldp->cmdline_length;
+			memmove(newp->cmdline, oldp->cmdline,
+				newp->cmdline_length);
+		}
+	}
+	spinlock_release(&oldp->lock);
+	if (had_cmdline && !newp->cmdline) {
+		spinlock_acquire(&wait_lock);
+		process_free(newp);
+		spinlock_release(&wait_lock);
+		return -1;
+	}
 	newp->membarrier_private_expedited =
 		__atomic_load_n(&oldp->membarrier_private_expedited,
 		                __ATOMIC_ACQUIRE);
@@ -609,6 +842,7 @@ int process_fork(uint64 child_stack)
 	newp->state = PROCESS_LIVE;
 	spinlock_release(&newp->lock);
 	spinlock_acquire(&newt->lock);
+	__atomic_add_fetch(&total_user_tasks, 1, __ATOMIC_RELAXED);
 	scheduler_make_runnable(newt);
 	spinlock_release(&newt->lock);
 	spinlock_release(&wait_lock);
@@ -688,6 +922,7 @@ int process_clone_thread(uint64 flags, uint64 child_stack,
 		goto fail_mapped;
 	}
 	spinlock_release(&p->lock);
+	__atomic_add_fetch(&total_user_tasks, 1, __ATOMIC_RELAXED);
 	scheduler_make_runnable(child);
 	spinlock_release(&child->lock);
 	return tid;

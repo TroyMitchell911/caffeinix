@@ -34,5 +34,7 @@ int mmap_file_truncate(struct vfs_inode *inode, uint64 old_size,
 int mmap_reclaim_file_page(struct vfs_file *file, uint64 offset,
 			   void *page);
 uint64 mmap_reclaim_clean_pages(uint64 target);
+int mmap_process_usage(int pid, uint64 *virtual_size,
+		       uint64 *resident_pages);
 
 #endif

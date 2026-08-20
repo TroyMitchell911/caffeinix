@@ -293,6 +293,45 @@ uint64 mmap_reclaim_clean_pages(uint64 target)
 	return reclaimed;
 }
 
+int mmap_process_usage(int pid, uint64 *virtual_size,
+		       uint64 *resident_pages)
+{
+	struct vm_area *area;
+	process_t process;
+	uint64 resident = 0, size = 0;
+	list_t area_node, process_node;
+	int found = 0;
+
+	if (pid <= 0 || !virtual_size || !resident_pages)
+		return -1;
+	sleeplock_acquire(&mmap_registry.lock);
+	for (process_node = mmap_registry.processes.next;
+	     process_node != &mmap_registry.processes;
+	     process_node = process_node->next) {
+		process = list_entry(process_node, struct process, mmap_tag);
+		if (process->pid != pid)
+			continue;
+		sleeplock_acquire(&process->mmap_lock);
+		for (area_node = process->vmas.areas.next;
+		     area_node != &process->vmas.areas;
+		     area_node = area_node->next) {
+			area = list_entry(area_node, struct vm_area, node);
+			if (area->end > area->start)
+				size += area->end - area->start;
+		}
+		resident = vm_user_resident_pages(process->pagetable);
+		sleeplock_release(&process->mmap_lock);
+		found = 1;
+		break;
+	}
+	sleeplock_release(&mmap_registry.lock);
+	if (!found)
+		return -1;
+	*virtual_size = size;
+	*resident_pages = resident;
+	return 0;
+}
+
 static int mmap_protection_valid(int protection)
 {
 	return !(protection & ~(LINUX_PROT_READ | LINUX_PROT_WRITE |

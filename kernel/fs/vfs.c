@@ -406,6 +406,7 @@ int vfs_mount_root(const char *filesystem, struct block_device *device,
 	}
 	mount->superblock = superblock;
 	mount->root = root;
+	safe_strncpy(mount->target, "/", sizeof(mount->target));
 	spinlock_acquire(&vfs.lock);
 	vfs.root = mount;
 	spinlock_release(&vfs.lock);
@@ -725,8 +726,46 @@ int vfs_mount(const char *filesystem, struct block_device *device,
 	mount->root = root;
 	mount->parent = mountpoint.mount;
 	mount->mountpoint = mountpoint;
+	safe_strncpy(mount->target, target, sizeof(mount->target));
 	pr_info("VFS: mounted %s on %s", filesystem, target);
 	return VFS_OK;
+}
+
+uint32 vfs_snapshot_mounts(struct vfs_mount_snapshot *snapshots,
+			   uint32 capacity)
+{
+	struct vfs_mount *mount;
+	uint32 count = 0;
+
+	if (!snapshots || !capacity)
+		return 0;
+	spinlock_acquire(&vfs.lock);
+	for (mount = vfs.mounts;
+	     mount != &vfs.mounts[VFS_MOUNT_MAX] && count < capacity;
+	     mount++) {
+		struct vfs_mount_snapshot *snapshot;
+
+		if (!mount->ref || !mount->superblock ||
+		    !mount->superblock->type)
+			continue;
+		snapshot = &snapshots[count++];
+		memset(snapshot, 0, sizeof(*snapshot));
+		safe_strncpy(snapshot->filesystem,
+			     mount->superblock->type->name,
+			     sizeof(snapshot->filesystem));
+		if (mount->superblock->device)
+			safe_strncpy(snapshot->source,
+				     mount->superblock->device->name,
+				     sizeof(snapshot->source));
+		else
+			safe_strncpy(snapshot->source, snapshot->filesystem,
+				     sizeof(snapshot->source));
+		safe_strncpy(snapshot->target, mount->target,
+			     sizeof(snapshot->target));
+		snapshot->flags = mount->flags;
+	}
+	spinlock_release(&vfs.lock);
+	return count;
 }
 
 static int fd_alloc(file_t file, int minimum, uint8 flags)

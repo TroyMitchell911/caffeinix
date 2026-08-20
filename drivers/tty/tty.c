@@ -494,6 +494,13 @@ struct tty *tty_get(int line)
 	return tty;
 }
 
+uint32 tty_device_number(const struct tty *tty)
+{
+	if (!tty || tty->line < 0 || tty->line >= TTY_MAX_DEVICES)
+		return 0;
+	return (TTY_SERIAL_MAJOR << 8) | (TTY_SERIAL_MINOR + tty->line);
+}
+
 void tty_init(void)
 {
 	uint64 serial = VFS_MAKE_DEVICE(TTY_SERIAL_MAJOR, TTY_SERIAL_MINOR);

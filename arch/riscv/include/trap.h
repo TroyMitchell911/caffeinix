@@ -5,5 +5,6 @@
 
 void trap_init(void);
 void trap_init_lock(void);
+uint64 trap_interrupt_count(void);
 
 #endif

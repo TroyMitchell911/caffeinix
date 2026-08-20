@@ -2,12 +2,15 @@
 #include <file.h>
 #include <ksocket.h>
 #include <ktime.h>
+#include <list.h>
 #include <lwip/sockets.h>
+#include <lwip/tcp.h>
 #include <mystring.h>
 #include <network_stack.h>
 #include <palloc.h>
 #include <process.h>
 #include <scheduler.h>
+#include <sleeplock.h>
 #include <signal.h>
 #include <spinlock.h>
 #include <vfs.h>
@@ -41,6 +44,7 @@ struct socket_inherited_options {
 
 struct socket_file {
 	struct spinlock lock;
+	struct list registry_node;
 	int descriptor;
 	int family;
 	int type;
@@ -51,6 +55,9 @@ struct socket_file {
 	uint8 read_shutdown;
 	uint8 write_shutdown;
 	uint8 listening;
+	uint8 registered;
+	uint64 inode;
+	uint32 uid;
 	struct socket_inherited_options inherited;
 };
 
@@ -59,6 +66,125 @@ union socket_option_storage {
 	struct linger linger;
 	struct timeval timeout;
 };
+
+static struct {
+	struct sleeplock lock;
+	struct list sockets;
+	uint64 next_inode;
+} socket_registry;
+
+static void socket_address_from_lwip(
+	const struct sockaddr_in *lwip_address,
+	struct linux_sockaddr_in *linux_address);
+
+void ksocket_init(void)
+{
+	sleeplock_init(&socket_registry.lock, "socket registry");
+	list_init(&socket_registry.sockets);
+	socket_registry.next_inode = 1;
+}
+
+static void socket_registry_add(struct socket_file *socket)
+{
+	sleeplock_acquire(&socket_registry.lock);
+	socket->inode = socket_registry.next_inode++;
+	list_insert_before(&socket_registry.sockets, &socket->registry_node);
+	socket->registered = 1;
+	sleeplock_release(&socket_registry.lock);
+}
+
+static void socket_registry_remove(struct socket_file *socket)
+{
+	sleeplock_acquire(&socket_registry.lock);
+	if (socket->registered) {
+		list_remove(&socket->registry_node);
+		socket->registered = 0;
+	}
+	sleeplock_release(&socket_registry.lock);
+}
+
+static uint8 socket_snapshot_state(struct socket_file *socket)
+{
+	socklen_t length = sizeof(int);
+	int state;
+
+	if (socket->type != LINUX_SOCK_STREAM)
+		return 0x07;
+	if (lwip_getsockopt(socket->descriptor, SOL_SOCKET,
+			    SO_LWIP_TCP_STATE,
+			    &state, &length) < 0)
+		return 0x07;
+	switch (state) {
+	case ESTABLISHED: return 0x01;
+	case SYN_SENT: return 0x02;
+	case SYN_RCVD: return 0x03;
+	case FIN_WAIT_1: return 0x04;
+	case FIN_WAIT_2: return 0x05;
+	case TIME_WAIT: return 0x06;
+	case CLOSE_WAIT: return 0x08;
+	case LAST_ACK: return 0x09;
+	case LISTEN: return 0x0a;
+	case CLOSING: return 0x0b;
+	default: return 0x07;
+	}
+}
+
+uint32 ksocket_snapshot_type(int type, struct ksocket_snapshot *snapshots,
+			     uint32 capacity)
+{
+	struct socket_file *socket;
+	struct sockaddr_in address;
+	list_t node;
+	uint32 count = 0;
+
+	if (!snapshots || !capacity)
+		return 0;
+	lwip_socket_thread_init();
+	sleeplock_acquire(&socket_registry.lock);
+	for (node = socket_registry.sockets.next;
+	     node != &socket_registry.sockets && count < capacity;
+	     node = node->next) {
+		struct ksocket_snapshot *snapshot;
+		socklen_t length;
+		int descriptor, has_peer, queued = 0;
+
+		socket = list_entry(node, struct socket_file, registry_node);
+		spinlock_acquire(&socket->lock);
+		if (socket->type != type) {
+			spinlock_release(&socket->lock);
+			continue;
+		}
+		descriptor = socket->descriptor;
+		has_peer = socket->has_peer || socket->connect_pending;
+		snapshot = &snapshots[count];
+		memset(snapshot, 0, sizeof(*snapshot));
+		snapshot->inode = socket->inode;
+		snapshot->uid = socket->uid;
+		spinlock_release(&socket->lock);
+		snapshot->state = socket_snapshot_state(socket);
+
+		length = sizeof(address);
+		memset(&address, 0, sizeof(address));
+		if (lwip_getsockname(descriptor,
+				      (struct sockaddr *)&address,
+				      &length) == 0)
+			socket_address_from_lwip(&address, &snapshot->local);
+		if (has_peer) {
+			length = sizeof(address);
+			memset(&address, 0, sizeof(address));
+			if (lwip_getpeername(descriptor,
+					     (struct sockaddr *)&address,
+					     &length) == 0)
+				socket_address_from_lwip(
+					&address, &snapshot->remote);
+		}
+		if (lwip_ioctl(descriptor, FIONREAD, &queued) == 0 && queued > 0)
+			snapshot->receive_queue = queued;
+		count++;
+	}
+	sleeplock_release(&socket_registry.lock);
+	return count;
+}
 
 static int socket_vfs_error(int error)
 {
@@ -465,6 +591,7 @@ static void socket_file_release(struct vfs_file *file)
 
 	if (!socket)
 		return;
+	socket_registry_remove(socket);
 	lwip_socket_thread_init();
 	if ((file->flags & VFS_OPEN_NONBLOCK) &&
 	    (socket->inherited.mask & SOCKET_INHERIT_LINGER) &&
@@ -746,8 +873,15 @@ static int64 socket_file_ioctl(struct vfs_file *file, uint64 request,
 static int socket_file_getattr(struct vfs_file *file,
 			       struct vfs_stat *stat)
 {
-	(void)file;
+	struct socket_file *socket = file ? file->private : 0;
+
+	if (!socket || !stat)
+		return VFS_ERR_INVAL;
 	memset(stat, 0, sizeof(*stat));
+	spinlock_acquire(&socket->lock);
+	stat->ino = socket->inode;
+	stat->uid = socket->uid;
+	spinlock_release(&socket->lock);
 	stat->type = VFS_INODE_SOCKET;
 	stat->mode = 0666;
 	stat->nlink = 1;
@@ -827,11 +961,13 @@ static int socket_install(int descriptor, int family, int type,
 	socket->protocol = protocol;
 	socket->has_peer = connected;
 	spinlock_init(&socket->lock, "socket options");
+	list_init(&socket->registry_node);
 	if (inherited)
 		socket->inherited = *inherited;
 	file->operations = &socket_file_operations;
 	file->private = socket;
 	file->flags = VFS_OPEN_READ | VFS_OPEN_WRITE;
+	socket_registry_add(socket);
 	if (flags & LINUX_SOCK_NONBLOCK) {
 		int error;
 

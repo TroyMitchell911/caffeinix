@@ -603,6 +603,33 @@ int vm_copy(pagedir_t old, pagedir_t new, const struct vma_set *vmas)
 	return 0;
 }
 
+static uint64 vm_user_resident_walk(pagedir_t pgdir, int level)
+{
+	uint64 pages = 0;
+	pte_t pte;
+	int index;
+
+	for (index = 0; index < PGSIZE / sizeof(pte_t); index++) {
+		pte = pgdir[index];
+		if (!(pte & PTE_V))
+			continue;
+		if (!(pte & (PTE_R | PTE_W | PTE_X))) {
+			if (level > 0)
+				pages += vm_user_resident_walk(
+					(pagedir_t)PTE2PA(pte), level - 1);
+			continue;
+		}
+		if (pte & PTE_U)
+			pages += sv39_level_size(level) / PGSIZE;
+	}
+	return pages;
+}
+
+uint64 vm_user_resident_pages(pagedir_t pgdir)
+{
+	return pgdir ? vm_user_resident_walk(pgdir, SV39_LEVEL_MAX) : 0;
+}
+
 static void vm_free_user_walk(pagedir_t pgdir, int level)
 {
 	pte_t pte;

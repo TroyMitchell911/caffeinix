@@ -176,6 +176,7 @@ thread_t thread_alloc(process_t p);
 void thread_free(thread_t t);
 void user_thread_reap(thread_t t);
 int thread_get_robust_list(int tid, uint64 *head, uint64 *length);
+int thread_last_user_tid(void);
 thread_t kernel_thread_create(const char *name, thread_func_t function,
 			      void *argument);
 void kernel_thread_reap(thread_t thread);

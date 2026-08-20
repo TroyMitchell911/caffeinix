@@ -45,5 +45,6 @@ void tty_receive_char(struct tty *tty, int character);
 void tty_set_console(struct tty *tty);
 struct tty *tty_get_console(void);
 struct tty *tty_get(int line);
+uint32 tty_device_number(const struct tty *tty);
 
 #endif

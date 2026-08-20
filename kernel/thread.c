@@ -67,6 +67,16 @@ static int kernel_tid_alloc(void)
 	return tid;
 }
 
+int thread_last_user_tid(void)
+{
+	int tid;
+
+	spinlock_acquire(&tid_lock);
+	tid = next_tid - 1;
+	spinlock_release(&tid_lock);
+	return tid;
+}
+
 /* Be called by vm_create */
 void map_kernel_stack(pagedir_t pgdir)
 {
@@ -294,6 +304,7 @@ void thread_free(thread_t t)
 	if (!found)
 		PANIC("thread_free slot");
 	p->tnums--;
+	p->retired_user_time_ns += t->sched.sum_exec_runtime;
 	if (t->state != THREAD_EXITED) {
 		if (!p->live_threads)
 			PANIC("thread_free live count");

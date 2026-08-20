@@ -393,6 +393,42 @@ static int build_linux_stack(pagedir_t pgdir, uint64 stack_top,
 	return argc;
 }
 
+static int copy_process_cmdline(char **argv, void **page_out,
+				uint32 *length_out)
+{
+	char *page;
+	uint32 length = 0;
+	int index;
+
+	page = palloc_zero();
+	if (!page)
+		return -LINUX_ENOMEM;
+	for (index = 0; argv[index]; index++) {
+		uint64 argument_length, available;
+
+		if (index >= MAXARG - 1) {
+			pfree(page);
+			return -LINUX_E2BIG;
+		}
+		if (length == PROCESS_CMDLINE_MAX)
+			continue;
+		argument_length = strlen(argv[index]) + 1;
+		available = PROCESS_CMDLINE_MAX - length;
+		if (argument_length > available) {
+			if (available > 1)
+				memmove(page + length, argv[index], available - 1);
+			page[PROCESS_CMDLINE_MAX - 1] = 0;
+			length = PROCESS_CMDLINE_MAX;
+			continue;
+		}
+		memmove(page + length, argv[index], argument_length);
+		length += argument_length;
+	}
+	*page_out = page;
+	*length_out = length;
+	return 0;
+}
+
 static int exec_elf(char *path, const char *execfn, char **argv, char **envp)
 {
 	struct elf_image executable = {0}, interpreter = {0};
@@ -400,6 +436,8 @@ static int exec_elf(char *path, const char *execfn, char **argv, char **envp)
 	struct linux_exec_layout exec;
 	struct vma_set new_vmas, old_vmas;
 	char interpreter_path[MAXPATH];
+	void *new_cmdline = 0;
+	uint32 new_cmdline_length = 0;
 	pagedir_t oldpgdir, pgdir = 0;
 	process_t process = cur_proc();
 	thread_t current = cur_thread();
@@ -412,6 +450,10 @@ static int exec_elf(char *path, const char *execfn, char **argv, char **envp)
 		return -LINUX_EAGAIN;
 	vma_set_init(&new_vmas);
 	vma_set_init(&old_vmas);
+	error = copy_process_cmdline(argv, &new_cmdline,
+				     &new_cmdline_length);
+	if (error < 0)
+		goto fail;
 	if (exec_aslr_layout_init(&aslr) < 0) {
 		error = -LINUX_EIO;
 		goto fail;
@@ -518,12 +560,16 @@ static int exec_elf(char *path, const char *execfn, char **argv, char **envp)
 			name = path_p + 1;
 	}
 	safe_strncpy(process->name, name, MAXNAME);
+	process_set_cmdline(process, new_cmdline, new_cmdline_length);
+	new_cmdline = 0;
 	process_exec_end(process, 1);
 	process_freepagedir(oldpgdir, oldsz);
 	vma_set_destroy(&old_vmas);
 	return argc;
 
 fail:
+	if (new_cmdline)
+		pfree(new_cmdline);
 	elf_image_close(&interpreter);
 	elf_image_close(&executable);
 	if (pgdir)
