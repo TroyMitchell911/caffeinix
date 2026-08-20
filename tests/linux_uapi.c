@@ -51,8 +51,12 @@ _Static_assert(LINUX_SYS_statfs == __NR_statfs, "statfs number");
 _Static_assert(LINUX_SYS_fstatfs == __NR_fstatfs, "fstatfs number");
 _Static_assert(LINUX_SYS_fchmodat == __NR_fchmodat,
 	       "fchmodat number");
+_Static_assert(LINUX_SYS_fchmod == __NR_fchmod,
+	       "fchmod number");
 _Static_assert(LINUX_SYS_fchownat == __NR_fchownat,
 	       "fchownat number");
+_Static_assert(LINUX_SYS_fchown == __NR_fchown,
+	       "fchown number");
 _Static_assert(LINUX_SYS_ppoll == __NR_ppoll, "ppoll number");
 _Static_assert(LINUX_SYS_readv == __NR_readv, "readv number");
 _Static_assert(LINUX_SYS_writev == __NR_writev, "writev number");

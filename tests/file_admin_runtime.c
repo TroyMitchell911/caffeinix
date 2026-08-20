@@ -655,6 +655,37 @@ static int check_truncate_path(void)
 	return 0;
 }
 
+static int check_descriptor_metadata(void)
+{
+	static const char payload[] = "original descriptor";
+	static const char replacement[] = "replacement path";
+	struct stat descriptor, renamed, path;
+	int fd, replacement_fd;
+
+	fd = open("/descriptor-metadata", O_CREAT | O_EXCL | O_RDWR, 0600);
+	if (fd < 0 || write(fd, payload, sizeof(payload)) != sizeof(payload) ||
+	    rename("/descriptor-metadata", "/descriptor-renamed"))
+		return -1;
+	replacement_fd = open("/descriptor-metadata",
+			      O_CREAT | O_EXCL | O_RDWR, 0600);
+	if (replacement_fd < 0 ||
+	    write(replacement_fd, replacement, sizeof(replacement)) !=
+	    sizeof(replacement) || close(replacement_fd) ||
+	    fchmod(fd, 0640) || fchown(fd, 4321, 87) || ftruncate(fd, 4) ||
+	    fstat(fd, &descriptor) || stat("/descriptor-renamed", &renamed) ||
+	    stat("/descriptor-metadata", &path) ||
+	    (descriptor.st_mode & 07777) != 0640 ||
+	    descriptor.st_uid != 4321 || descriptor.st_gid != 87 ||
+	    descriptor.st_size != 4 || renamed.st_ino != descriptor.st_ino ||
+	    renamed.st_size != descriptor.st_size ||
+	    (path.st_mode & 07777) != 0600 || path.st_uid != 0 ||
+	    path.st_gid != 0 || path.st_size != sizeof(replacement) ||
+	    close(fd) || unlink("/descriptor-renamed") ||
+	    unlink("/descriptor-metadata"))
+		return -1;
+	return 0;
+}
+
 static int check_block_device(void)
 {
 	struct stat stat_buffer;
@@ -941,6 +972,8 @@ int main(void)
 		return fail("existing directory mkdir");
 	if (check_truncate_path())
 		return fail("truncate path");
+	if (check_descriptor_metadata())
+		return fail("descriptor metadata");
 	if (check_metadata_alias_refresh())
 		return fail("metadata alias refresh");
 	if (check_metadata_authorization_race())
