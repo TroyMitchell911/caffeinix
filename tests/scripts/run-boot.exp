@@ -158,6 +158,27 @@ expect {
 	eof { abort_test "QEMU exited after system identity test" }
 }
 
+send -- "/bin/timestamp-runtime\r"
+expect {
+	-re {\r?\nTIMESTAMP_RUNTIME_OK} {}
+	-re {TIMESTAMP_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "inode timestamp test reported failure"
+	}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic in inode timestamp test"
+	}
+	timeout { abort_with_dump "inode timestamp test timeout" }
+	eof { abort_test "QEMU exited during inode timestamp test" }
+}
+expect {
+	-re {\r?\n# $} {}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic after inode timestamp test"
+	}
+	timeout { abort_test "shell prompt timeout" }
+	eof { abort_test "QEMU exited after inode timestamp test" }
+}
+
 send -- "/bin/aslr-runtime\r"
 expect {
 	-re {\r?\nASLR_RUNTIME_OK} {}

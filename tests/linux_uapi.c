@@ -56,6 +56,8 @@ _Static_assert(LINUX_SYS_readlinkat == __NR_readlinkat,
 	       "readlinkat number");
 _Static_assert(LINUX_SYS_sync == __NR_sync, "sync number");
 _Static_assert(LINUX_SYS_fsync == __NR_fsync, "fsync number");
+_Static_assert(LINUX_SYS_utimensat == __NR_utimensat,
+	       "utimensat number");
 _Static_assert(LINUX_SYS_umask == __NR_umask, "umask number");
 _Static_assert(LINUX_SYS_rt_sigaction == __NR_rt_sigaction,
 	       "rt_sigaction number");
@@ -132,6 +134,10 @@ _Static_assert(offsetof(struct linux_stat, size) ==
 	       offsetof(struct stat, st_size), "stat size offset");
 _Static_assert(offsetof(struct linux_stat, blocks) ==
 	       offsetof(struct stat, st_blocks), "stat blocks offset");
+_Static_assert(offsetof(struct linux_stat, atime) ==
+	       offsetof(struct stat, st_atime), "stat atime offset");
+_Static_assert(offsetof(struct linux_stat, mtime) ==
+	       offsetof(struct stat, st_mtime), "stat mtime offset");
 _Static_assert(sizeof(struct linux_sigaction) == sizeof(struct sigaction),
 	       "sigaction size");
 _Static_assert(LINUX_SIGSET_SIZE == sizeof(sigset_t), "sigset size");

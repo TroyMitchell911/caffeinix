@@ -321,6 +321,11 @@ run_boot_smoke()
 		echo "userspace system identity marker is missing" >&2
 		exit 1
 	fi
+	if [ "$(awk '$0 == "TIMESTAMP_RUNTIME_OK" { count++ }
+		END { print count + 0 }' "$clean")" -ne 1 ]; then
+		echo "inode timestamp marker is missing" >&2
+		exit 1
+	fi
 	if [ "$(awk '$0 == "ASLR_RUNTIME_OK" { count++ }
 		END { print count + 0 }' "$clean")" -ne 1 ]; then
 		echo "address randomization marker is missing" >&2
@@ -494,6 +499,7 @@ for marker in \
 	PROCESS_GROUP_OK \
 	TIME_RUNTIME_OK \
 	SYSTEM_RUNTIME_OK \
+	TIMESTAMP_RUNTIME_OK \
 	JOB_FOREGROUND_STATUS=130 \
 	JOB_STOPPED_OK \
 	JOB_BACKGROUND_OK \

@@ -145,6 +145,9 @@ The guest selftest covers:
   execution of the static recovery binary;
 - ext4 and tmpfs links, sparse files, rename, directory iteration, truncate,
   fsync, and open-unlink lifetime rules;
+- ext4 and tmpfs inode timestamps, nanosecond persistence, automatic access
+  and modification updates, `utimensat`, `futimens`, `UTIME_OMIT`, and
+  no-follow symlink updates;
 - symlink metadata through `lstat`;
 - FAT open-file restrictions, unsupported Unix links, overwrite rename, and
   UTF-8 long names;
