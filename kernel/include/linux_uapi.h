@@ -294,6 +294,24 @@ struct linux_sockaddr_in {
 	uint8 zero[8];
 };
 
+#define LINUX_IFNAMSIZ 16
+
+struct linux_ifreq {
+	char name[LINUX_IFNAMSIZ];
+	union {
+		struct linux_sockaddr address;
+		int16 flags;
+		int32 value;
+		uint8 padding[24];
+	} data;
+};
+
+struct linux_ifconf {
+	int32 length;
+	uint32 padding;
+	uint64 buffer;
+};
+
 struct linux_msghdr {
 	uint64 name;
 	uint32 name_length;
@@ -388,6 +406,25 @@ struct linux_linger {
 
 #define LINUX_FIONREAD              0x541b
 #define LINUX_FIONBIO               0x5421
+
+#define LINUX_SIOCGIFNAME           0x8910
+#define LINUX_SIOCGIFCONF           0x8912
+#define LINUX_SIOCGIFFLAGS          0x8913
+#define LINUX_SIOCGIFADDR           0x8915
+#define LINUX_SIOCGIFBRDADDR        0x8919
+#define LINUX_SIOCGIFNETMASK        0x891b
+#define LINUX_SIOCGIFMETRIC         0x891d
+#define LINUX_SIOCGIFMTU            0x8921
+#define LINUX_SIOCGIFHWADDR         0x8927
+#define LINUX_SIOCGIFINDEX          0x8933
+
+#define LINUX_IFF_UP                0x0001
+#define LINUX_IFF_BROADCAST         0x0002
+#define LINUX_IFF_LOOPBACK          0x0008
+#define LINUX_IFF_RUNNING           0x0040
+
+#define LINUX_ARPHRD_ETHER               1
+#define LINUX_ARPHRD_LOOPBACK          772
 
 #define LINUX_BLKSSZGET             0x1268
 #define LINUX_BLKGETSIZE64      0x80081272
@@ -744,6 +781,12 @@ _Static_assert(sizeof(struct linux_pollfd) == 8,
 	       "Linux pollfd layout changed");
 _Static_assert(sizeof(struct linux_sockaddr_in) == 16,
 	       "Linux sockaddr_in layout changed");
+_Static_assert(sizeof(struct linux_ifreq) == 40,
+	       "Linux ifreq layout changed");
+_Static_assert(sizeof(struct linux_ifconf) == 16,
+	       "Linux ifconf layout changed");
+_Static_assert(__builtin_offsetof(struct linux_ifconf, buffer) == 8,
+	       "Linux ifconf buffer offset changed");
 _Static_assert(sizeof(struct linux_msghdr) == 56,
 	       "Linux msghdr layout changed");
 _Static_assert(sizeof(struct linux_stat) == 128,

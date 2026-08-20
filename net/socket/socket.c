@@ -838,6 +838,156 @@ static int64 socket_file_writev(struct vfs_file *file, int user_source,
 	return result;
 }
 
+static void socket_interface_address(struct linux_ifreq *request,
+				     uint32 address)
+{
+	struct linux_sockaddr_in *socket_address =
+		(void *)&request->data.address;
+
+	memset(&request->data, 0, sizeof(request->data));
+	socket_address->family = LINUX_AF_INET;
+	socket_address->address = address;
+}
+
+static int socket_snapshot_interfaces(
+	struct network_interface_snapshot *interfaces, uint32 *count)
+{
+	if (network_stack_snapshot_interfaces(interfaces, NET_DEVICE_MAX,
+					      count) < 0)
+		return VFS_ERR_IO;
+	return VFS_OK;
+}
+
+static struct network_interface_snapshot *socket_find_interface(
+	struct network_interface_snapshot *interfaces, uint32 count,
+	const char *name)
+{
+	uint32 index;
+
+	for (index = 0; index < count; index++) {
+		if (!strcmp(interfaces[index].name, name))
+			return &interfaces[index];
+	}
+	return 0;
+}
+
+static int64 socket_interface_conf(uint64 argument)
+{
+	struct network_interface_snapshot interfaces[NET_DEVICE_MAX];
+	struct linux_ifconf configuration;
+	uint32 capacity, copied = 0, count, index;
+
+	if (either_copyin(&configuration, 1, argument,
+			  sizeof(configuration)) < 0)
+		return VFS_ERR_FAULT;
+	if (configuration.length < 0)
+		return VFS_ERR_INVAL;
+	if (socket_snapshot_interfaces(interfaces, &count) < 0)
+		return VFS_ERR_IO;
+	capacity = configuration.length / sizeof(struct linux_ifreq);
+	for (index = 0; index < count; index++) {
+		struct linux_ifreq request;
+
+		if (!interfaces[index].ipv4_address)
+			continue;
+		if (!configuration.buffer) {
+			copied++;
+			continue;
+		}
+		if (copied >= capacity)
+			break;
+		memset(&request, 0, sizeof(request));
+		safe_strncpy(request.name, interfaces[index].name,
+			     sizeof(request.name));
+		socket_interface_address(&request,
+					 interfaces[index].ipv4_address);
+		if (either_copyout(1, configuration.buffer +
+				   copied * sizeof(request), &request,
+				   sizeof(request)) < 0)
+			return VFS_ERR_FAULT;
+		copied++;
+	}
+	configuration.length = copied * sizeof(struct linux_ifreq);
+	if (either_copyout(1, argument, &configuration,
+			   sizeof(configuration)) < 0)
+		return VFS_ERR_FAULT;
+	return VFS_OK;
+}
+
+static int64 socket_interface_ioctl(uint64 command, uint64 argument)
+{
+	struct network_interface_snapshot interfaces[NET_DEVICE_MAX];
+	struct network_interface_snapshot *interface = 0;
+	struct linux_ifreq request;
+	uint32 count, index;
+
+	if (command == LINUX_SIOCGIFCONF)
+		return socket_interface_conf(argument);
+	if (either_copyin(&request, 1, argument, sizeof(request)) < 0)
+		return VFS_ERR_FAULT;
+	if (socket_snapshot_interfaces(interfaces, &count) < 0)
+		return VFS_ERR_IO;
+	if (command == LINUX_SIOCGIFNAME) {
+		for (index = 0; index < count; index++) {
+			if (interfaces[index].index ==
+			    (uint32)request.data.value) {
+				interface = &interfaces[index];
+				break;
+			}
+		}
+	} else {
+		request.name[LINUX_IFNAMSIZ - 1] = 0;
+		interface = socket_find_interface(interfaces, count,
+						  request.name);
+	}
+	if (!interface)
+		return VFS_ERR_NODEV;
+
+	if (command == LINUX_SIOCGIFNAME) {
+		memset(request.name, 0, sizeof(request.name));
+		safe_strncpy(request.name, interface->name,
+			     sizeof(request.name));
+	} else if (command == LINUX_SIOCGIFFLAGS) {
+		request.data.flags =
+			(interface->up ? LINUX_IFF_UP : 0) |
+			(interface->running ? LINUX_IFF_RUNNING : 0) |
+			(interface->loopback ? LINUX_IFF_LOOPBACK : 0) |
+			(interface->broadcast ? LINUX_IFF_BROADCAST : 0);
+	} else if (command == LINUX_SIOCGIFADDR) {
+		if (!interface->ipv4_address)
+			return VFS_ERR_ADDRNOTAVAIL;
+		socket_interface_address(&request, interface->ipv4_address);
+	} else if (command == LINUX_SIOCGIFBRDADDR) {
+		if (!interface->broadcast || !interface->ipv4_address ||
+		    !interface->ipv4_netmask)
+			return VFS_ERR_ADDRNOTAVAIL;
+		socket_interface_address(&request,
+			(interface->ipv4_address & interface->ipv4_netmask) |
+			~interface->ipv4_netmask);
+	} else if (command == LINUX_SIOCGIFNETMASK) {
+		if (!interface->ipv4_netmask)
+			return VFS_ERR_ADDRNOTAVAIL;
+		socket_interface_address(&request, interface->ipv4_netmask);
+	} else if (command == LINUX_SIOCGIFMETRIC) {
+		request.data.value = 0;
+	} else if (command == LINUX_SIOCGIFMTU) {
+		request.data.value = interface->mtu;
+	} else if (command == LINUX_SIOCGIFHWADDR) {
+		memset(&request.data, 0, sizeof(request.data));
+		request.data.address.family = interface->loopback ?
+			LINUX_ARPHRD_LOOPBACK : LINUX_ARPHRD_ETHER;
+		memmove(request.data.address.data, interface->address,
+			NET_ETH_ADDRESS_LENGTH);
+	} else if (command == LINUX_SIOCGIFINDEX) {
+		request.data.value = interface->index;
+	} else {
+		return VFS_ERR_NOTTY;
+	}
+	if (either_copyout(1, argument, &request, sizeof(request)) < 0)
+		return VFS_ERR_FAULT;
+	return VFS_OK;
+}
+
 static int64 socket_file_ioctl(struct vfs_file *file, uint64 request,
 			       uint64 argument)
 {
@@ -867,6 +1017,9 @@ static int64 socket_file_ioctl(struct vfs_file *file, uint64 request,
 			return VFS_ERR_FAULT;
 		return 0;
 	}
+	if (request >= LINUX_SIOCGIFNAME &&
+	    request <= LINUX_SIOCGIFINDEX)
+		return socket_interface_ioctl(request, argument);
 	return VFS_ERR_NOTTY;
 }
 

@@ -374,6 +374,85 @@ void network_stack_init(void)
 	tcpip_init(lwip_tcpip_ready, 0);
 }
 
+struct lwip_interface_snapshot_request {
+	struct network_interface_snapshot *snapshots;
+	uint32 capacity;
+	uint32 count;
+};
+
+static void lwip_snapshot_interfaces(void *argument)
+{
+	struct lwip_interface_snapshot_request *request = argument;
+	uint32 adapter_index;
+
+	for (adapter_index = 0; adapter_index < NET_DEVICE_MAX;
+	     adapter_index++) {
+		typeof(lwip_network.adapters[0]) *adapter =
+			&lwip_network.adapters[adapter_index];
+		struct network_interface_snapshot *snapshot;
+		struct net_device *device, *held;
+		struct netif *interface;
+		uint32 device_index;
+
+		device = __atomic_load_n(&adapter->device, __ATOMIC_ACQUIRE);
+		if (!device || request->count >= request->capacity)
+			continue;
+		device_index = __atomic_load_n(&device->index,
+					       __ATOMIC_ACQUIRE);
+		held = net_device_get(device_index);
+		if (held != device) {
+			if (held)
+				net_device_put(held);
+			continue;
+		}
+		interface = &adapter->interface;
+		snapshot = &request->snapshots[request->count];
+		memset(snapshot, 0, sizeof(*snapshot));
+		spinlock_acquire(&device->lock);
+		safe_strncpy(snapshot->name, device->name,
+			     sizeof(snapshot->name));
+		memmove(snapshot->address, device->address,
+			NET_ETH_ADDRESS_LENGTH);
+		snapshot->index = device->index;
+		snapshot->mtu = device->mtu;
+		snapshot->up = device->up && netif_is_up(interface);
+		snapshot->running = device->carrier &&
+			netif_is_link_up(interface);
+		snapshot->loopback = device->loopback;
+		snapshot->broadcast = !device->loopback;
+		spinlock_release(&device->lock);
+		snapshot->ipv4_address =
+			ip4_addr_get_u32(netif_ip4_addr(interface));
+		snapshot->ipv4_netmask =
+			ip4_addr_get_u32(netif_ip4_netmask(interface));
+		snapshot->ipv4_gateway =
+			ip4_addr_get_u32(netif_ip4_gw(interface));
+		request->count++;
+		net_device_put(held);
+	}
+}
+
+int network_stack_snapshot_interfaces(
+	struct network_interface_snapshot *snapshots, uint32 capacity,
+	uint32 *count)
+{
+	struct lwip_interface_snapshot_request request = {
+		.snapshots = snapshots,
+		.capacity = capacity,
+	};
+
+	if (!snapshots || !capacity || !count ||
+	    !__atomic_load_n(&lwip_network.tcpip_thread, __ATOMIC_ACQUIRE))
+		return -1;
+	if (cur_thread() == lwip_network.tcpip_thread)
+		lwip_snapshot_interfaces(&request);
+	else if (tcpip_callback_wait(lwip_snapshot_interfaces, &request) !=
+		 ERR_OK)
+		return -1;
+	*count = request.count;
+	return 0;
+}
+
 int network_stack_address_is_broadcast(uint32 address)
 {
 	ip4_addr_t destination;

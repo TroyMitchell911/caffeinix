@@ -6,6 +6,7 @@
 #include <loadavg.h>
 #include <mystring.h>
 #include <netdevice.h>
+#include <network_stack.h>
 #include <palloc.h>
 #include <printf.h>
 #include <process.h>
@@ -38,6 +39,7 @@ enum procfs_kind {
 	PROCFS_LOADAVG,
 	PROCFS_NET_DIRECTORY,
 	PROCFS_NET_DEV,
+	PROCFS_NET_ROUTE,
 	PROCFS_NET_TCP,
 	PROCFS_NET_UDP,
 };
@@ -238,6 +240,7 @@ static int procfs_lookup_net(struct vfs_inode *directory,
 		enum procfs_kind kind;
 	} entries[] = {
 		{ "dev", PROCFS_NET_DEV },
+		{ "route", PROCFS_NET_ROUTE },
 		{ "tcp", PROCFS_NET_TCP },
 		{ "udp", PROCFS_NET_UDP },
 	};
@@ -505,6 +508,41 @@ static void procfs_build_net_dev(struct procfs_buffer *buffer)
 	}
 }
 
+static int procfs_build_net_route(struct procfs_buffer *buffer)
+{
+	struct network_interface_snapshot interfaces[NET_DEVICE_MAX];
+	uint32 count, index;
+
+	if (network_stack_snapshot_interfaces(interfaces,
+		NELEM(interfaces), &count) < 0)
+		return VFS_ERR_IO;
+	procfs_printf(buffer,
+		"Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\t"
+		"Mask\t\tMTU\tWindow\tIRTT\n");
+	for (index = 0; index < count; index++) {
+		struct network_interface_snapshot *interface =
+			&interfaces[index];
+		uint32 destination;
+
+		if (!interface->up || !interface->ipv4_address ||
+		    !interface->ipv4_netmask)
+			continue;
+		if (!interface->loopback && interface->ipv4_gateway)
+			procfs_printf(buffer,
+				"%s\t00000000\t%08x\t0003\t0\t0\t0\t"
+				"00000000\t0\t0\t0\n",
+				interface->name, interface->ipv4_gateway);
+		destination = interface->ipv4_address &
+			interface->ipv4_netmask;
+		procfs_printf(buffer,
+			"%s\t%08x\t00000000\t0001\t0\t0\t0\t%08x\t"
+			"0\t0\t0\n",
+			interface->name, destination,
+			interface->ipv4_netmask);
+	}
+	return VFS_OK;
+}
+
 static int procfs_build_net_transport(struct procfs_buffer *buffer,
 				      enum procfs_kind kind)
 {
@@ -607,6 +645,8 @@ static int procfs_file_open(struct vfs_inode *inode, struct vfs_file *file)
 		procfs_build_loadavg(&buffer);
 	} else if (node->kind == PROCFS_NET_DEV) {
 		procfs_build_net_dev(&buffer);
+	} else if (node->kind == PROCFS_NET_ROUTE) {
+		status = procfs_build_net_route(&buffer);
 	} else if (node->kind == PROCFS_NET_TCP ||
 		   node->kind == PROCFS_NET_UDP) {
 		status = procfs_build_net_transport(&buffer, node->kind);
@@ -723,11 +763,11 @@ static int procfs_directory_readdir(struct vfs_file *file,
 		PROCFS_PID_STATUS, PROCFS_PID_CMDLINE,
 	};
 	static const char *const net_names[] = {
-		".", "..", "dev", "tcp", "udp",
+		".", "..", "dev", "route", "tcp", "udp",
 	};
 	static const uint8 net_types[] = {
 		VFS_DT_DIR, VFS_DT_DIR, VFS_DT_REGULAR, VFS_DT_REGULAR,
-		VFS_DT_REGULAR,
+		VFS_DT_REGULAR, VFS_DT_REGULAR,
 	};
 	static const enum procfs_kind net_kinds[] = {
 		PROCFS_NET_DIRECTORY, PROCFS_ROOT, PROCFS_NET_DEV,
