@@ -422,6 +422,7 @@ int64 vfs_writev(int fd, int user_source,
 		 uint32 flags);
 int vfs_pipe(uint32 file_flags, uint8 fd_flags, int descriptors[2]);
 int vfs_ftruncate(int fd, uint64 size);
+int vfs_truncate(const char *path, uint64 size);
 int vfs_fallocate(int fd, uint64 offset, uint64 length);
 int64 vfs_ioctl(int fd, uint64 request, uint64 argument);
 int vfs_seek(int fd, int64 offset, int whence, uint64 *result);

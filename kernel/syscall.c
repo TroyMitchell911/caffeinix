@@ -330,6 +330,7 @@ extern uint64 sys_linux_recvmsg(void);
 extern uint64 sys_linux_accept4(void);
 extern uint64 sys_linux_riscv_flush_icache(void);
 extern uint64 sys_linux_ftruncate(void);
+extern uint64 sys_linux_truncate(void);
 extern uint64 sys_linux_fallocate(void);
 extern uint64 sys_linux_statfs(void);
 extern uint64 sys_linux_fstatfs(void);
@@ -351,6 +352,7 @@ static syscall_t linux_syscalls[LINUX_SYS_pwritev2 + 1] = {
 	[LINUX_SYS_linkat] = sys_linux_linkat,
 	[LINUX_SYS_umount2] = sys_linux_umount2,
 	[LINUX_SYS_mount] = sys_linux_mount,
+	[LINUX_SYS_truncate] = sys_linux_truncate,
 	[LINUX_SYS_ftruncate] = sys_linux_ftruncate,
 	[LINUX_SYS_fallocate] = sys_linux_fallocate,
 	[LINUX_SYS_statfs] = sys_linux_statfs,

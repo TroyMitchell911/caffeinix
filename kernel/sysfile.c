@@ -240,6 +240,23 @@ uint64 sys_linux_ftruncate(void)
 	return result < 0 ? linux_error(result) : 0;
 }
 
+uint64 sys_linux_truncate(void)
+{
+	char path[MAXPATH];
+	uint64 length;
+	int64 signed_length;
+	int result;
+
+	argaddr(1, &length);
+	signed_length = (int64)length;
+	if (signed_length < 0)
+		return -LINUX_EINVAL;
+	if (argstr(0, path, sizeof(path)) < 0)
+		return -LINUX_EFAULT;
+	result = vfs_truncate(path, signed_length);
+	return result < 0 ? linux_error(result) : 0;
+}
+
 uint64 sys_linux_fallocate(void)
 {
 	uint64 offset, length;

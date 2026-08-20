@@ -18,6 +18,7 @@
 #define LINUX_SYS_mount              40
 #define LINUX_SYS_statfs             43
 #define LINUX_SYS_fstatfs            44
+#define LINUX_SYS_truncate           45
 #define LINUX_SYS_ftruncate          46
 #define LINUX_SYS_fallocate          47
 #define LINUX_SYS_faccessat          48

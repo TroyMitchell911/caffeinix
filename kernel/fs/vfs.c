@@ -344,6 +344,39 @@ int vfs_file_mark_shared_dirty(struct vfs_file *file, uint64 offset)
 	return result < 0 ? result : page_cache_mark_dirty(file, offset);
 }
 
+static int vfs_truncate_inode(struct vfs_inode *inode, uint64 size)
+{
+	struct vfs_stat stat;
+	sleeplock_t lock;
+	int result;
+
+	if (!inode || inode->type != VFS_INODE_REGULAR ||
+	    !inode->operations || !inode->operations->truncate)
+		return VFS_ERR_INVAL;
+	result = vfs_inode_access_acquire(inode, VFS_INODE_ACCESS_WRITE);
+	if (result < 0)
+		return result;
+	lock = vfs_inode_write_lock(inode);
+	if (lock)
+		sleeplock_acquire(lock);
+	if (vfs_inode_stat(inode, &stat) < 0)
+		result = VFS_ERR_IO;
+	else if (page_cache_writeback_inode_locked(inode) < 0)
+		result = VFS_ERR_IO;
+	else {
+		result = stat.size == size ? VFS_OK :
+			vfs_inode_remove_privileges(inode);
+		if (result >= 0)
+			result = inode->operations->truncate(inode, size);
+	}
+	if (result >= 0 && mmap_file_truncate(inode, stat.size, size) < 0)
+		result = VFS_ERR_IO;
+	if (lock)
+		sleeplock_release(lock);
+	vfs_inode_access_release(inode, VFS_INODE_ACCESS_WRITE);
+	return result;
+}
+
 void vfs_init(void)
 {
 	spinlock_init(&vfs.lock, "vfs");
@@ -1509,7 +1542,6 @@ int vfs_open_file(const char *name, uint32 flags, uint32 mode,
 {
 	struct vfs_stat stat;
 	struct vfs_path path;
-	sleeplock_t lock;
 	file_t file;
 	uint8 inode_access = 0;
 	uint32 access = 0;
@@ -1584,28 +1616,7 @@ int vfs_open_file(const char *name, uint32 flags, uint32 mode,
 	file->access_ref = inode_access ? 1 : 0;
 	if ((flags & VFS_OPEN_TRUNCATE) &&
 	    stat.type == VFS_INODE_REGULAR) {
-		if (!path.dentry->inode->operations ||
-		    !path.dentry->inode->operations->truncate) {
-			status = VFS_ERR_NOTSUPP;
-			goto fail_file;
-		}
-		lock = vfs_inode_write_lock(path.dentry->inode);
-		if (lock)
-			sleeplock_acquire(lock);
-		status = vfs_inode_stat(path.dentry->inode, &stat);
-		if (status < 0)
-			status = VFS_ERR_IO;
-		else if (page_cache_writeback_inode_locked(
-				 path.dentry->inode) < 0)
-			status = VFS_ERR_IO;
-		else
-			status = path.dentry->inode->operations->truncate(
-				path.dentry->inode, 0);
-		if (status >= 0 &&
-		    mmap_file_truncate(path.dentry->inode, stat.size, 0) < 0)
-			status = VFS_ERR_IO;
-		if (lock)
-			sleeplock_release(lock);
+		status = vfs_truncate_inode(path.dentry->inode, 0);
 		if (status < 0)
 			goto fail_file;
 		stat.size = 0;
@@ -2251,8 +2262,6 @@ out_file:
 int vfs_ftruncate(int fd, uint64 size)
 {
 	struct vfs_inode *inode;
-	struct vfs_stat stat;
-	sleeplock_t lock;
 	file_t file;
 	int result;
 
@@ -2263,32 +2272,26 @@ int vfs_ftruncate(int fd, uint64 size)
 		result = VFS_ERR_BADF;
 		goto out;
 	}
-	if (!file->path.dentry ||
-	    !(inode = file->path.dentry->inode) ||
-	    inode->type != VFS_INODE_REGULAR || !inode->operations ||
-	    !inode->operations->truncate) {
-		result = VFS_ERR_INVAL;
-		goto out;
-	}
-	lock = vfs_regular_write_lock(file);
-	if (lock)
-		sleeplock_acquire(lock);
-	if (vfs_inode_stat(inode, &stat) < 0)
-		result = VFS_ERR_IO;
-	else if (page_cache_writeback_inode_locked(inode) < 0)
-		result = VFS_ERR_IO;
-	else {
-		result = stat.size == size ? VFS_OK :
-			vfs_inode_remove_privileges(inode);
-		if (result >= 0)
-			result = inode->operations->truncate(inode, size);
-	}
-	if (result >= 0 && mmap_file_truncate(inode, stat.size, size) < 0)
-		result = VFS_ERR_IO;
-	if (lock)
-		sleeplock_release(lock);
+	inode = file->path.dentry ? file->path.dentry->inode : 0;
+	result = vfs_truncate_inode(inode, size);
 out:
 	vfs_file_put(file);
+	return result;
+}
+
+int vfs_truncate(const char *path, uint64 size)
+{
+	struct vfs_path resolved;
+	int result;
+
+	result = vfs_walk(path, 0, &resolved, 0);
+	if (result < 0)
+		return result;
+	result = vfs_inode_permission(resolved.dentry->inode,
+				      VFS_ACCESS_WRITE);
+	if (result >= 0)
+		result = vfs_truncate_inode(resolved.dentry->inode, size);
+	vfs_path_put(&resolved);
 	return result;
 }
 
