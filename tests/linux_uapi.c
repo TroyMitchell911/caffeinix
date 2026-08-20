@@ -23,9 +23,11 @@
 #include <linux/membarrier.h>
 #include <linux/random.h>
 #include <linux/sched.h>
+#include <linux/sysinfo.h>
 #include <linux/tcp.h>
 #include <linux/time.h>
 #include <linux/time_types.h>
+#include <linux/utsname.h>
 
 _Static_assert(LINUX_SYS_getcwd == __NR_getcwd, "getcwd number");
 _Static_assert(LINUX_SYS_openat == __NR_openat, "openat number");
@@ -94,6 +96,10 @@ _Static_assert(LINUX_SYS_setitimer == __NR_setitimer,
 	       "setitimer number");
 _Static_assert(LINUX_SYS_gettimeofday == __NR_gettimeofday,
 	       "gettimeofday number");
+_Static_assert(LINUX_SYS_sched_getaffinity == __NR_sched_getaffinity,
+	       "sched_getaffinity number");
+_Static_assert(LINUX_SYS_uname == __NR_uname, "uname number");
+_Static_assert(LINUX_SYS_sysinfo == __NR_sysinfo, "sysinfo number");
 _Static_assert(LINUX_SYS_clone == __NR_clone, "clone number");
 _Static_assert(LINUX_SYS_futex == __NR_futex, "futex number");
 _Static_assert(LINUX_SYS_set_robust_list == __NR_set_robust_list,
@@ -173,6 +179,14 @@ _Static_assert(sizeof(struct linux_itimerval) == sizeof(struct itimerval),
 _Static_assert(offsetof(struct linux_itimerval, value) ==
 	       offsetof(struct itimerval, it_value),
 	       "itimerval value offset");
+_Static_assert(sizeof(struct linux_utsname) == sizeof(struct new_utsname),
+	       "utsname size");
+_Static_assert(sizeof(struct linux_sysinfo) == sizeof(struct sysinfo),
+	       "sysinfo size");
+_Static_assert(offsetof(struct linux_sysinfo, totalram) ==
+	       offsetof(struct sysinfo, totalram), "sysinfo totalram offset");
+_Static_assert(offsetof(struct linux_sysinfo, mem_unit) ==
+	       offsetof(struct sysinfo, mem_unit), "sysinfo mem_unit offset");
 _Static_assert(LINUX_TIMER_ABSTIME == TIMER_ABSTIME,
 	       "absolute timer flag");
 _Static_assert(sizeof(struct linux_pollfd) == sizeof(struct pollfd),

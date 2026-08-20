@@ -514,6 +514,12 @@ done
 
 "$musl_cc" \
 	-static -march=rv64gc -mabi=lp64d \
+	-O2 -Wall -Wextra -Werror -pthread \
+	"$tests_dir/system_runtime.c" \
+	-o "$staging/bin/system-runtime"
+
+"$musl_cc" \
+	-static -march=rv64gc -mabi=lp64d \
 	-O2 -Wall -Wextra -Werror \
 	"$tests_dir/memory_runtime.c" \
 	-o "$staging/bin/memory-static"

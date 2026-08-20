@@ -225,6 +225,18 @@ expect {
 }
 expect_prompt
 
+send -- "/bin/system-runtime $env(QEMU_CPUS)\r"
+expect {
+	-re {\r?\nSYSTEM_RUNTIME_OK} {}
+	-re {SYSTEM_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "system identity test reported failure"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in system identity test" }
+	timeout { abort_test "system identity test timeout" }
+	eof { abort_test "QEMU exited during system identity test" }
+}
+expect_prompt
+
 send -- "/bin/job-control-runtime foreground\r"
 expect {
 	-re {JOB_FOREGROUND_READY} {}
