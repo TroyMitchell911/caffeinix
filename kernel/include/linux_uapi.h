@@ -223,6 +223,25 @@ struct linux_timeval {
 	int64 microseconds;
 };
 
+struct linux_rusage {
+	struct linux_timeval user_time;
+	struct linux_timeval system_time;
+	int64 max_resident_set;
+	int64 shared_memory_size;
+	int64 unshared_data_size;
+	int64 unshared_stack_size;
+	int64 minor_faults;
+	int64 major_faults;
+	int64 swaps;
+	int64 block_inputs;
+	int64 block_outputs;
+	int64 messages_sent;
+	int64 messages_received;
+	int64 signals;
+	int64 voluntary_context_switches;
+	int64 involuntary_context_switches;
+};
+
 struct linux_timezone {
 	int32 minutes_west;
 	int32 dst_time;

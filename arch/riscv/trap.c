@@ -128,6 +128,8 @@ void user_trap_entry(void)
         uint64 cause = scause_r();
 	uint64 trap_value = stval_r();
 
+	scheduler_account_kernel_enter();
+
         if((sstatus_r() & SSTATUS_SPP)) {
                 PANIC("Not from user mode");
         }
@@ -244,7 +246,8 @@ void user_trap_ret(void)
 
         satp = MAKE_SATP(p->pagetable);
 
-        trampoline_userret = TRAMPOLINE + (user_ret - trampoline);
+	trampoline_userret = TRAMPOLINE + (user_ret - trampoline);
+	scheduler_account_user_enter();
 	/* Call user_ret with this hart's current user trapframe mapping. */
 	((void (*)(uint64, uint64))trampoline_userret)(
 		satp, TRAPFRAME(cur_thread()->id_p));

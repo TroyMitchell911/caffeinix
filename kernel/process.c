@@ -39,7 +39,8 @@ static struct spinlock wait_lock;
 // struct process proc[NPROC];
 struct list proc;
 static process_t first;
-static volatile uint64 retired_process_time_ns;
+static volatile uint64 retired_process_user_time_ns;
+static volatile uint64 retired_process_system_time_ns;
 static volatile uint64 total_user_tasks;
 
 static void process_notify_parent_locked(process_t child, int code,
@@ -390,8 +391,10 @@ static void process_free(process_t p)
                 thread_free(thread);
                 spinlock_release(&thread->lock);
         }
-	__atomic_add_fetch(&retired_process_time_ns,
+	__atomic_add_fetch(&retired_process_user_time_ns,
 			   p->retired_user_time_ns, __ATOMIC_RELAXED);
+	__atomic_add_fetch(&retired_process_system_time_ns,
+			   p->retired_system_time_ns, __ATOMIC_RELAXED);
         list_remove(&p->all_tag);
         spinlock_release(&p->lock);
         free(p);
@@ -407,7 +410,8 @@ void process_init(void)
 	/* Init the spinlock */
 	spinlock_init(&wait_lock, "wait_lock");
 	list_init(&proc);
-	retired_process_time_ns = 0;
+	retired_process_user_time_ns = 0;
+	retired_process_system_time_ns = 0;
 	total_user_tasks = 0;
 }
 
@@ -561,26 +565,13 @@ uint32 process_task_count(void)
 	return count > 0xffffffffU ? 0xffffffffU : count;
 }
 
-static uint64 process_thread_runtime_locked(thread_t thread, uint64 now)
-{
-	uint64 runtime = thread->sched.sum_exec_runtime;
-
-	if (thread->state == THREAD_RUNNING && thread->sched.exec_start &&
-	    now > thread->sched.exec_start) {
-		uint64 delta = now - thread->sched.exec_start;
-
-		runtime = runtime > ~(uint64)0 - delta ?
-			~(uint64)0 : runtime + delta;
-	}
-	return runtime;
-}
-
 static void process_snapshot_locked(process_t process,
 				    struct process_snapshot *snapshot,
 				    uint64 now)
 {
 	uint64 caught = 0, ignored = 0;
-	uint64 runtime = process->retired_user_time_ns;
+	uint64 system_runtime = process->retired_system_time_ns;
+	uint64 user_runtime = process->retired_user_time_ns;
 	thread_t thread;
 	int index;
 
@@ -627,7 +618,13 @@ static void process_snapshot_locked(process_t process,
 		spinlock_acquire(&thread->lock);
 		if (thread->tid == process->pid)
 			snapshot->nice = thread->sched.nice;
-		runtime += process_thread_runtime_locked(thread, now);
+		{
+			uint64 system, user;
+
+			scheduler_thread_times(thread, now, &user, &system);
+			user_runtime += user;
+			system_runtime += system;
+		}
 		if (thread->tid == process->pid) {
 			snapshot->signal_pending = thread->signal_pending.bits;
 			snapshot->signal_blocked = thread->signal_mask;
@@ -650,7 +647,8 @@ static void process_snapshot_locked(process_t process,
 		snapshot->state = 'D';
 	else
 		snapshot->state = 'S';
-	snapshot->user_time_ns = runtime;
+	snapshot->user_time_ns = user_runtime;
+	snapshot->system_time_ns = system_runtime;
 }
 
 int process_snapshot_pid(int pid, struct process_snapshot *snapshot,
@@ -729,7 +727,9 @@ void process_snapshot_system(struct process_system_snapshot *snapshot)
 	memset(snapshot, 0, sizeof(*snapshot));
 	spinlock_acquire(&wait_lock);
 	snapshot->user_time_ns = __atomic_load_n(
-		&retired_process_time_ns, __ATOMIC_RELAXED);
+		&retired_process_user_time_ns, __ATOMIC_RELAXED);
+	snapshot->system_time_ns = __atomic_load_n(
+		&retired_process_system_time_ns, __ATOMIC_RELAXED);
 	for (entry = proc.next; entry != &proc; entry = entry->next) {
 		process = list_entry(entry, struct process, all_tag);
 		spinlock_acquire(&process->lock);
@@ -1212,15 +1212,74 @@ static int process_wait_matches(process_t parent, process_t child,
 	return (int64)child->pgid == -(int64)target;
 }
 
-int process_wait(int target, uint64 status_address, int options)
+static void process_usage_ns_locked(process_t process, uint64 *user_ns,
+				    uint64 *system_ns)
+{
+	uint64 now = ktime_get_ns();
+	thread_t thread;
+	int index;
+
+	*user_ns = process->retired_user_time_ns +
+		process->children_user_time_ns;
+	*system_ns = process->retired_system_time_ns +
+		process->children_system_time_ns;
+	for (index = 0; index < PROC_MAXTHREAD; index++) {
+		thread = process->thread[index];
+		if (!thread)
+			continue;
+		spinlock_acquire(&thread->lock);
+		{
+			uint64 system, user;
+
+			scheduler_thread_times(thread, now, &user, &system);
+			*user_ns += user;
+			*system_ns += system;
+		}
+		spinlock_release(&thread->lock);
+	}
+}
+
+static void process_rusage_locked(process_t process,
+				  struct linux_rusage *usage)
+{
+	uint64 system_ns, user_ns;
+
+	memset(usage, 0, sizeof(*usage));
+	process_usage_ns_locked(process, &user_ns, &system_ns);
+	usage->user_time.seconds = user_ns / 1000000000ULL;
+	usage->user_time.microseconds =
+		(user_ns % 1000000000ULL) / 1000;
+	usage->system_time.seconds = system_ns / 1000000000ULL;
+	usage->system_time.microseconds =
+		(system_ns % 1000000000ULL) / 1000;
+}
+
+static int process_copy_rusage_locked(process_t process,
+				      process_t destination, uint64 address)
+{
+	struct linux_rusage usage;
+
+	if (!address)
+		return 0;
+	process_rusage_locked(process, &usage);
+	return copyout_nofault(destination->pagetable, address,
+			       (char *)&usage, sizeof(usage));
+}
+
+int process_wait(int target, uint64 status_address, uint64 usage_address,
+		 int options)
 {
         process_t p, pp;
 	int exit_status, kids, pid;
         list_t l;
 
         p = cur_proc();
-	if (status_address &&
-	    process_prefault_write(p, status_address, sizeof(exit_status)) < 0)
+	if ((status_address &&
+	     process_prefault_write(p, status_address,
+				    sizeof(exit_status)) < 0) ||
+	    (usage_address &&
+	     process_prefault_write(p, usage_address,
+				    sizeof(struct linux_rusage)) < 0))
 		return PROCESS_WAIT_FAULT;
 
         spinlock_acquire(&wait_lock);
@@ -1240,6 +1299,9 @@ int process_wait(int target, uint64 status_address, int options)
 				}
                                 kids = 1;
 				if(pp->state == PROCESS_ZOMBIE) {
+					uint64 child_system_ns;
+					uint64 child_user_ns;
+
                                         pid = pp->pid;
 
 					if (pp->group_exit_signal)
@@ -1258,6 +1320,17 @@ int process_wait(int target, uint64 status_address, int options)
 						spinlock_release(&wait_lock);
 						return PROCESS_WAIT_FAULT;
 					}
+					if (process_copy_rusage_locked(
+						    pp, p, usage_address) < 0) {
+						spinlock_release(&pp->lock);
+						spinlock_release(&wait_lock);
+						return PROCESS_WAIT_FAULT;
+					}
+					process_usage_ns_locked(pp, &child_user_ns,
+								&child_system_ns);
+					p->children_user_time_ns += child_user_ns;
+					p->children_system_time_ns +=
+						child_system_ns;
 
 					spinlock_release(&pp->lock);
 					process_free(pp);
@@ -1284,6 +1357,12 @@ int process_wait(int target, uint64 status_address, int options)
 						    p->pagetable, status_address,
 						    (char *)&exit_status,
 						    sizeof(exit_status)) < 0) {
+						spinlock_release(&pp->lock);
+						spinlock_release(&wait_lock);
+						return PROCESS_WAIT_FAULT;
+					}
+					if (process_copy_rusage_locked(
+						    pp, p, usage_address) < 0) {
 						spinlock_release(&pp->lock);
 						spinlock_release(&wait_lock);
 						return PROCESS_WAIT_FAULT;

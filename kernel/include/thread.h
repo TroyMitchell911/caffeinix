@@ -102,11 +102,15 @@ struct sched_entity {
 	uint64 vruntime;
 	uint64 exec_start;
 	uint64 sum_exec_runtime;
+	uint64 user_runtime;
+	uint64 system_runtime;
+	uint64 mode_start;
 	uint64 slice_ns;
 	uint32 weight;
 	int8 nice;
 	uint8 initialized;
 	uint8 on_runqueue;
+	uint8 user_mode;
 };
 
 typedef struct thread {

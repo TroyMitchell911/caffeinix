@@ -975,16 +975,17 @@ uint64 sys_linux_clone(void)
 
 uint64 sys_linux_wait4(void)
 {
-	uint64 status_address;
+	uint64 status_address, usage_address;
 	int options, result, target;
 
 	argint(0, &target);
 	argaddr(1, &status_address);
 	argint(2, &options);
+	argaddr(3, &usage_address);
 	if (options & ~(LINUX_WNOHANG | LINUX_WUNTRACED |
 	                LINUX_WCONTINUED))
 		return -LINUX_EINVAL;
-	result = process_wait(target, status_address, options);
+	result = process_wait(target, status_address, usage_address, options);
 	if (result == PROCESS_WAIT_FAULT)
 		return -LINUX_EFAULT;
 	if (result == PROCESS_WAIT_INTR)

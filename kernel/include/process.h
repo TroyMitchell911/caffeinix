@@ -128,6 +128,9 @@ typedef struct process{
 	uint32 cmdline_length;
 	uint64 start_time_ns;
 	uint64 retired_user_time_ns;
+	uint64 retired_system_time_ns;
+	uint64 children_user_time_ns;
+	uint64 children_system_time_ns;
 	struct spinlock files_lock;
         file_t ofile[NOFILE];
 	uint8 fd_flags[NOFILE];
@@ -177,7 +180,8 @@ int process_exec_begin(process_t process, thread_t thread);
 int process_exec_quiesce(process_t process, thread_t thread);
 void process_exec_end(process_t process, int committed);
 int process_thread_exit_requested(thread_t thread, int *status);
-int process_wait(int target, uint64 status_address, int options);
+int process_wait(int target, uint64 status_address, uint64 usage_address,
+		 int options);
 int process_setpgid(int pid, int pgid);
 int process_getpgid(int pid);
 int process_getsid(int pid);

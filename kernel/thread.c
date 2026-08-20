@@ -29,11 +29,15 @@ static void thread_sched_init(thread_t thread)
 	thread->sched.vruntime = 0;
 	thread->sched.exec_start = 0;
 	thread->sched.sum_exec_runtime = 0;
+	thread->sched.user_runtime = 0;
+	thread->sched.system_runtime = 0;
+	thread->sched.mode_start = 0;
 	thread->sched.slice_ns = 0;
 	thread->sched.weight = 1024;
 	thread->sched.nice = 0;
 	thread->sched.initialized = 0;
 	thread->sched.on_runqueue = 0;
+	thread->sched.user_mode = 0;
 }
 
 static void kernel_thread_entry(void)
@@ -304,7 +308,8 @@ void thread_free(thread_t t)
 	if (!found)
 		PANIC("thread_free slot");
 	p->tnums--;
-	p->retired_user_time_ns += t->sched.sum_exec_runtime;
+	p->retired_user_time_ns += t->sched.user_runtime;
+	p->retired_system_time_ns += t->sched.system_runtime;
 	if (t->state != THREAD_EXITED) {
 		if (!p->live_threads)
 			PANIC("thread_free live count");
