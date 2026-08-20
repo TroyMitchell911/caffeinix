@@ -2735,17 +2735,23 @@ int vfs_next_dirent(int fd, vfs_dirent_emit_t emit, void *context)
 int vfs_mkdir(const char *name, uint32 mode)
 {
 	struct vfs_inode *inode;
-	struct vfs_path parent;
+	struct vfs_path existing, parent;
 	char last[VFS_NAME_MAX + 1];
 	uint32 uid, gid;
 	int status;
 
 	status = vfs_walk(name, VFS_LOOKUP_PARENT, &parent, last);
+	if (status == VFS_ERR_INVAL &&
+	    vfs_walk(name, 0, &existing, 0) == VFS_OK) {
+		vfs_path_put(&existing);
+		return VFS_ERR_EXIST;
+	}
 	if (status < 0)
 		return status;
 	if (!vfs_leaf_valid(last)) {
 		vfs_path_put(&parent);
-		return VFS_ERR_INVAL;
+		return string_equal(last, ".") || string_equal(last, "..") ?
+			VFS_ERR_EXIST : VFS_ERR_INVAL;
 	}
 	status = vfs_mutation_permission(parent.dentry->inode);
 	if (status < 0) {
