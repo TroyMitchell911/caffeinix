@@ -118,7 +118,7 @@ check_boot_log()
 	local clean=$1
 	local cpus=$2
 	local block_devices=${3:-1}
-	local fat_mounts=0
+	local fat_mounts=${4:-}
 	local logical
 	local marker_count
 	local random_count
@@ -154,7 +154,7 @@ check_boot_log()
 		'^VFS: mounted root [(]ext4[)] on virtio-blk[0-9]+$' \
 		'^VFS: mounted devfs on /dev$' \
 		'^VFS: mounted tmpfs on /tmp$' \
-		'^VFS: mounted procfs on /proc$' \
+		'^VFS: mounted proc on /proc$' \
 		'^init: starting /bin/sh$'; do
 		marker_count=$(awk -v marker="$marker" \
 			'$0 ~ marker { count++ } END { print count + 0 }' \
@@ -172,8 +172,11 @@ check_boot_log()
 		echo "unexpected block device count: $marker_count" >&2
 		exit 1
 	fi
-	if [ "$block_devices" -gt 1 ]; then
-		fat_mounts=1
+	if [ -z "$fat_mounts" ]; then
+		fat_mounts=0
+		if [ "$block_devices" -gt 1 ]; then
+			fat_mounts=1
+		fi
 	fi
 	marker_count=$(awk '$0 == "VFS: mounted fat on /mnt/fat" { count++ }
 		END { print count + 0 }' "$clean")
@@ -477,7 +480,7 @@ export QEMU_LOG=$qemu_log
 expect "$script_dir/run-qemu.exp"
 normalize_kernel_log "$qemu_log" "$clean_log"
 check_net_device_log "$clean_log" 1
-check_boot_log "$clean_log" "$QEMU_CPUS" 2
+check_boot_log "$clean_log" "$QEMU_CPUS" 2 4
 
 for marker in \
 	BUSYBOX_SHELL_OK \
@@ -514,9 +517,12 @@ for marker in \
 	PROCFS_RUNTIME_OK \
 	CREDENTIAL_RUNTIME_OK \
 	FILE_ADMIN_RUNTIME_OK \
+	MOUNT_RUNTIME_OK \
 	BUSYBOX_METADATA_OK \
 	BUSYBOX_ADMIN_TOOLS_OK \
 	BUSYBOX_FILE_ADMIN_OK \
+	BUSYBOX_TMPFS_MOUNT_OK \
+	BUSYBOX_FAT_MOUNT_OK \
 	BUSYBOX_PS_OK \
 	BUSYBOX_FREE_OK \
 	BUSYBOX_UPTIME_OK \

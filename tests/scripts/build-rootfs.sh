@@ -549,6 +549,12 @@ install -m 755 "$staging/bin/credential-runtime" \
 "$musl_cc" \
 	-static -march=rv64gc -mabi=lp64d \
 	-O2 -Wall -Wextra -Werror \
+	"$tests_dir/mount_runtime.c" \
+	-o "$staging/bin/mount-runtime"
+
+"$musl_cc" \
+	-static -march=rv64gc -mabi=lp64d \
+	-O2 -Wall -Wextra -Werror \
 	"$tests_dir/memory_runtime.c" \
 	-o "$staging/bin/memory-static"
 
@@ -640,6 +646,12 @@ fi
 if "${cross_compile}readelf" -l "$staging/bin/pipe-runtime" |
 	grep -q INTERP; then
 	echo "pipe selftest must be statically linked" >&2
+	exit 1
+fi
+
+if "${cross_compile}readelf" -l "$staging/bin/mount-runtime" |
+	grep -q INTERP; then
+	echo "mount selftest must be statically linked" >&2
 	exit 1
 fi
 

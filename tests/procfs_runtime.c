@@ -273,7 +273,7 @@ static void test_system_files(void)
 	    !strstr(buffer, " / ext4 rw 0 0\n") ||
 	    !strstr(buffer, "devfs /dev devfs rw 0 0\n") ||
 	    !strstr(buffer, "tmpfs /tmp tmpfs rw 0 0\n") ||
-	    !strstr(buffer, "procfs /proc procfs rw 0 0\n"))
+	    !strstr(buffer, "proc /proc proc rw 0 0\n"))
 		fail("mount snapshot");
 	if (sysinfo(&information))
 		fail("sysinfo");

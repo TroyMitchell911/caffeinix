@@ -287,6 +287,36 @@ expect {
 }
 expect_prompt
 
+send -- "/bin/mount-runtime\r"
+expect {
+	-re {\r?\nMOUNT_RUNTIME_OK} {}
+	-re {MOUNT_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "filesystem mount lifecycle test reported failure"
+	}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic in filesystem mount lifecycle test"
+	}
+	timeout { abort_with_dump "filesystem mount lifecycle test timeout" }
+	eof { abort_test "QEMU exited during filesystem mount lifecycle test" }
+}
+expect_prompt
+
+send -- "mkdir /tmp/bm && mount -t tmpfs tmpfs /tmp/bm && "
+send -- "touch /tmp/bm/x && test -f /tmp/bm/x && "
+send -- "umount /tmp/bm && rm -r /tmp/bm && "
+send -- "echo BUSYBOX_TMPFS_MOUNT_OK\r"
+expect_marker BUSYBOX_TMPFS_MOUNT_OK "BusyBox tmpfs mount commands"
+expect_prompt
+
+send -- "fat_device=; while read s t r; do "
+send -- "test \"\$t\" = /mnt/fat && fat_device=/dev/\$s; "
+send -- "done </proc/mounts; test -n \"\$fat_device\" && "
+send -- "umount /mnt/fat && "
+send -- "mount -t fat \"\$fat_device\" /mnt/fat && "
+send -- "echo BUSYBOX_FAT_MOUNT_OK\r"
+expect_marker BUSYBOX_FAT_MOUNT_OK "BusyBox FAT mount commands"
+expect_prompt
+
 send -- "touch /tmp/bb-admin && chmod 640 /tmp/bb-admin && "
 send -- "test \"\$(stat -c %a /tmp/bb-admin)\" = 640 && "
 send -- "chown 1234:56 /tmp/bb-admin && "
