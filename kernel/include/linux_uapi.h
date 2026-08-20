@@ -14,6 +14,8 @@
 #define LINUX_SYS_unlinkat           35
 #define LINUX_SYS_symlinkat          36
 #define LINUX_SYS_linkat             37
+#define LINUX_SYS_umount2            39
+#define LINUX_SYS_mount              40
 #define LINUX_SYS_statfs             43
 #define LINUX_SYS_fstatfs            44
 #define LINUX_SYS_ftruncate          46
@@ -333,6 +335,8 @@ struct linux_linger {
 #define LINUX_O_LARGEFILE       00100000
 #define LINUX_O_DIRECTORY       00200000
 #define LINUX_O_CLOEXEC         02000000
+
+#define LINUX_MOUNT_SILENT         0x8000
 
 #define LINUX_AF_UNSPEC                  0
 #define LINUX_AF_INET                    2

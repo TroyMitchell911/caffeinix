@@ -441,6 +441,48 @@ int page_cache_writeback_super(struct vfs_super_block *superblock)
 	return result;
 }
 
+int page_cache_evict_super(struct vfs_super_block *superblock)
+{
+	struct page_cache_entry *entry;
+	list_t next, node;
+	int result = VFS_OK;
+
+	if (!superblock)
+		return VFS_ERR_INVAL;
+	sleeplock_acquire(&superblock->write_lock);
+	sleeplock_acquire(&page_cache.lock);
+	for (node = page_cache.entries.next; node != &page_cache.entries;
+	     node = node->next) {
+		entry = list_entry(node, struct page_cache_entry, node);
+		if (entry->superblock != superblock)
+			continue;
+		if (entry->evicting || palloc_refcount(entry->page) != 1) {
+			result = VFS_ERR_BUSY;
+			goto out;
+		}
+	}
+	for (node = page_cache.entries.next; node != &page_cache.entries;
+	     node = node->next) {
+		entry = list_entry(node, struct page_cache_entry, node);
+		if (entry->superblock == superblock &&
+		    page_cache_writeback_entry(entry) < 0) {
+			result = VFS_ERR_IO;
+			goto out;
+		}
+	}
+	for (node = page_cache.entries.next; node != &page_cache.entries;
+	     node = next) {
+		next = node->next;
+		entry = list_entry(node, struct page_cache_entry, node);
+		if (entry->superblock == superblock)
+			page_cache_release(entry);
+	}
+out:
+	sleeplock_release(&page_cache.lock);
+	sleeplock_release(&superblock->write_lock);
+	return result;
+}
+
 int page_cache_truncate(struct vfs_inode *inode, uint64 old_size,
 			uint64 size)
 {

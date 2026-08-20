@@ -237,6 +237,7 @@ extern uint64 sys_linux_fdatasync(void);
 extern uint64 sys_linux_fsync(void);
 extern uint64 sys_linux_ioctl(void);
 extern uint64 sys_linux_mknodat(void);
+extern uint64 sys_linux_mount(void);
 extern uint64 sys_linux_linkat(void);
 extern uint64 sys_linux_lseek(void);
 extern uint64 sys_linux_mkdirat(void);
@@ -306,6 +307,7 @@ extern uint64 sys_linux_sync(void);
 extern uint64 sys_linux_umask(void);
 extern uint64 sys_linux_unlinkat(void);
 extern uint64 sys_linux_utimensat(void);
+extern uint64 sys_linux_umount2(void);
 extern uint64 sys_linux_write(void);
 extern uint64 sys_linux_writev(void);
 extern uint64 sys_linux_wait4(void);
@@ -347,6 +349,8 @@ static syscall_t linux_syscalls[LINUX_SYS_pwritev2 + 1] = {
 	[LINUX_SYS_unlinkat] = sys_linux_unlinkat,
 	[LINUX_SYS_symlinkat] = sys_linux_symlinkat,
 	[LINUX_SYS_linkat] = sys_linux_linkat,
+	[LINUX_SYS_umount2] = sys_linux_umount2,
+	[LINUX_SYS_mount] = sys_linux_mount,
 	[LINUX_SYS_ftruncate] = sys_linux_ftruncate,
 	[LINUX_SYS_fallocate] = sys_linux_fallocate,
 	[LINUX_SYS_statfs] = sys_linux_statfs,

@@ -263,10 +263,50 @@ static int tmpfs_statfs(struct vfs_super_block *superblock,
 	return VFS_OK;
 }
 
+static void tmpfs_destroy_tree_locked(struct tmpfs_inode *inode)
+{
+	struct tmpfs_entry *entry, *next;
+	struct tmpfs_inode *child;
+
+	if (inode->type == VFS_INODE_DIRECTORY) {
+		for (entry = inode->entries; entry; entry = next) {
+			next = entry->next;
+			child = entry->inode;
+			if (child->type == VFS_INODE_DIRECTORY) {
+				tmpfs_destroy_tree_locked(child);
+			} else {
+				if (!child->nlink)
+					PANIC("tmpfs unmount link");
+				child->nlink--;
+				tmpfs_inode_maybe_destroy_locked(child);
+			}
+			free(entry);
+		}
+		inode->entries = 0;
+	}
+	inode->nlink = 0;
+	tmpfs_inode_maybe_destroy_locked(inode);
+}
+
+static void tmpfs_unmount(struct vfs_super_block *superblock)
+{
+	struct tmpfs_super *super = superblock->private;
+
+	if (!super)
+		return;
+	sleeplock_acquire(&super->lock);
+	tmpfs_destroy_tree_locked(super->root);
+	super->root = 0;
+	sleeplock_release(&super->lock);
+	free(super);
+	superblock->private = 0;
+}
+
 static const struct vfs_super_operations tmpfs_super_operations = {
 	.put_inode = tmpfs_put_inode,
 	.sync = tmpfs_sync,
 	.statfs = tmpfs_statfs,
+	.unmount = tmpfs_unmount,
 };
 
 static int tmpfs_getattr(struct vfs_inode *inode, struct vfs_stat *stat)

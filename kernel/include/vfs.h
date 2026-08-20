@@ -319,12 +319,12 @@ struct vfs_path {
 
 struct vfs_mount {
 	int ref;
+	int attached;
 	struct vfs_super_block *superblock;
 	struct vfs_dentry *root;
 	struct vfs_mount *parent;
 	struct vfs_path mountpoint;
 	uint32 flags;
-	char target[VFS_PATH_MAX];
 };
 
 struct vfs_mount_snapshot {
@@ -360,10 +360,13 @@ int vfs_inode_stat_default(struct vfs_inode *inode,
 			   struct vfs_stat *stat);
 int vfs_inode_stat(struct vfs_inode *inode, struct vfs_stat *stat);
 
-int vfs_mount_root(const char *filesystem, struct block_device *device,
+int vfs_mount_root(const char *filesystem, uint32 device_id,
 		   const void *data);
-int vfs_mount(const char *filesystem, struct block_device *device,
+int vfs_mount(const char *filesystem, uint32 device_id,
 	      const char *target, const void *data);
+int vfs_mount_path(const char *filesystem, const char *source,
+		   const char *target, const void *data);
+int vfs_unmount(const char *target, uint32 flags);
 uint32 vfs_snapshot_mounts(struct vfs_mount_snapshot *snapshots,
 			   uint32 capacity);
 int vfs_get_root(struct vfs_path *path);

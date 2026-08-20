@@ -566,10 +566,24 @@ static int ext4fs_statfs(struct vfs_super_block *superblock,
 	return VFS_OK;
 }
 
+static void ext4fs_unmount(struct vfs_super_block *superblock)
+{
+	(void)superblock;
+	if (!ext4fs_port.active)
+		return;
+	ext4_journal_stop(EXT4FS_MOUNT_POINT);
+	ext4_umount(EXT4FS_MOUNT_POINT);
+	ext4_device_unregister(EXT4FS_DEVICE_NAME);
+	free(ext4fs_port.interface.ph_bbuf);
+	memset(&ext4fs_port, 0, sizeof(ext4fs_port));
+	memset(ext4fs_open_inodes, 0, sizeof(ext4fs_open_inodes));
+}
+
 static const struct vfs_super_operations ext4fs_super_operations = {
 	.put_inode = ext4fs_put_inode,
 	.sync = ext4fs_sync,
 	.statfs = ext4fs_statfs,
+	.unmount = ext4fs_unmount,
 };
 
 static int ext4fs_getattr(struct vfs_inode *inode, struct vfs_stat *stat)

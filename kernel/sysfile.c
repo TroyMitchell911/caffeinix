@@ -142,6 +142,64 @@ static void make_linux_statfs(struct linux_statfs *linux_stat,
 	linux_stat->flags = vfs_stat->flags;
 }
 
+static int linux_mount_allowed(void)
+{
+	struct process_credentials credentials;
+
+	process_credentials_get(&credentials);
+	return credentials.euid == 0;
+}
+
+uint64 sys_linux_mount(void)
+{
+	char source[VFS_PATH_MAX];
+	char target[VFS_PATH_MAX];
+	char filesystem[32];
+	char options[128];
+	const char *source_path = 0;
+	uint64 source_address, flags, data;
+	int result;
+
+	argaddr(0, &source_address);
+	argaddr(3, &flags);
+	argaddr(4, &data);
+	if (!linux_mount_allowed())
+		return -LINUX_EPERM;
+	if (flags & ~LINUX_MOUNT_SILENT)
+		return -LINUX_EOPNOTSUPP;
+	if (source_address) {
+		if (fetch_str_from_user(source_address, source,
+					sizeof(source)) < 0)
+			return -LINUX_EFAULT;
+		source_path = source;
+	}
+	if (data) {
+		if (fetch_str_from_user(data, options, sizeof(options)) < 0)
+			return -LINUX_EFAULT;
+		if (options[0])
+			return -LINUX_EOPNOTSUPP;
+	}
+	if (argstr(1, target, sizeof(target)) < 0 ||
+	    argstr(2, filesystem, sizeof(filesystem)) < 0)
+		return -LINUX_EFAULT;
+	result = vfs_mount_path(filesystem, source_path, target, 0);
+	return result < 0 ? linux_error(result) : 0;
+}
+
+uint64 sys_linux_umount2(void)
+{
+	char target[VFS_PATH_MAX];
+	int flags, result;
+
+	argint(1, &flags);
+	if (!linux_mount_allowed())
+		return -LINUX_EPERM;
+	if (argstr(0, target, sizeof(target)) < 0)
+		return -LINUX_EFAULT;
+	result = vfs_unmount(target, flags);
+	return result < 0 ? linux_error(result) : 0;
+}
+
 uint64 sys_linux_openat(void)
 {
 	char path[MAXPATH];

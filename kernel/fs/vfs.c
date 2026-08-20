@@ -40,6 +40,7 @@ _Static_assert(sizeof(struct vfs_walk_buffer) <= PGSIZE,
 
 static struct {
 	struct spinlock lock;
+	struct sleeplock mount_lock;
 	struct vfs_filesystem_type *filesystems[VFS_FILESYSTEM_MAX];
 	struct vfs_super_block superblocks[VFS_SUPER_MAX];
 	struct vfs_inode inodes[VFS_INODE_MAX];
@@ -346,6 +347,7 @@ int vfs_file_mark_shared_dirty(struct vfs_file *file, uint64 offset)
 void vfs_init(void)
 {
 	spinlock_init(&vfs.lock, "vfs");
+	sleeplock_init(&vfs.mount_lock, "VFS mount");
 	spinlock_init(&poll_state.lock, "VFS poll");
 	wait_queue_init(&poll_state.wait, "VFS poll");
 }
@@ -482,6 +484,24 @@ void vfs_inode_put(struct vfs_inode *inode)
 	spinlock_release(&vfs.lock);
 }
 
+static void vfs_super_destroy(struct vfs_super_block *superblock)
+{
+	struct block_device *device;
+	struct vfs_inode *root;
+
+	if (!superblock)
+		return;
+	device = superblock->device;
+	root = superblock->root;
+	superblock->root = 0;
+	if (root)
+		vfs_inode_put(root);
+	if (superblock->operations && superblock->operations->unmount)
+		superblock->operations->unmount(superblock);
+	vfs_super_free(superblock);
+	block_device_close(device);
+}
+
 int vfs_inode_stat_default(struct vfs_inode *inode, struct vfs_stat *stat)
 {
 	if (!inode || !stat)
@@ -553,16 +573,6 @@ static struct vfs_dentry *vfs_dentry_alloc(struct vfs_dentry *parent,
 	return 0;
 }
 
-static struct vfs_dentry *vfs_dentry_get(struct vfs_dentry *dentry)
-{
-	spinlock_acquire(&vfs.lock);
-	if (!dentry || dentry->ref < 1)
-		PANIC("vfs dentry get");
-	dentry->ref++;
-	spinlock_release(&vfs.lock);
-	return dentry;
-}
-
 static void vfs_dentry_put(struct vfs_dentry *dentry)
 {
 	struct vfs_dentry *parent;
@@ -605,14 +615,28 @@ static struct vfs_mount *vfs_mount_alloc(void)
 	return 0;
 }
 
+static void vfs_mount_free(struct vfs_mount *mount)
+{
+	if (!mount)
+		return;
+	spinlock_acquire(&vfs.lock);
+	if (mount->ref != 1 || mount->attached)
+		PANIC("vfs mount free");
+	memset(mount, 0, sizeof(*mount));
+	spinlock_release(&vfs.lock);
+}
+
 void vfs_path_copy(struct vfs_path *destination,
 		   const struct vfs_path *source)
 {
 	if (!source || !source->mount || !source->dentry)
 		PANIC("vfs path copy");
-	destination->mount = source->mount;
-	destination->dentry = vfs_dentry_get(source->dentry);
 	spinlock_acquire(&vfs.lock);
+	if (source->mount->ref < 1 || source->dentry->ref < 1)
+		PANIC("vfs path copy reference");
+	destination->mount = source->mount;
+	destination->dentry = source->dentry;
+	destination->dentry->ref++;
 	destination->mount->ref++;
 	spinlock_release(&vfs.lock);
 }
@@ -631,66 +655,155 @@ void vfs_path_put(struct vfs_path *path)
 	path->dentry = 0;
 }
 
+static void vfs_mount_destroy(struct vfs_mount *mount)
+{
+	struct vfs_super_block *superblock;
+
+	if (!mount)
+		return;
+	superblock = mount->superblock;
+	if (mount->root)
+		vfs_dentry_put(mount->root);
+	mount->root = 0;
+	vfs_super_destroy(superblock);
+	mount->superblock = 0;
+	vfs_path_put(&mount->mountpoint);
+	vfs_mount_free(mount);
+}
+
+static int vfs_format_path_locked(const struct vfs_path *path,
+				  char *buffer, uint32 size)
+{
+	struct vfs_mount *mount;
+	struct vfs_dentry *dentry;
+	char temporary[VFS_PATH_MAX];
+	const char *component;
+	uint32 component_length, length;
+	uint32 position = sizeof(temporary) - 1;
+
+	if (!path || !path->mount || !path->dentry || !vfs.root || !size)
+		return VFS_ERR_INVAL;
+	mount = path->mount;
+	dentry = path->dentry;
+	temporary[position] = 0;
+	while (mount != vfs.root || dentry != vfs.root->root) {
+		if (dentry == mount->root && mount->parent) {
+			dentry = mount->mountpoint.dentry;
+			mount = mount->mountpoint.mount;
+		}
+		component = dentry->name;
+		component_length = strlen(component);
+		if (!component_length || component_length + 1 > position)
+			return VFS_ERR_NAMETOOLONG;
+		position -= component_length;
+		memmove(temporary + position, component, component_length);
+		temporary[--position] = '/';
+		dentry = dentry->parent;
+		if (!dentry)
+			return VFS_ERR_INVAL;
+	}
+	if (position == sizeof(temporary) - 1)
+		temporary[--position] = '/';
+	length = sizeof(temporary) - position;
+	if (length > size)
+		return VFS_ERR_NOSPC;
+	memmove(buffer, temporary + position, length);
+	return VFS_OK;
+}
+
 int vfs_get_root(struct vfs_path *path)
 {
-	struct vfs_path root;
-
 	spinlock_acquire(&vfs.lock);
-	if (!vfs.root) {
+	if (!vfs.root || !vfs.root->attached) {
 		spinlock_release(&vfs.lock);
 		return VFS_ERR_NOENT;
 	}
-	root.mount = vfs.root;
-	root.dentry = vfs.root->root;
+	path->mount = vfs.root;
+	path->dentry = vfs.root->root;
+	path->mount->ref++;
+	path->dentry->ref++;
 	spinlock_release(&vfs.lock);
-	vfs_path_copy(path, &root);
 	return VFS_OK;
 }
 
 static int vfs_mount_type(struct vfs_filesystem_type *type,
-			  struct block_device *device, const void *data,
+			  uint32 device_id, const void *data,
 			  struct vfs_super_block **result)
 {
-	if ((type->flags & VFS_FS_REQUIRES_DEVICE) && !device)
-		return VFS_ERR_NODEV;
-	return type->mount(type, device, data, result);
+	struct block_device *device = 0;
+	int status;
+
+	if (!type || !result)
+		return VFS_ERR_INVAL;
+	*result = 0;
+	if (type->flags & VFS_FS_REQUIRES_DEVICE) {
+		device = block_device_open(device_id);
+		if (!device)
+			return VFS_ERR_NODEV;
+	}
+	status = type->mount(type, device, data, result);
+	if (status < 0 || !*result) {
+		block_device_close(device);
+		if (status >= 0)
+			status = VFS_ERR_IO;
+	}
+	return status;
 }
 
-int vfs_mount_root(const char *filesystem, struct block_device *device,
+int vfs_mount_root(const char *filesystem, uint32 device_id,
 		   const void *data)
 {
 	struct vfs_filesystem_type *type;
-	struct vfs_super_block *superblock;
+	struct vfs_super_block *superblock = 0;
 	struct vfs_dentry *root;
 	struct vfs_mount *mount;
 	int result;
 
-	if (vfs.root)
-		return VFS_ERR_BUSY;
+	spinlock_acquire(&vfs.lock);
+	result = vfs.root ? VFS_ERR_BUSY : VFS_OK;
+	spinlock_release(&vfs.lock);
+	if (result < 0)
+		return result;
 	type = vfs_find_filesystem(filesystem);
 	if (!type)
 		return VFS_ERR_NODEV;
-	result = vfs_mount_type(type, device, data, &superblock);
+	result = vfs_mount_type(type, device_id, data, &superblock);
 	if (result < 0)
 		return result;
-	if (!superblock || !superblock->root)
+	if (!superblock || !superblock->root) {
+		vfs_super_destroy(superblock);
 		return VFS_ERR_IO;
+	}
 	root = vfs_dentry_alloc(0, "", superblock->root);
-	if (!root)
+	if (!root) {
+		vfs_super_destroy(superblock);
 		return VFS_ERR_NOMEM;
+	}
 	mount = vfs_mount_alloc();
 	if (!mount) {
 		vfs_dentry_put(root);
+		vfs_super_destroy(superblock);
 		return VFS_ERR_NOMEM;
 	}
 	mount->superblock = superblock;
 	mount->root = root;
-	safe_strncpy(mount->target, "/", sizeof(mount->target));
 	spinlock_acquire(&vfs.lock);
-	vfs.root = mount;
+	if (vfs.root) {
+		result = VFS_ERR_BUSY;
+	} else {
+		mount->attached = 1;
+		vfs.root = mount;
+		result = VFS_OK;
+	}
 	spinlock_release(&vfs.lock);
+	if (result < 0) {
+		vfs_dentry_put(root);
+		vfs_super_destroy(superblock);
+		vfs_mount_free(mount);
+		return result;
+	}
 	pr_info("VFS: mounted root (%s) on %s", filesystem,
-		device ? device->name : "none");
+		superblock->device ? superblock->device->name : "none");
 	return VFS_OK;
 }
 
@@ -700,34 +813,54 @@ static int vfs_same_inode(struct vfs_inode *left,
 	return vfs_inode_same_identity(left, right);
 }
 
-static struct vfs_mount *vfs_child_mount(const struct vfs_path *path)
+static struct vfs_mount *vfs_child_mount_locked(
+	const struct vfs_path *path)
 {
-	struct vfs_mount *mount, *result = 0;
+	struct vfs_mount *mount;
 
-	spinlock_acquire(&vfs.lock);
 	for (mount = vfs.mounts;
 	     mount != &vfs.mounts[VFS_MOUNT_MAX]; mount++) {
-		if (mount->ref && mount->parent == path->mount &&
+		if (mount->attached && mount->parent == path->mount &&
 		    mount->mountpoint.dentry &&
 		    vfs_same_inode(mount->mountpoint.dentry->inode,
-		                   path->dentry->inode)) {
-			result = mount;
-			break;
-		}
+		                   path->dentry->inode))
+			return mount;
 	}
+	return 0;
+}
+
+static int vfs_has_child_mount(const struct vfs_path *path)
+{
+	int result;
+
+	spinlock_acquire(&vfs.lock);
+	result = vfs_child_mount_locked(path) != 0;
 	spinlock_release(&vfs.lock);
 	return result;
 }
 
+static int vfs_child_path(const struct vfs_path *path,
+			  struct vfs_path *child)
+{
+	struct vfs_mount *mount;
+
+	spinlock_acquire(&vfs.lock);
+	mount = vfs_child_mount_locked(path);
+	if (mount) {
+		mount->ref++;
+		mount->root->ref++;
+		child->mount = mount;
+		child->dentry = mount->root;
+	}
+	spinlock_release(&vfs.lock);
+	return mount != 0;
+}
+
 static void vfs_follow_mount(struct vfs_path *path)
 {
-	struct vfs_mount *child;
-	struct vfs_path next, source;
+	struct vfs_path next;
 
-	while ((child = vfs_child_mount(path))) {
-		source.mount = child;
-		source.dentry = child->root;
-		vfs_path_copy(&next, &source);
+	while (vfs_child_path(path, &next)) {
 		vfs_path_put(path);
 		*path = next;
 	}
@@ -995,11 +1128,12 @@ static int vfs_walk_base(const char *name, uint32 flags,
 		vfs_walk(name, flags, result, last);
 }
 
-int vfs_mount(const char *filesystem, struct block_device *device,
-	      const char *target, const void *data)
+static int vfs_mount_locked(const char *filesystem,
+			    uint32 device_id,
+			    const char *target, const void *data)
 {
 	struct vfs_filesystem_type *type;
-	struct vfs_super_block *superblock;
+	struct vfs_super_block *superblock = 0;
 	struct vfs_dentry *root;
 	struct vfs_mount *mount;
 	struct vfs_path mountpoint;
@@ -1015,23 +1149,30 @@ int vfs_mount(const char *filesystem, struct block_device *device,
 		vfs_path_put(&mountpoint);
 		return VFS_ERR_NOTDIR;
 	}
-	if (vfs_child_mount(&mountpoint)) {
+	if (vfs_has_child_mount(&mountpoint)) {
 		vfs_path_put(&mountpoint);
 		return VFS_ERR_BUSY;
 	}
-	status = vfs_mount_type(type, device, data, &superblock);
+	status = vfs_mount_type(type, device_id, data, &superblock);
 	if (status < 0) {
 		vfs_path_put(&mountpoint);
 		return status;
 	}
+	if (!superblock || !superblock->root) {
+		vfs_super_destroy(superblock);
+		vfs_path_put(&mountpoint);
+		return VFS_ERR_IO;
+	}
 	root = vfs_dentry_alloc(0, "", superblock->root);
 	if (!root) {
+		vfs_super_destroy(superblock);
 		vfs_path_put(&mountpoint);
 		return VFS_ERR_NOMEM;
 	}
 	mount = vfs_mount_alloc();
 	if (!mount) {
 		vfs_dentry_put(root);
+		vfs_super_destroy(superblock);
 		vfs_path_put(&mountpoint);
 		return VFS_ERR_NOMEM;
 	}
@@ -1039,9 +1180,165 @@ int vfs_mount(const char *filesystem, struct block_device *device,
 	mount->root = root;
 	mount->parent = mountpoint.mount;
 	mount->mountpoint = mountpoint;
-	safe_strncpy(mount->target, target, sizeof(mount->target));
+	spinlock_acquire(&vfs.lock);
+	if (vfs_child_mount_locked(&mount->mountpoint)) {
+		status = VFS_ERR_BUSY;
+	} else {
+		mount->attached = 1;
+		status = VFS_OK;
+	}
+	spinlock_release(&vfs.lock);
+	if (status < 0) {
+		vfs_mount_destroy(mount);
+		return status;
+	}
 	pr_info("VFS: mounted %s on %s", filesystem, target);
 	return VFS_OK;
+}
+
+static int vfs_mount_id(const char *filesystem, uint32 device_id,
+			const char *target, const void *data)
+{
+	int status;
+
+	sleeplock_acquire(&vfs.mount_lock);
+	status = vfs_mount_locked(filesystem, device_id, target, data);
+	sleeplock_release(&vfs.mount_lock);
+	return status;
+}
+
+int vfs_mount(const char *filesystem, uint32 device_id,
+	      const char *target, const void *data)
+{
+	return vfs_mount_id(filesystem, device_id, target, data);
+}
+
+static int vfs_block_device_path(const char *source,
+				 uint32 *result)
+{
+	struct vfs_inode *inode;
+	struct vfs_path path;
+	uint32 minor;
+	int status;
+
+	status = vfs_walk(source, 0, &path, 0);
+	if (status < 0)
+		return status;
+	inode = path.dentry->inode;
+	if (inode->type != VFS_INODE_BLOCK_DEVICE) {
+		status = VFS_ERR_NODEV;
+		goto out;
+	}
+	minor = VFS_DEVICE_MINOR(inode->device);
+	if (VFS_DEVICE_MAJOR(inode->device) != BLOCK_DEVICE_NODE_MAJOR ||
+	    minor >= BLOCK_DEVICE_MAX - 1) {
+		status = VFS_ERR_NODEV;
+		goto out;
+	}
+	*result = minor + 1;
+	status = VFS_OK;
+out:
+	vfs_path_put(&path);
+	return status;
+}
+
+int vfs_mount_path(const char *filesystem, const char *source,
+		   const char *target, const void *data)
+{
+	struct vfs_filesystem_type *type;
+	uint32 device_id = 0;
+	int status;
+
+	type = vfs_find_filesystem(filesystem);
+	if (!type)
+		return VFS_ERR_NODEV;
+	if (type->flags & VFS_FS_REQUIRES_DEVICE) {
+		if (!source)
+			return VFS_ERR_NODEV;
+		status = vfs_block_device_path(source, &device_id);
+		if (status < 0)
+			return status;
+	}
+	return vfs_mount_id(filesystem, device_id, target, data);
+}
+
+static int vfs_mount_has_children_locked(struct vfs_mount *parent)
+{
+	struct vfs_mount *mount;
+
+	for (mount = vfs.mounts;
+	     mount != &vfs.mounts[VFS_MOUNT_MAX]; mount++) {
+		if (mount->attached && mount->parent == parent)
+			return 1;
+	}
+	return 0;
+}
+
+static int vfs_unmount_locked(const char *target, uint32 flags)
+{
+	struct vfs_super_block *superblock;
+	struct vfs_mount *mount;
+	struct vfs_path path;
+	char resolved_target[VFS_PATH_MAX];
+	int status;
+
+	if (flags)
+		return VFS_ERR_INVAL;
+	status = vfs_walk(target, 0, &path, 0);
+	if (status < 0)
+		return status;
+	mount = path.mount;
+	superblock = mount->superblock;
+	if (mount == vfs.root) {
+		status = VFS_ERR_BUSY;
+		goto out;
+	}
+	if (!mount->parent || path.dentry != mount->root) {
+		status = VFS_ERR_INVAL;
+		goto out;
+	}
+	status = page_cache_evict_super(superblock);
+	if (status < 0)
+		goto out;
+	if (superblock->operations && superblock->operations->sync) {
+		status = superblock->operations->sync(superblock);
+		if (status < 0)
+			goto out;
+	}
+	spinlock_acquire(&vfs.lock);
+	if (!mount->attached || vfs_mount_has_children_locked(mount) ||
+	    mount->ref != 2) {
+		status = VFS_ERR_BUSY;
+	} else {
+		if (vfs_format_path_locked(&mount->mountpoint,
+		                           resolved_target,
+		                           sizeof(resolved_target)) < 0)
+			resolved_target[0] = 0;
+		mount->attached = 0;
+		status = VFS_OK;
+	}
+	spinlock_release(&vfs.lock);
+	if (status < 0)
+		goto out;
+	pr_info("VFS: unmounted %s from %s",
+		mount->superblock->type->name,
+		resolved_target[0] ? resolved_target : target);
+	vfs_path_put(&path);
+	vfs_mount_destroy(mount);
+	return VFS_OK;
+out:
+	vfs_path_put(&path);
+	return status;
+}
+
+int vfs_unmount(const char *target, uint32 flags)
+{
+	int status;
+
+	sleeplock_acquire(&vfs.mount_lock);
+	status = vfs_unmount_locked(target, flags);
+	sleeplock_release(&vfs.mount_lock);
+	return status;
 }
 
 uint32 vfs_snapshot_mounts(struct vfs_mount_snapshot *snapshots,
@@ -1058,7 +1355,7 @@ uint32 vfs_snapshot_mounts(struct vfs_mount_snapshot *snapshots,
 	     mount++) {
 		struct vfs_mount_snapshot *snapshot;
 
-		if (!mount->ref || !mount->superblock ||
+		if (!mount->attached || !mount->superblock ||
 		    !mount->superblock->type)
 			continue;
 		snapshot = &snapshots[count++];
@@ -1073,8 +1370,20 @@ uint32 vfs_snapshot_mounts(struct vfs_mount_snapshot *snapshots,
 		else
 			safe_strncpy(snapshot->source, snapshot->filesystem,
 				     sizeof(snapshot->source));
-		safe_strncpy(snapshot->target, mount->target,
-			     sizeof(snapshot->target));
+		if (mount == vfs.root) {
+			struct vfs_path root = {
+				.mount = mount,
+				.dentry = mount->root,
+			};
+
+			if (vfs_format_path_locked(&root, snapshot->target,
+						   sizeof(snapshot->target)) < 0)
+				snapshot->target[0] = 0;
+		} else if (vfs_format_path_locked(&mount->mountpoint,
+						  snapshot->target,
+						  sizeof(snapshot->target)) < 0) {
+			snapshot->target[0] = 0;
+		}
 		snapshot->flags = mount->flags;
 	}
 	spinlock_release(&vfs.lock);
@@ -2540,6 +2849,10 @@ int vfs_unlink(const char *name, int remove_directory)
 	status = vfs_walk(name, VFS_LOOKUP_NOFOLLOW_FINAL, &target, 0);
 	if (status < 0)
 		return status;
+	if (target.mount->parent && target.dentry == target.mount->root) {
+		vfs_path_put(&target);
+		return VFS_ERR_BUSY;
+	}
 	if (remove_directory &&
 	    target.dentry->inode->type != VFS_INODE_DIRECTORY) {
 		vfs_path_put(&target);
@@ -2694,6 +3007,10 @@ int vfs_rename(const char *old_name, const char *new_name,
 	status = vfs_walk(old_name, VFS_LOOKUP_NOFOLLOW_FINAL, &source, 0);
 	if (status < 0)
 		return status;
+	if (source.mount->parent && source.dentry == source.mount->root) {
+		status = VFS_ERR_BUSY;
+		goto out_source;
+	}
 	if (source.dentry == source.mount->root) {
 		vfs_path_put(&source);
 		return VFS_ERR_BUSY;
@@ -2731,6 +3048,11 @@ int vfs_rename(const char *old_name, const char *new_name,
 			  &destination, 0);
 	if (status == VFS_OK) {
 		destination_found = 1;
+		if (destination.mount->parent &&
+		    destination.dentry == destination.mount->root) {
+			status = VFS_ERR_BUSY;
+			goto out;
+		}
 		status = vfs_sticky_permission(new_parent.dentry->inode,
 					       destination.dentry->inode);
 		if (status < 0)
@@ -2777,6 +3099,7 @@ int vfs_sync(void)
 	struct vfs_super_block *superblock;
 	int count = 0, first_error = VFS_OK, status;
 
+	sleeplock_acquire(&vfs.mount_lock);
 	spinlock_acquire(&vfs.lock);
 	for (superblock = vfs.superblocks;
 	     superblock != &vfs.superblocks[VFS_SUPER_MAX]; superblock++) {
@@ -2795,6 +3118,7 @@ int vfs_sync(void)
 		if (status < 0 && first_error == VFS_OK)
 			first_error = status;
 	}
+	sleeplock_release(&vfs.mount_lock);
 	return first_error;
 }
 

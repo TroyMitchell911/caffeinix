@@ -209,10 +209,23 @@ static int fatfs_statfs(struct vfs_super_block *superblock,
 	return VFS_OK;
 }
 
+static void fatfs_unmount(struct vfs_super_block *superblock)
+{
+	(void)superblock;
+	sleeplock_acquire(&fatfs_port.lock);
+	f_mount(0, "0:", 0);
+	sleeplock_release(&fatfs_port.lock);
+	fatfs_set_block_device(0);
+	fatfs_port.active = 0;
+	fatfs_port.device = 0;
+	memset(&fatfs_port.filesystem, 0, sizeof(fatfs_port.filesystem));
+}
+
 static const struct vfs_super_operations fatfs_super_operations = {
 	.put_inode = fatfs_put_inode,
 	.sync = fatfs_sync,
 	.statfs = fatfs_statfs,
+	.unmount = fatfs_unmount,
 };
 
 static int fatfs_getattr(struct vfs_inode *inode, struct vfs_stat *stat)

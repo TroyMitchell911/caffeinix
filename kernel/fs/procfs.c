@@ -820,7 +820,7 @@ static int procfs_mount(struct vfs_filesystem_type *type,
 }
 
 static struct vfs_filesystem_type procfs_type = {
-	.name = "procfs",
+	.name = "proc",
 	.mount = procfs_mount,
 };
 

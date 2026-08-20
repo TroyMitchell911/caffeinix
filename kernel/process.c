@@ -93,35 +93,31 @@ static int setup_stdio(void)
 	return 0;
 }
 
-static struct block_device *mount_root_device(void)
+static uint32 mount_root_device(void)
 {
-	struct block_device *device;
 	uint32 id;
 
 	for (id = 1; id < BLOCK_DEVICE_MAX; id++) {
-		device = block_device_get(id);
-		if (device &&
-		    vfs_mount_root(ROOT_FILESYSTEM, device, 0) == VFS_OK)
-			return device;
+		if (vfs_mount_root(ROOT_FILESYSTEM, id, 0) == VFS_OK)
+			return id;
 	}
 	return 0;
 }
 
-static void mount_fat_device(struct block_device *root)
+static void mount_fat_device(uint32 root_id)
 {
-	struct block_device *device;
 	int status;
 	uint32 id;
 
 	for (id = 1; id < BLOCK_DEVICE_MAX; id++) {
-		device = block_device_get(id);
-		if (!device || device == root)
+		if (id == root_id)
 			continue;
-		status = vfs_mount("fat", device, "/mnt/fat", 0);
+		status = vfs_mount("fat", id, "/mnt/fat", 0);
 		if (status == VFS_OK)
 			return;
-		pr_warn("VFS: cannot mount %s as fat: %d", device->name,
-			status);
+		if (status != VFS_ERR_NODEV)
+			pr_warn("VFS: cannot mount block device %u as fat: %d",
+				id, status);
 	}
 }
 
@@ -225,7 +221,7 @@ void process_freepagedir(pagedir_t pgdir, uint64 sz)
 static void proc_first_start(void)
 {
 	static uint8 fs_started;
-	struct block_device *root_device;
+	uint32 root_device;
 	char *argv[] = { INIT_PATH, 0 };
 	char *envp[] = {
 		"HOME=/",
@@ -260,10 +256,10 @@ static void proc_first_start(void)
 			pr_err("VFS: cannot mount tmpfs on /tmp: %d", status);
 			PANIC("mount tmpfs");
 		}
-		status = vfs_mount("procfs", 0, "/proc", 0);
+		status = vfs_mount("proc", 0, "/proc", 0);
 		if (status < 0) {
-			pr_err("VFS: cannot mount procfs on /proc: %d", status);
-			PANIC("mount procfs");
+			pr_err("VFS: cannot mount proc on /proc: %d", status);
+			PANIC("mount proc");
 		}
 		mount_fat_device(root_device);
 		status = setup_stdio();
