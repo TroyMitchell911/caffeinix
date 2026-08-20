@@ -8,7 +8,8 @@ The current milestone boots an unmodified dynamically linked BusyBox and
 upstream musl runtime linker from an ext4 root filesystem on QEMU `virt`.
 The kernel mounts devfs at `/dev`, tmpfs at `/tmp`, can mount a second FAT16
 or FAT32 disk at `/mnt/fat`, and can run IPv4 over a modern VirtIO network
-device through lwIP.
+device through lwIP. BusyBox ash provides pipelines, job control, terminal
+signals, history, completion, and interactive editing.
 
 Upstream musl pthreads run as Linux-style thread groups. The kernel provides
 process- and thread-directed signals, RV64 signal frames, alternate stacks,
@@ -130,24 +131,40 @@ userspace build input; do not pass it to the kernel Makefile.
 ## Build BusyBox
 
 Download and unpack upstream BusyBox 1.38.0 anywhere. The repository ships a
-tested Kconfig fragment at `configs/busybox.config`. Apply that fragment to a
-fresh all-disabled configuration, then build with the external musl wrapper:
+tested broad Kconfig fragment at `configs/busybox.config` and its 207-applet
+manifest at `configs/busybox.applets`. Apply the fragment to a fresh
+all-disabled configuration, then build with the external musl wrapper:
 
 ```bash
 export BUSYBOX_DIR=/absolute/path/to/busybox-1.38.0
 
 make -C "$BUSYBOX_DIR" distclean
-make -C "$BUSYBOX_DIR" allnoconfig >/dev/null
+make -C "$BUSYBOX_DIR" \
+  ARCH=riscv \
+  CROSS_COMPILE=riscv64-linux-gnu- \
+  CC="$MUSL_SYSROOT/bin/musl-gcc" \
+  allnoconfig >/dev/null
 
-while IFS= read -r setting; do
-  symbol=${setting%%=*}
-  sed -i \
-    -e "s|^# $symbol is not set$|$setting|" \
-    -e "s|^$symbol=.*|$setting|" \
-    "$BUSYBOX_DIR/.config"
-done < "$CAFFEINIX_DIR/configs/busybox.config"
+for pass in 1 2 3 4; do
+  while IFS= read -r setting; do
+    case "$setting" in
+      ''|'#'*) continue ;;
+    esac
+    symbol=${setting%%=*}
+    sed -i \
+      -e "s|^# $symbol is not set$|$setting|" \
+      -e "s|^$symbol=.*|$setting|" \
+      "$BUSYBOX_DIR/.config"
+  done < "$CAFFEINIX_DIR/configs/busybox.config"
+  set +o pipefail
+  yes '' | make -C "$BUSYBOX_DIR" \
+    ARCH=riscv \
+    CROSS_COMPILE=riscv64-linux-gnu- \
+    CC="$MUSL_SYSROOT/bin/musl-gcc" \
+    oldconfig >/dev/null
+  set -o pipefail
+done
 
-yes '' | make -C "$BUSYBOX_DIR" oldconfig >/dev/null
 make -C "$BUSYBOX_DIR" -j"$(nproc)" \
   ARCH=riscv \
   CROSS_COMPILE=riscv64-linux-gnu- \
@@ -183,13 +200,53 @@ make -C "$BUSYBOX_DIR" \
   CONFIG_PREFIX="$ROOTFS_STAGING" \
   install
 
+{
+  find "$ROOTFS_STAGING" -type l -printf '%f\n'
+  printf '%s\n' busybox
+} | LC_ALL=C sort -u > "$ROOTFS_STAGING/.busybox.applets"
+cmp \
+  "$CAFFEINIX_DIR/configs/busybox.applets" \
+  "$ROOTFS_STAGING/.busybox.applets"
+rm "$ROOTFS_STAGING/.busybox.applets"
+
 install -d \
   "$ROOTFS_STAGING/dev" \
+  "$ROOTFS_STAGING/etc" \
   "$ROOTFS_STAGING/lib" \
-  "$ROOTFS_STAGING/tmp" \
   "$ROOTFS_STAGING/mnt/fat" \
   "$ROOTFS_STAGING/proc" \
-  "$ROOTFS_STAGING/sys"
+  "$ROOTFS_STAGING/root" \
+  "$ROOTFS_STAGING/sys" \
+  "$ROOTFS_STAGING/tmp" \
+  "$ROOTFS_STAGING/var/log" \
+  "$ROOTFS_STAGING/var/run" \
+  "$ROOTFS_STAGING/var/spool/cron/crontabs"
+
+printf '%s\n' \
+  'root:x:0:0:root:/root:/bin/sh' \
+  'nobody:x:65534:65534:nobody:/tmp:/sbin/nologin' \
+  > "$ROOTFS_STAGING/etc/passwd"
+printf '%s\n' 'root:x:0:' 'nobody:x:65534:' \
+  > "$ROOTFS_STAGING/etc/group"
+printf '%s\n' \
+  'root:*:0:0:99999:7:::' \
+  'nobody:*:0:0:99999:7:::' \
+  > "$ROOTFS_STAGING/etc/shadow"
+chmod 600 "$ROOTFS_STAGING/etc/shadow"
+printf '%s\n' '/bin/sh' '/bin/ash' \
+  > "$ROOTFS_STAGING/etc/shells"
+printf '%s\n' '127.0.0.1 localhost' \
+  > "$ROOTFS_STAGING/etc/hosts"
+printf '%s\n' 'nameserver 10.0.2.3' \
+  > "$ROOTFS_STAGING/etc/resolv.conf"
+printf '%s\n' \
+  'proc /proc proc defaults 0 0' \
+  'devfs /dev devfs defaults 0 0' \
+  'tmpfs /tmp tmpfs defaults 0 0' \
+  > "$ROOTFS_STAGING/etc/fstab"
+install -m 644 \
+  "$CAFFEINIX_DIR/configs/busybox.applets" \
+  "$ROOTFS_STAGING/etc/busybox.applets"
 
 install -m 755 \
   "$MUSL_SYSROOT/lib/libc.so" \
@@ -219,6 +276,12 @@ blocks; images made with the usual 4 KiB default are not supported yet.
 The ext4 image contains ordinary empty `/dev` and `/tmp` directories. The
 kernel covers them with devfs and tmpfs at boot, so creating host-side device
 nodes is unnecessary.
+
+`10.0.2.3` is the DNS server exposed by QEMU's default user-network backend.
+Use the resolver supplied by the selected backend or local network when
+running another QEMU backend or real hardware. The supported applet families
+and intentional exclusions are recorded in
+[`Documentation/userspace.md`](Documentation/userspace.md).
 
 To include the filesystem regression program in a newly created image, build
 it with the same musl wrapper before running `mke2fs`:
@@ -431,16 +494,19 @@ the kernel. No separate rootfs repository or private compiler is required.
 ## Current limitations
 
 - Only a Linux RISC-V UAPI subset is implemented.
-- Pipelines, process groups, job control, and terminal-generated signals are
-  not ready. The underlying thread and signal core is available.
 - Userspace uses demand paging, shared clean file pages, copy-on-write, and
   ASLR. Reclaim currently discards clean file and private anonymous pages;
   swap and background writeback of dirty pages are not implemented.
-- Networking is IPv4-only and omits interface configuration, AF_UNIX,
-  netlink, namespaces, firewalling, and the wider Linux socket option set.
+- Networking is IPv4-only. Interface and route state can be queried, but
+  mutation, AF_UNIX, netlink, namespaces, firewalling, and the wider Linux
+  socket option set are not implemented.
 - VirtIO currently uses modern MMIO split rings without packed rings,
   multiqueue, offloads, hot unplug, PCI, or a physical Ethernet MAC.
-- The VFS has fixed-size object tables and no unmount syscall yet.
+- The VFS has fixed-size object tables. Mount and unmount support is limited
+  to the implemented ext4, tmpfs, devfs, and FAT model; bind mounts,
+  propagation, and mount namespaces are absent.
+- Procfs exposes the supported process and system snapshots but not Linux's
+  complete tree, including `/proc/<pid>/task/<tid>` thread views.
 - FAT support excludes exFAT and returns `EBUSY` when unlinking an open file.
 - Docker is not supported; it also needs namespaces, cgroups, mounts,
   networking, `/proc`, and a much wider syscall surface.

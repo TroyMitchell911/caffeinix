@@ -53,7 +53,8 @@ requires 2 MiB PT_LOAD alignment. Permission fixtures exercise an executable
 stack and a permissionless guard segment. In addition, the image contains the
 unmodified musl 1.2.6 runtime linker and shared libc, dynamically linked test
 programs, shared-object fixtures, a dynamic BusyBox, and a static recovery
-BusyBox.
+BusyBox. Both BusyBox binaries use the checked broad configuration and must
+report exactly the 207 applets in `configs/busybox.applets`.
 
 Each boot requires one SBI BASE report and exactly one online and timer marker
 per logical CPU. A static check rejects machine-mode CSR operations, direct
@@ -140,6 +141,9 @@ The guest selftest covers:
   command and UTF-8 pathname completion, completion listings, saved and
   reverse-searchable history, Home/End/Delete and control-key editing, long
   input, empty-line Ctrl-D, and cancellation of a partial command with Ctrl-C;
+- broad BusyBox ash language, text, archive, file, account, process, and
+  system-tool semantics, with the dynamic and static applet lists checked
+  against the committed manifest;
 - BusyBox vi insertion, persistence, exit, and reopen, foreground pipeline
   interruption, stopped and resumed jobs, background terminal reads, plus
   execution of the static recovery binary;
@@ -161,8 +165,10 @@ The guest selftest covers:
   UTF-8 long names;
 - DHCP, raw ICMP, UDP, TCP clients and servers, blocking and nonblocking
   sockets, polling, metadata, options, shutdown, and close; and
-- BusyBox `nc` and `wget`, including a 32 KiB transfer across packet,
-  socket, pbuf, and virtqueue buffer boundaries.
+- BusyBox IPv4 status and routes, `ping`, deterministic musl DNS resolution,
+  `nslookup`, DNS-backed `wget`, a loopback `httpd`, `nc`, and direct `wget`,
+  including a 32 KiB transfer across packet, socket, pbuf, and virtqueue
+  buffer boundaries.
 
 Every smoke boot runs a dynamically linked hello program and concurrent
 dynamic fork/exec pressure. The one-, two-, four-, and eight-hart cases cover
