@@ -753,14 +753,14 @@ uint64 sys_linux_dup3(void)
 
 uint64 sys_linux_ioctl(void)
 {
-	uint64 address;
-	int fd, request;
+	uint64 address, request;
+	int fd;
 	int64 result;
 
 	argint(0, &fd);
-	argint(1, &request);
+	argaddr(1, &request);
 	argaddr(2, &address);
-	result = vfs_ioctl(fd, request, address);
+	result = vfs_ioctl(fd, (uint32)request, address);
 	if (result == VFS_ERR_INTR)
 		return -SIGNAL_RESTART_SYS;
 	return result < 0 ? linux_error(result) : result;
