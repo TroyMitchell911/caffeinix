@@ -154,6 +154,7 @@ check_boot_log()
 		'^VFS: mounted root [(]ext4[)] on virtio-blk[0-9]+$' \
 		'^VFS: mounted devfs on /dev$' \
 		'^VFS: mounted tmpfs on /tmp$' \
+		'^VFS: mounted procfs on /proc$' \
 		'^init: starting /bin/sh$'; do
 		marker_count=$(awk -v marker="$marker" \
 			'$0 ~ marker { count++ } END { print count + 0 }' \
@@ -324,6 +325,11 @@ run_boot_smoke()
 	if [ "$(awk '$0 == "TIMESTAMP_RUNTIME_OK" { count++ }
 		END { print count + 0 }' "$clean")" -ne 1 ]; then
 		echo "inode timestamp marker is missing" >&2
+		exit 1
+	fi
+	if [ "$(awk '$0 == "PROCFS_RUNTIME_OK" { count++ }
+		END { print count + 0 }' "$clean")" -ne 1 ]; then
+		echo "procfs runtime marker is missing" >&2
 		exit 1
 	fi
 	if [ "$(awk '$0 == "ASLR_RUNTIME_OK" { count++ }
@@ -500,6 +506,13 @@ for marker in \
 	TIME_RUNTIME_OK \
 	SYSTEM_RUNTIME_OK \
 	TIMESTAMP_RUNTIME_OK \
+	PROCFS_RUNTIME_OK \
+	BUSYBOX_PS_OK \
+	BUSYBOX_FREE_OK \
+	BUSYBOX_UPTIME_OK \
+	BUSYBOX_PIDOF_OK \
+	BUSYBOX_TOP_OK \
+	BUSYBOX_NETSTAT_OK \
 	JOB_FOREGROUND_STATUS=130 \
 	JOB_STOPPED_OK \
 	JOB_BACKGROUND_OK \

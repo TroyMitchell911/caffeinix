@@ -136,6 +136,58 @@ static int test_script_recursion(void)
 	return expect_errno(path, arguments, ELOOP);
 }
 
+static int long_argument_child(int argc, char **argv)
+{
+	char snapshot[4097];
+	ssize_t count, total = 0;
+	int fd, index;
+
+	if (argc != 8)
+		return -1;
+	for (index = 2; index < argc; index++)
+		if (strlen(argv[index]) != 1024)
+			return -1;
+	fd = open("/proc/self/cmdline", O_RDONLY);
+	if (fd < 0)
+		return -1;
+	while (total < (ssize_t)sizeof(snapshot)) {
+		count = read(fd, snapshot + total, sizeof(snapshot) - total);
+		if (count < 0) {
+			close(fd);
+			return -1;
+		}
+		if (!count)
+			break;
+		total += count;
+	}
+	if (close(fd) || total != 4096 || snapshot[4095])
+		return -1;
+	return 0;
+}
+
+static int test_long_arguments(void)
+{
+	char argument[1025];
+	char *arguments[9] = {
+		(char *)"/bin/exec-runtime", (char *)"long-child",
+		argument, argument, argument, argument, argument, argument, NULL,
+	};
+	pid_t child;
+	int status;
+
+	memset(argument, 'x', sizeof(argument) - 1);
+	argument[sizeof(argument) - 1] = 0;
+	child = fork();
+	if (child < 0)
+		return -1;
+	if (!child) {
+		execv(arguments[0], arguments);
+		_exit(127);
+	}
+	return waitpid(child, &status, 0) == child && WIFEXITED(status) &&
+	       !WEXITSTATUS(status) ? 0 : -1;
+}
+
 int main(int argc, char **argv)
 {
 	char *missing[] = { "/does-not-exist", NULL };
@@ -150,6 +202,13 @@ int main(int argc, char **argv)
 
 		if (argc != 3 || !execfn || strcmp(execfn, argv[2])) {
 			puts("EXEC_RUNTIME_FAIL direct execfn");
+			return 1;
+		}
+		return 0;
+	}
+	if (argc > 1 && !strcmp(argv[1], "long-child")) {
+		if (long_argument_child(argc, argv)) {
+			puts("EXEC_RUNTIME_FAIL long child");
 			return 1;
 		}
 		return 0;
@@ -189,7 +248,7 @@ int main(int argc, char **argv)
 		return 1;
 	if (test_execfn() < 0 || test_script() < 0 ||
 	    test_truncated_script_interpreter() < 0 ||
-	    test_script_recursion() < 0)
+	    test_script_recursion() < 0 || test_long_arguments() < 0)
 		return 1;
 
 	puts("EXEC_ERRNO_OK");

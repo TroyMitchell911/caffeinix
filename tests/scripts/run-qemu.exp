@@ -249,6 +249,44 @@ expect {
 }
 expect_prompt
 
+send -- "/bin/procfs-runtime alpha beta\r"
+expect {
+	-re {\r?\nPROCFS_RUNTIME_OK} {}
+	-re {PROCFS_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "procfs test reported failure"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in procfs test" }
+	timeout { abort_test "procfs test timeout" }
+	eof { abort_test "QEMU exited during procfs test" }
+}
+expect_prompt
+
+send -- "case \"\$(ps)\" in *PID*) echo BUSYBOX_PS_OK;; esac\r"
+expect_marker BUSYBOX_PS_OK "BusyBox ps"
+expect_prompt
+
+send -- "case \"\$(free)\" in *total*) echo BUSYBOX_FREE_OK;; esac\r"
+expect_marker BUSYBOX_FREE_OK "BusyBox free"
+expect_prompt
+
+send -- "case \"\$(uptime)\" in *load*) echo BUSYBOX_UPTIME_OK;; esac\r"
+expect_marker BUSYBOX_UPTIME_OK "BusyBox uptime"
+expect_prompt
+
+send -- "pidof sh >/dev/null && echo BUSYBOX_PIDOF_OK\r"
+expect_marker BUSYBOX_PIDOF_OK "BusyBox pidof"
+expect_prompt
+
+send -- "case \"\$(top -b -n 1)\" in *PID*) echo BUSYBOX_TOP_OK;; esac\r"
+expect_marker BUSYBOX_TOP_OK "BusyBox top"
+expect_prompt
+
+send -- "case \"\$(netstat -ant)\" in *Proto*) "
+send -- "case \"\$(netstat -anu)\" in *Proto*) "
+send -- "echo BUSYBOX_NETSTAT_OK;; esac;; esac\r"
+expect_marker BUSYBOX_NETSTAT_OK "BusyBox netstat"
+expect_prompt
+
 send -- "/bin/job-control-runtime foreground\r"
 expect {
 	-re {JOB_FOREGROUND_READY} {}

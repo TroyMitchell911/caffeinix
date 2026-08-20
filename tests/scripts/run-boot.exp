@@ -179,6 +179,27 @@ expect {
 	eof { abort_test "QEMU exited after inode timestamp test" }
 }
 
+send -- "/bin/procfs-runtime alpha beta\r"
+expect {
+	-re {\r?\nPROCFS_RUNTIME_OK} {}
+	-re {PROCFS_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "procfs test reported failure"
+	}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic in procfs test"
+	}
+	timeout { abort_with_dump "procfs test timeout" }
+	eof { abort_test "QEMU exited during procfs test" }
+}
+expect {
+	-re {\r?\n# $} {}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic after procfs test"
+	}
+	timeout { abort_test "shell prompt timeout" }
+	eof { abort_test "QEMU exited after procfs test" }
+}
+
 send -- "/bin/aslr-runtime\r"
 expect {
 	-re {\r?\nASLR_RUNTIME_OK} {}

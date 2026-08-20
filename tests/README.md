@@ -148,6 +148,9 @@ The guest selftest covers:
 - ext4 and tmpfs inode timestamps, nanosecond persistence, automatic access
   and modification updates, `utimensat`, `futimens`, `UTIME_OMIT`, and
   no-follow symlink updates;
+- procfs process snapshots, command-line lifetime, process-exit races, mount,
+  memory, uptime, scheduler, and IPv4 statistics, together with BusyBox
+  `ps`, `top`, `free`, `uptime`, `pidof`, and `netstat` consumers;
 - symlink metadata through `lstat`;
 - FAT open-file restrictions, unsupported Unix links, overwrite rename, and
   UTF-8 long names;
