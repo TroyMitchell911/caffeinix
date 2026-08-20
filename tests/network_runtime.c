@@ -1,6 +1,8 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <net/if.h>
+#include <net/if_arp.h>
 #include <netinet/tcp.h>
 #include <poll.h>
 #include <signal.h>
@@ -705,6 +707,88 @@ static int icmp_test(const struct sockaddr_in *host)
 	return 0;
 }
 
+static int interface_test(void)
+{
+	struct ifreq requests[4], request;
+	struct ifconf configuration = {
+		.ifc_len = sizeof(requests),
+		.ifc_req = requests,
+	};
+	char route[2048];
+	int count, eth_index = 0, fd, index, route_fd;
+	ssize_t length;
+
+	fd = socket(AF_INET, SOCK_DGRAM, 0);
+	if (fd < 0 || ioctl(fd, SIOCGIFCONF, &configuration) < 0 ||
+	    configuration.ifc_len < 2 * (int)sizeof(struct ifreq) ||
+	    configuration.ifc_len % sizeof(struct ifreq))
+		return fail("interface list");
+	count = configuration.ifc_len / sizeof(struct ifreq);
+	for (index = 0; index < count; index++) {
+		if (strcmp(requests[index].ifr_name, "eth0"))
+			continue;
+		memset(&request, 0, sizeof(request));
+		strcpy(request.ifr_name, "eth0");
+		if (ioctl(fd, SIOCGIFFLAGS, &request) < 0 ||
+		    (request.ifr_flags & (IFF_UP | IFF_BROADCAST |
+					 IFF_RUNNING)) !=
+		    (IFF_UP | IFF_BROADCAST | IFF_RUNNING))
+			return fail("interface flags");
+		if (ioctl(fd, SIOCGIFADDR, &request) < 0 ||
+		    ((struct sockaddr_in *)&request.ifr_addr)->
+			sin_addr.s_addr == INADDR_ANY)
+			return fail("interface address");
+		if (ioctl(fd, SIOCGIFNETMASK, &request) < 0 ||
+		    ((struct sockaddr_in *)&request.ifr_netmask)->
+			sin_addr.s_addr == INADDR_ANY)
+			return fail("interface netmask");
+		if (ioctl(fd, SIOCGIFBRDADDR, &request) < 0 ||
+		    ((struct sockaddr_in *)&request.ifr_broadaddr)->
+			sin_addr.s_addr == INADDR_ANY)
+			return fail("interface broadcast");
+		if (ioctl(fd, SIOCGIFHWADDR, &request) < 0 ||
+		    request.ifr_hwaddr.sa_family != ARPHRD_ETHER)
+			return fail("interface hardware address");
+		if (ioctl(fd, SIOCGIFMTU, &request) < 0 ||
+		    request.ifr_mtu != 1500 ||
+		    ioctl(fd, SIOCGIFINDEX, &request) < 0 ||
+		    request.ifr_ifindex <= 0)
+			return fail("interface identity");
+		eth_index = request.ifr_ifindex;
+	}
+	if (!eth_index)
+		return fail("interface missing");
+	memset(&request, 0, sizeof(request));
+	request.ifr_ifindex = eth_index;
+	if (ioctl(fd, SIOCGIFNAME, &request) < 0 ||
+	    strcmp(request.ifr_name, "eth0"))
+		return fail("interface index lookup");
+	memset(&request, 0, sizeof(request));
+	strcpy(request.ifr_name, "missing0");
+	errno = 0;
+	if (ioctl(fd, SIOCGIFFLAGS, &request) != -1 || errno != ENODEV)
+		return fail("interface missing error");
+	strcpy(request.ifr_name, "eth0");
+	errno = 0;
+	if (ioctl(fd, SIOCSIFFLAGS, &request) != -1 || errno != ENOTTY)
+		return fail("interface mutation rejection");
+	if (close(fd) < 0)
+		return fail("interface close");
+
+	route_fd = open("/proc/net/route", O_RDONLY);
+	if (route_fd < 0)
+		return fail("route open");
+	length = read(route_fd, route, sizeof(route) - 1);
+	if (length <= 0 || close(route_fd) < 0)
+		return fail("route read");
+	route[length] = 0;
+	if (!strstr(route, "Iface\tDestination\tGateway") ||
+	    !strstr(route, "eth0\t00000000\t") ||
+	    !strstr(route, "\t0003\t0\t0\t0\t00000000\t"))
+		return fail("route contents");
+	return 0;
+}
+
 static int tcp_test(const struct sockaddr_in *host)
 {
 	const int invalid_ttl[] = { 0, 256, -2 };
@@ -1116,6 +1200,8 @@ int main(int argc, char **argv)
 	if (inet_pton(AF_INET, FIXTURE_ADDRESS, &host.sin_addr) != 1)
 		return fail("inet_pton");
 	if (icmp_test(&host))
+		return 1;
+	if (interface_test())
 		return 1;
 	if (udp_test(&host))
 		return 1;
