@@ -45,6 +45,8 @@ _Static_assert(LINUX_SYS_ftruncate == __NR_ftruncate,
 	       "ftruncate number");
 _Static_assert(LINUX_SYS_fallocate == __NR_fallocate,
 	       "fallocate number");
+_Static_assert(LINUX_SYS_truncate == __NR_truncate,
+	       "truncate number");
 _Static_assert(LINUX_SYS_statfs == __NR_statfs, "statfs number");
 _Static_assert(LINUX_SYS_fstatfs == __NR_fstatfs, "fstatfs number");
 _Static_assert(LINUX_SYS_fchmodat == __NR_fchmodat,

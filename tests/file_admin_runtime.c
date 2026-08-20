@@ -637,6 +637,24 @@ static int check_existing_directory_errors(void)
 	return 0;
 }
 
+static int check_truncate_path(void)
+{
+	static const char contents[] = "truncate-path";
+	struct stat stat_buffer;
+	int fd;
+
+	fd = open("/truncate-path", O_CREAT | O_EXCL | O_WRONLY, 0600);
+	if (fd < 0 || write(fd, contents, sizeof(contents)) != sizeof(contents) ||
+	    close(fd) || truncate("/truncate-path", 4096) ||
+	    stat("/truncate-path", &stat_buffer) || stat_buffer.st_size != 4096)
+		return -1;
+	errno = 0;
+	if (truncate("/truncate-path", -1) != -1 || errno != EINVAL ||
+	    unlink("/truncate-path"))
+		return -1;
+	return 0;
+}
+
 static int check_block_device(void)
 {
 	struct stat stat_buffer;
@@ -921,6 +939,8 @@ int main(void)
 		return fail("mknodat dirfd");
 	if (check_existing_directory_errors())
 		return fail("existing directory mkdir");
+	if (check_truncate_path())
+		return fail("truncate path");
 	if (check_metadata_alias_refresh())
 		return fail("metadata alias refresh");
 	if (check_metadata_authorization_race())
