@@ -54,9 +54,17 @@ set command [list \
 spawn -noecho {*}$command
 expect {
 	-re {\[PANIC\]} { abort_test "kernel panic before shell startup" }
-	-re {\r?\n# $} {}
+	-re {\r?\n[^\r\n]*# $} {}
 	timeout { abort_test "shell prompt timeout" }
 	eof { abort_test "QEMU exited before shell startup" }
+}
+
+send -- "PS1='# '\r"
+expect {
+	-re {\r?\n# $} {}
+	-re {\[PANIC\]} { abort_test "kernel panic while setting prompt" }
+	timeout { abort_test "shell prompt setup timeout" }
+	eof { abort_test "QEMU exited while setting prompt" }
 }
 
 send -- "/bin/network-runtime loopback\r"

@@ -133,10 +133,13 @@ expect {
 		abort_test "BusyBox ash disabled job control"
 	}
 	-re {\[PANIC\]} { abort_test "kernel panic before shell startup" }
-	-re {\r?\n# $} {}
+	-re {\r?\n[^\r\n]*# $} {}
 	timeout { abort_test "shell prompt timeout" }
 	eof { abort_test "QEMU exited before shell startup" }
 }
+
+send -- "PS1='# '\r"
+expect_prompt
 
 send -- "echo BUSYBOX_SHELL_OK\r"
 expect {
@@ -330,14 +333,15 @@ send -- "echo BUSYBOX_METADATA_OK\r"
 expect_marker BUSYBOX_METADATA_OK "BusyBox file metadata"
 expect_prompt
 
-send -- "mkfifo /tmp/bb-admin-fifo && "
+send -- "if mkfifo /tmp/bb-admin-fifo 2>/dev/null; then false; "
+send -- "else test ! -e /tmp/bb-admin-fifo; fi && "
 send -- "fallocate -l 4096 /tmp/bb-admin-space && "
 send -- "df / >/dev/null && id >/dev/null && "
 send -- "echo BUSYBOX_ADMIN_TOOLS_OK\r"
 expect_marker BUSYBOX_ADMIN_TOOLS_OK "BusyBox file tools"
 expect_prompt
 
-send -- "rm /tmp/bb-admin /tmp/bb-admin-fifo /tmp/bb-admin-space && "
+send -- "rm /tmp/bb-admin /tmp/bb-admin-space && "
 send -- "echo BUSYBOX_FILE_ADMIN_OK\r"
 expect_marker BUSYBOX_FILE_ADMIN_OK "BusyBox file administration"
 expect_prompt
@@ -631,6 +635,32 @@ foreach marker {
 		}
 		timeout { abort_test "dynamic musl runtime test timeout" }
 		eof { abort_test "QEMU exited during dynamic musl runtime test" }
+	}
+}
+expect_prompt
+
+send -- "/bin/busybox-runtime\r"
+foreach marker {
+	BUSYBOX_MANIFEST_OK
+	BUSYBOX_ASH_LANGUAGE_OK
+	BUSYBOX_TEXT_TOOLS_OK
+	BUSYBOX_ARCHIVE_TOOLS_OK
+	BUSYBOX_FILE_TOOLS_OK
+	BUSYBOX_ACCOUNT_TOOLS_OK
+	BUSYBOX_PROCESS_TOOLS_OK
+	BUSYBOX_SYSTEM_TOOLS_OK
+	BUSYBOX_RUNTIME_OK
+} {
+	expect {
+		-re "\\r?\\n$marker" {}
+		-re {BUSYBOX_RUNTIME_FAIL[^\r\n]*} {
+			abort_test "broad BusyBox runtime test failed"
+		}
+		-re {\[PANIC\]} {
+			abort_test "kernel panic in broad BusyBox runtime test"
+		}
+		timeout { abort_test "broad BusyBox runtime test timeout" }
+		eof { abort_test "QEMU exited in broad BusyBox runtime test" }
 	}
 }
 expect_prompt
@@ -990,6 +1020,13 @@ expect_marker BUSYBOX_LONG_LINE_OK "long edited line"
 expect_prompt
 
 send -- "/bin/ash\r"
+expect {
+	-re {\r?\n[^\r\n]*# $} {}
+	-re {\[PANIC\]} { abort_test "kernel panic in nested shell" }
+	timeout { abort_test "nested shell prompt timeout" }
+	eof { abort_test "QEMU exited in nested shell" }
+}
+send -- "PS1='# '\r"
 expect_prompt
 send -- "\004"
 expect_prompt

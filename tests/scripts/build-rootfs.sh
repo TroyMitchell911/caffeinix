@@ -300,6 +300,8 @@ printf '%s\n' \
 
 install -m 755 "$musl_sysroot/lib/libc.so" "$staging/lib/libc.so"
 ln -s libc.so "$staging/lib/ld-musl-riscv64.so.1"
+install -m 755 "$tests_dir/busybox_runtime.sh" \
+	"$staging/bin/busybox-runtime"
 
 "${cross_compile}gcc" \
 	-nostdlib -nostartfiles -static -march=rv64gc -mabi=lp64d \
