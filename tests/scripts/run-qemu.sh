@@ -202,7 +202,7 @@ check_boot_log()
 		exit 1
 	fi
 	if grep -Eqi \
-		'\[PANIC\]|illegal instruction|Unhandled interrupt|timeout' \
+		'\[PANIC\]|illegal instruction|Unhandled interrupt|timeout|syscall: unsupported Linux call' \
 		"$clean"; then
 		echo "OpenSBI boot log contains a kernel failure" >&2
 		exit 1
@@ -469,6 +469,7 @@ for marker in \
 	VM_SHARED_MAP_OK \
 	VM_COW_OK \
 	VM_ZOMBIE_RELEASE_OK \
+	VM_ICACHE_OK \
 	VM_HARDENING_OK \
 	BUSYBOX_NC_OK \
 	BUSYBOX_WGET_OK \

@@ -73,6 +73,8 @@ _Static_assert(LINUX_SYS_get_robust_list == __NR_get_robust_list,
 	       "get_robust_list number");
 _Static_assert(LINUX_SYS_membarrier == __NR_membarrier,
 	       "membarrier number");
+_Static_assert(LINUX_SYS_riscv_flush_icache ==
+	       __NR_riscv_flush_icache, "riscv_flush_icache number");
 _Static_assert(LINUX_SYS_execve == __NR_execve, "execve number");
 _Static_assert(LINUX_SYS_mprotect == __NR_mprotect, "mprotect number");
 _Static_assert(LINUX_SYS_msync == __NR_msync, "msync number");

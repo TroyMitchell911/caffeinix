@@ -37,6 +37,7 @@
 #define SHARED_SPARSE_PATH "/vm-shared-sparse.bin"
 #define SHARED_TRUNCATE_START "/tmp/vm-shared-truncate-start"
 #define OPEN_TRUNCATE_PATH "/tmp/vm-open-truncate.bin"
+#define EXEC_REFRESH_PATH "/tmp/vm-exec-refresh.bin"
 #define SHARED_ANON_CHILD "/tmp/vm-shared-anon-child"
 #define SHARED_ANON_PARENT "/tmp/vm-shared-anon-parent"
 #define SHARED_ANON_SPLIT "/tmp/vm-shared-anon-split"
@@ -1217,11 +1218,48 @@ static void test_mapping_hardening(void)
 	CHECK(code != MAP_FAILED, "JIT write mapping");
 	code[0] = 0x02a00513;
 	code[1] = 0x00008067;
+	CHECK(syscall(SYS_riscv_flush_icache, UINTPTR_MAX, 0,
+		      1UL) == 0, "local instruction cache flush");
+	CHECK(syscall(SYS_riscv_flush_icache, code, &code[2],
+		      0UL) == 0, "global instruction cache flush");
+	errno = 0;
+	CHECK(syscall(SYS_riscv_flush_icache, code, &code[2],
+		      2UL) == -1 && errno == EINVAL,
+	      "instruction cache flush flags");
 	__builtin___clear_cache((char *)code, (char *)&code[2]);
 	CHECK(mprotect(code, PAGE_SIZE, PROT_READ | PROT_EXEC) == 0,
 	      "JIT W-to-X transition");
 	CHECK(((int (*)(void))code)() == 42, "JIT execute mapping");
+	puts("VM_ICACHE_OK");
 	CHECK(munmap(code, PAGE_SIZE) == 0, "JIT unmap");
+}
+
+static void test_executable_file_refresh(void)
+{
+	uint32_t instruction = 0x02a00513;
+	uint32_t *mapping;
+	int fd;
+
+	fd = open(EXEC_REFRESH_PATH, O_CREAT | O_TRUNC | O_RDWR, 0600);
+	CHECK(fd >= 0, "executable refresh open");
+	CHECK(ftruncate(fd, PAGE_SIZE) == 0, "executable refresh extend");
+	CHECK(write(fd, &instruction, sizeof(instruction)) ==
+	      (ssize_t)sizeof(instruction), "executable refresh write");
+	instruction = 0x00008067;
+	CHECK(write(fd, &instruction, sizeof(instruction)) ==
+	      (ssize_t)sizeof(instruction), "executable refresh return");
+	mapping = mmap(0, PAGE_SIZE, PROT_READ | PROT_EXEC, MAP_PRIVATE,
+		       fd, 0);
+	CHECK(mapping != MAP_FAILED, "executable refresh mmap");
+	CHECK(((int (*)(void))mapping)() == 42, "executable refresh initial");
+	instruction = 0x02b00513;
+	CHECK(lseek(fd, 0, SEEK_SET) == 0, "executable refresh seek");
+	CHECK(write(fd, &instruction, sizeof(instruction)) ==
+	      (ssize_t)sizeof(instruction), "executable refresh update");
+	CHECK(((int (*)(void))mapping)() == 43, "executable refresh result");
+	CHECK(munmap(mapping, PAGE_SIZE) == 0, "executable refresh munmap");
+	CHECK(close(fd) == 0, "executable refresh close");
+	CHECK(unlink(EXEC_REFRESH_PATH) == 0, "executable refresh unlink");
 }
 
 static uint64_t reclaim_hash(const volatile unsigned char *mapping,
@@ -1317,6 +1355,7 @@ int main(int argc, char **argv)
 	test_mapping_lifetime();
 	test_kernel_copy_permissions();
 	test_mapping_hardening();
+	test_executable_file_refresh();
 	puts("VM_HARDENING_OK");
 	CHECK(munmap(anonymous, 3 * PAGE_SIZE) == 0, "unmap anonymous");
 	CHECK(munmap(file_mapping, 2 * PAGE_SIZE) == 0, "unmap file");
