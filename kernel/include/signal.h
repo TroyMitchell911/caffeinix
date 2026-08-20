@@ -7,6 +7,7 @@
 #define SIGNAL_COUNT 64
 #define SIGNAL_RESTART_SYS 512
 #define SIGNAL_QUEUE_FULL -2
+#define SIGNAL_QUEUE_DENIED -3
 
 struct process;
 struct thread;
@@ -17,6 +18,8 @@ struct signal_info {
 	int code;
 	int sender_pid;
 	uint32 sender_uid;
+	uint32 sender_euid;
+	int sender_sid;
 	int status;
 	uint64 address;
 };

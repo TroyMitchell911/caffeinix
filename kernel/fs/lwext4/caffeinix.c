@@ -558,7 +558,8 @@ static int ext4fs_lookup(struct vfs_inode *directory, const char *name,
 }
 
 static int ext4fs_create(struct vfs_inode *directory, const char *name,
-			 uint32 mode, struct vfs_inode **result)
+			 uint32 mode, uint32 uid, uint32 gid,
+			 struct vfs_inode **result)
 {
 	struct ext4fs_inode *private = directory->private;
 	char *path = palloc();
@@ -583,6 +584,12 @@ static int ext4fs_create(struct vfs_inode *directory, const char *name,
 		status = ext4fs_result(status);
 		goto out;
 	}
+	status = ext4_owner_set(path, uid, gid);
+	if (status != EOK) {
+		ext4_fremove(path);
+		status = ext4fs_result(status);
+		goto out;
+	}
 	status = ext4fs_touch(path, EXT4_TIME_ATIME | EXT4_TIME_MTIME |
 				     EXT4_TIME_CTIME);
 	if (status < 0) {
@@ -602,7 +609,8 @@ out:
 }
 
 static int ext4fs_mkdir(struct vfs_inode *directory, const char *name,
-			uint32 mode, struct vfs_inode **result)
+			uint32 mode, uint32 uid, uint32 gid,
+			struct vfs_inode **result)
 {
 	struct ext4fs_inode *private = directory->private;
 	char *path = palloc();
@@ -620,6 +628,12 @@ static int ext4fs_mkdir(struct vfs_inode *directory, const char *name,
 		goto out;
 	}
 	status = ext4_mode_set(path, mode & VFS_MODE_PERMISSIONS);
+	if (status != EOK) {
+		ext4_dir_rm(path);
+		status = ext4fs_result(status);
+		goto out;
+	}
+	status = ext4_owner_set(path, uid, gid);
 	if (status != EOK) {
 		ext4_dir_rm(path);
 		status = ext4fs_result(status);
@@ -738,7 +752,8 @@ static int ext4fs_link(struct vfs_inode *inode,
 }
 
 static int ext4fs_symlink(struct vfs_inode *directory, const char *name,
-			  const char *target, struct vfs_inode **result)
+			  const char *target, uint32 uid, uint32 gid,
+			  struct vfs_inode **result)
 {
 	struct ext4fs_inode *parent = directory->private;
 	char *path = palloc();
@@ -752,6 +767,12 @@ static int ext4fs_symlink(struct vfs_inode *directory, const char *name,
 		goto out;
 	status = ext4_fsymlink(target, path);
 	if (status != EOK) {
+		status = ext4fs_result(status);
+		goto out;
+	}
+	status = ext4_owner_set(path, uid, gid);
+	if (status != EOK) {
+		ext4_fremove(path);
 		status = ext4fs_result(status);
 		goto out;
 	}

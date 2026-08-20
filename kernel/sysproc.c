@@ -434,21 +434,383 @@ uint64 sys_linux_getppid(void)
 
 uint64 sys_linux_getuid(void)
 {
-	return 0;
+	struct process_credentials credentials;
+
+	process_credentials_get(&credentials);
+	return credentials.uid;
 }
 
 uint64 sys_linux_geteuid(void)
 {
-	return 0;
+	struct process_credentials credentials;
+
+	process_credentials_get(&credentials);
+	return credentials.euid;
 }
 
 uint64 sys_linux_getgid(void)
 {
-	return 0;
+	struct process_credentials credentials;
+
+	process_credentials_get(&credentials);
+	return credentials.gid;
 }
 
 uint64 sys_linux_getegid(void)
 {
+	struct process_credentials credentials;
+
+	process_credentials_get(&credentials);
+	return credentials.egid;
+}
+
+#define LINUX_ID_NO_CHANGE ((uint32)-1)
+
+static int credentials_id_allowed(uint32 requested, uint32 first,
+				  uint32 second, uint32 third)
+{
+	return requested == LINUX_ID_NO_CHANGE || requested == first ||
+	       requested == second || requested == third;
+}
+
+uint64 sys_linux_setuid(void)
+{
+	process_t process = cur_proc();
+	struct process_credentials *credentials = &process->credentials;
+	uint32 uid;
+	int value, result = 0;
+
+	argint(0, &value);
+	uid = value;
+	if (uid == LINUX_ID_NO_CHANGE)
+		return -LINUX_EINVAL;
+	spinlock_acquire(&process->lock);
+	if (!credentials->euid) {
+		credentials->uid = uid;
+		credentials->euid = uid;
+		credentials->suid = uid;
+		credentials->fsuid = uid;
+	} else if (uid == credentials->uid || uid == credentials->suid) {
+		credentials->euid = uid;
+		credentials->fsuid = uid;
+	} else {
+		result = -LINUX_EPERM;
+	}
+	spinlock_release(&process->lock);
+	return result;
+}
+
+uint64 sys_linux_setgid(void)
+{
+	process_t process = cur_proc();
+	struct process_credentials *credentials = &process->credentials;
+	uint32 gid;
+	int value, result = 0;
+
+	argint(0, &value);
+	gid = value;
+	if (gid == LINUX_ID_NO_CHANGE)
+		return -LINUX_EINVAL;
+	spinlock_acquire(&process->lock);
+	if (!credentials->euid) {
+		credentials->gid = gid;
+		credentials->egid = gid;
+		credentials->sgid = gid;
+		credentials->fsgid = gid;
+	} else if (gid == credentials->gid || gid == credentials->sgid) {
+		credentials->egid = gid;
+		credentials->fsgid = gid;
+	} else {
+		result = -LINUX_EPERM;
+	}
+	spinlock_release(&process->lock);
+	return result;
+}
+
+uint64 sys_linux_setreuid(void)
+{
+	process_t process = cur_proc();
+	struct process_credentials *credentials = &process->credentials;
+	uint32 ruid, euid, old_uid;
+	int real, effective, result = 0;
+
+	argint(0, &real);
+	argint(1, &effective);
+	ruid = real;
+	euid = effective;
+	spinlock_acquire(&process->lock);
+	old_uid = credentials->uid;
+	if (credentials->euid &&
+	    (!credentials_id_allowed(ruid, credentials->uid,
+				     credentials->euid,
+				     credentials->uid) ||
+	     !credentials_id_allowed(euid, credentials->uid,
+				     credentials->euid,
+				     credentials->suid))) {
+		result = -LINUX_EPERM;
+		goto out;
+	}
+	if (ruid != LINUX_ID_NO_CHANGE)
+		credentials->uid = ruid;
+	if (euid != LINUX_ID_NO_CHANGE)
+		credentials->euid = euid;
+	if (ruid != LINUX_ID_NO_CHANGE ||
+	    (euid != LINUX_ID_NO_CHANGE && euid != old_uid))
+		credentials->suid = credentials->euid;
+	if (euid != LINUX_ID_NO_CHANGE)
+		credentials->fsuid = credentials->euid;
+out:
+	spinlock_release(&process->lock);
+	return result;
+}
+
+uint64 sys_linux_setregid(void)
+{
+	process_t process = cur_proc();
+	struct process_credentials *credentials = &process->credentials;
+	uint32 rgid, egid, old_gid;
+	int real, effective, result = 0;
+
+	argint(0, &real);
+	argint(1, &effective);
+	rgid = real;
+	egid = effective;
+	spinlock_acquire(&process->lock);
+	old_gid = credentials->gid;
+	if (credentials->euid &&
+	    (!credentials_id_allowed(rgid, credentials->gid,
+				     credentials->egid,
+				     credentials->gid) ||
+	     !credentials_id_allowed(egid, credentials->gid,
+				     credentials->egid,
+				     credentials->sgid))) {
+		result = -LINUX_EPERM;
+		goto out;
+	}
+	if (rgid != LINUX_ID_NO_CHANGE)
+		credentials->gid = rgid;
+	if (egid != LINUX_ID_NO_CHANGE)
+		credentials->egid = egid;
+	if (rgid != LINUX_ID_NO_CHANGE ||
+	    (egid != LINUX_ID_NO_CHANGE && egid != old_gid))
+		credentials->sgid = credentials->egid;
+	if (egid != LINUX_ID_NO_CHANGE)
+		credentials->fsgid = credentials->egid;
+out:
+	spinlock_release(&process->lock);
+	return result;
+}
+
+uint64 sys_linux_setresuid(void)
+{
+	process_t process = cur_proc();
+	struct process_credentials *credentials = &process->credentials;
+	uint32 ruid, euid, suid;
+	int real, effective, saved, result = 0;
+
+	argint(0, &real);
+	argint(1, &effective);
+	argint(2, &saved);
+	ruid = real;
+	euid = effective;
+	suid = saved;
+	spinlock_acquire(&process->lock);
+	if (credentials->euid &&
+	    (!credentials_id_allowed(ruid, credentials->uid,
+				     credentials->euid,
+				     credentials->suid) ||
+	     !credentials_id_allowed(euid, credentials->uid,
+				     credentials->euid,
+				     credentials->suid) ||
+	     !credentials_id_allowed(suid, credentials->uid,
+				     credentials->euid,
+				     credentials->suid))) {
+		result = -LINUX_EPERM;
+		goto out;
+	}
+	if (ruid != LINUX_ID_NO_CHANGE)
+		credentials->uid = ruid;
+	if (euid != LINUX_ID_NO_CHANGE)
+		credentials->euid = euid;
+	if (suid != LINUX_ID_NO_CHANGE)
+		credentials->suid = suid;
+	if (euid != LINUX_ID_NO_CHANGE)
+		credentials->fsuid = credentials->euid;
+out:
+	spinlock_release(&process->lock);
+	return result;
+}
+
+uint64 sys_linux_setresgid(void)
+{
+	process_t process = cur_proc();
+	struct process_credentials *credentials = &process->credentials;
+	uint32 rgid, egid, sgid;
+	int real, effective, saved, result = 0;
+
+	argint(0, &real);
+	argint(1, &effective);
+	argint(2, &saved);
+	rgid = real;
+	egid = effective;
+	sgid = saved;
+	spinlock_acquire(&process->lock);
+	if (credentials->euid &&
+	    (!credentials_id_allowed(rgid, credentials->gid,
+				     credentials->egid,
+				     credentials->sgid) ||
+	     !credentials_id_allowed(egid, credentials->gid,
+				     credentials->egid,
+				     credentials->sgid) ||
+	     !credentials_id_allowed(sgid, credentials->gid,
+				     credentials->egid,
+				     credentials->sgid))) {
+		result = -LINUX_EPERM;
+		goto out;
+	}
+	if (rgid != LINUX_ID_NO_CHANGE)
+		credentials->gid = rgid;
+	if (egid != LINUX_ID_NO_CHANGE)
+		credentials->egid = egid;
+	if (sgid != LINUX_ID_NO_CHANGE)
+		credentials->sgid = sgid;
+	if (egid != LINUX_ID_NO_CHANGE)
+		credentials->fsgid = credentials->egid;
+out:
+	spinlock_release(&process->lock);
+	return result;
+}
+
+static uint64 credentials_copy_ids(int group)
+{
+	struct process_credentials credentials;
+	process_t process = cur_proc();
+	uint64 real_address, effective_address, saved_address;
+	uint32 real, effective, saved;
+
+	argaddr(0, &real_address);
+	argaddr(1, &effective_address);
+	argaddr(2, &saved_address);
+	process_credentials_get(&credentials);
+	if (group) {
+		real = credentials.gid;
+		effective = credentials.egid;
+		saved = credentials.sgid;
+	} else {
+		real = credentials.uid;
+		effective = credentials.euid;
+		saved = credentials.suid;
+	}
+	if (copyout(process->pagetable, real_address, (char *)&real,
+		    sizeof(real)) < 0 ||
+	    copyout(process->pagetable, effective_address,
+		    (char *)&effective, sizeof(effective)) < 0 ||
+	    copyout(process->pagetable, saved_address, (char *)&saved,
+		    sizeof(saved)) < 0)
+		return -LINUX_EFAULT;
+	return 0;
+}
+
+uint64 sys_linux_getresuid(void)
+{
+	return credentials_copy_ids(0);
+}
+
+uint64 sys_linux_getresgid(void)
+{
+	return credentials_copy_ids(1);
+}
+
+uint64 sys_linux_setfsuid(void)
+{
+	process_t process = cur_proc();
+	struct process_credentials *credentials = &process->credentials;
+	uint32 uid, old;
+	int value;
+
+	argint(0, &value);
+	uid = value;
+	spinlock_acquire(&process->lock);
+	old = credentials->fsuid;
+	if (uid != LINUX_ID_NO_CHANGE &&
+	    (!credentials->euid || uid == credentials->uid ||
+	     uid == credentials->euid || uid == credentials->suid ||
+	     uid == credentials->fsuid))
+		credentials->fsuid = uid;
+	spinlock_release(&process->lock);
+	return old;
+}
+
+uint64 sys_linux_setfsgid(void)
+{
+	process_t process = cur_proc();
+	struct process_credentials *credentials = &process->credentials;
+	uint32 gid, old;
+	int value;
+
+	argint(0, &value);
+	gid = value;
+	spinlock_acquire(&process->lock);
+	old = credentials->fsgid;
+	if (gid != LINUX_ID_NO_CHANGE &&
+	    (!credentials->euid || gid == credentials->gid ||
+	     gid == credentials->egid || gid == credentials->sgid ||
+	     gid == credentials->fsgid))
+		credentials->fsgid = gid;
+	spinlock_release(&process->lock);
+	return old;
+}
+
+uint64 sys_linux_getgroups(void)
+{
+	struct process_credentials credentials;
+	process_t process = cur_proc();
+	uint64 address;
+	int size;
+
+	argint(0, &size);
+	argaddr(1, &address);
+	if (size < 0)
+		return -LINUX_EINVAL;
+	process_credentials_get(&credentials);
+	if (!size)
+		return credentials.group_count;
+	if ((uint32)size < credentials.group_count)
+		return -LINUX_EINVAL;
+	if (credentials.group_count &&
+	    copyout(process->pagetable, address, (char *)credentials.groups,
+		    credentials.group_count * sizeof(credentials.groups[0])) < 0)
+		return -LINUX_EFAULT;
+	return credentials.group_count;
+}
+
+uint64 sys_linux_setgroups(void)
+{
+	process_t process = cur_proc();
+	uint32 groups[PROCESS_GROUP_MAX];
+	uint64 address;
+	int size;
+
+	argint(0, &size);
+	argaddr(1, &address);
+	if (size < 0 || size > PROCESS_GROUP_MAX)
+		return -LINUX_EINVAL;
+	if (size && copyin(process->pagetable, (char *)groups, address,
+			   size * sizeof(groups[0])) < 0)
+		return -LINUX_EFAULT;
+	spinlock_acquire(&process->lock);
+	if (process->credentials.euid) {
+		spinlock_release(&process->lock);
+		return -LINUX_EPERM;
+	}
+	process->credentials.group_count = size;
+	if (size)
+		memmove(process->credentials.groups, groups,
+			size * sizeof(groups[0]));
+	if (size < PROCESS_GROUP_MAX)
+		memset(process->credentials.groups + size, 0,
+		       (PROCESS_GROUP_MAX - size) * sizeof(groups[0]));
+	spinlock_release(&process->lock);
 	return 0;
 }
 
@@ -552,13 +914,10 @@ uint64 sys_linux_getpriority(void)
 
 uint64 sys_linux_umask(void)
 {
-	process_t process = cur_proc();
-	uint32 old_mask = process->umask;
 	int mask;
 
 	argint(0, &mask);
-	process->umask = mask & 0777;
-	return old_mask;
+	return process_umask_set(mask);
 }
 
 uint64 sys_linux_riscv_flush_icache(void)

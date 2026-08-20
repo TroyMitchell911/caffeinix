@@ -126,13 +126,12 @@ static int elf_image_open(const char *path, struct elf_image *image)
 	int i;
 
 	*image = (struct elf_image){0};
-	result = vfs_open_file(path, VFS_OPEN_READ, 0, &image->file);
+	result = vfs_open_file(path, VFS_OPEN_EXEC, 0, &image->file);
 	if (result < 0)
 		return linux_error(result);
 	if (!image->file->path.dentry ||
 	    !image->file->path.dentry->inode ||
-	    image->file->path.dentry->inode->type == VFS_INODE_DIRECTORY ||
-	    !(image->file->path.dentry->inode->mode & 0111)) {
+	    image->file->path.dentry->inode->type == VFS_INODE_DIRECTORY) {
 		elf_image_close(image);
 		return -LINUX_EACCES;
 	}
@@ -183,6 +182,23 @@ static int elf_image_open(const char *path, struct elf_image *image)
 fail:
 	elf_image_close(image);
 	return result;
+}
+
+static void elf_image_exec_credentials(
+	const struct elf_image *image,
+	struct process_credentials *credentials)
+{
+	const struct vfs_inode *inode = image->file->path.dentry->inode;
+
+	process_credentials_get(credentials);
+	if (inode->mode & 04000)
+		credentials->euid = inode->uid;
+	if ((inode->mode & 02000) && (inode->mode & 00010))
+		credentials->egid = inode->gid;
+	credentials->suid = credentials->euid;
+	credentials->fsuid = credentials->euid;
+	credentials->sgid = credentials->egid;
+	credentials->fsgid = credentials->egid;
 }
 
 static int elf_image_interpreter(const struct elf_image *image, char *path)
@@ -307,6 +323,7 @@ static int build_linux_stack(pagedir_t pgdir, uint64 stack_top,
 			     uint64 stack_base, char **argv, char **envp,
 			     const char *execfn,
 			     const struct linux_exec_layout *exec,
+			     const struct process_credentials *credentials,
 			     uint64 *new_sp)
 {
 	uint64 argv_address[MAXARG];
@@ -374,11 +391,12 @@ static int build_linux_stack(pagedir_t pgdir, uint64 stack_top,
 	AUX(LINUX_AT_PAGESZ, PGSIZE);
 	AUX(LINUX_AT_BASE, exec->base);
 	AUX(LINUX_AT_ENTRY, exec->entry);
-	AUX(LINUX_AT_UID, 0);
-	AUX(LINUX_AT_EUID, 0);
-	AUX(LINUX_AT_GID, 0);
-	AUX(LINUX_AT_EGID, 0);
-	AUX(LINUX_AT_SECURE, 0);
+	AUX(LINUX_AT_UID, credentials->uid);
+	AUX(LINUX_AT_EUID, credentials->euid);
+	AUX(LINUX_AT_GID, credentials->gid);
+	AUX(LINUX_AT_EGID, credentials->egid);
+	AUX(LINUX_AT_SECURE, credentials->uid != credentials->euid ||
+			     credentials->gid != credentials->egid);
 	AUX(LINUX_AT_RANDOM, length);
 	AUX(LINUX_AT_EXECFN, execfn_address);
 	AUX(LINUX_AT_NULL, 0);
@@ -434,6 +452,7 @@ static int exec_elf(char *path, const char *execfn, char **argv, char **envp)
 	struct elf_image executable = {0}, interpreter = {0};
 	struct exec_aslr_layout aslr;
 	struct linux_exec_layout exec;
+	struct process_credentials credentials;
 	struct vma_set new_vmas, old_vmas;
 	char interpreter_path[MAXPATH];
 	void *new_cmdline = 0;
@@ -461,6 +480,7 @@ static int exec_elf(char *path, const char *execfn, char **argv, char **envp)
 	error = elf_image_open(path, &executable);
 	if (error < 0)
 		goto fail;
+	elf_image_exec_credentials(&executable, &credentials);
 	if (executable.layout.has_interp) {
 		error = elf_image_interpreter(&executable,
 					      interpreter_path);
@@ -518,7 +538,7 @@ static int exec_elf(char *path, const char *execfn, char **argv, char **envp)
 	}
 	sp = aslr.stack_top;
 	argc = build_linux_stack(pgdir, aslr.stack_top, stack_base,
-				 argv, envp, execfn, &exec, &sp);
+				 argv, envp, execfn, &exec, &credentials, &sp);
 	if (argc < 0) {
 		error = -LINUX_E2BIG;
 		goto fail;
@@ -553,6 +573,9 @@ static int exec_elf(char *path, const char *execfn, char **argv, char **envp)
 	current->trapframe->fcsr = 0;
 	__atomic_store_n(&process->membarrier_private_expedited, 0,
 	                 __ATOMIC_RELEASE);
+	spinlock_acquire(&process->lock);
+	process->credentials = credentials;
+	spinlock_release(&process->lock);
 	signal_process_exec(process, current);
 
 	for (name = path_p = execfn; *path_p; path_p++) {
@@ -595,7 +618,7 @@ static int exec_script(char *path, const char *execfn, char **argv,
 	int64 length;
 	int input = 1, output = 0;
 
-	length = vfs_open_file(path, VFS_OPEN_READ, 0, &file);
+	length = vfs_open_file(path, VFS_OPEN_EXEC, 0, &file);
 	if (length < 0)
 		return linux_error(length);
 	length = vfs_file_pread(file, 0, (uint64)buffer,

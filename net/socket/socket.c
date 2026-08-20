@@ -940,6 +940,7 @@ static int socket_install(int descriptor, int family, int type,
 			  const struct socket_inherited_options *inherited,
 			  int connected, int flags, int *fd_out)
 {
+	struct process_credentials credentials;
 	struct socket_file *socket;
 	file_t file;
 	int status;
@@ -960,6 +961,8 @@ static int socket_install(int descriptor, int family, int type,
 	socket->type = type;
 	socket->protocol = protocol;
 	socket->has_peer = connected;
+	process_credentials_get(&credentials);
+	socket->uid = credentials.fsuid;
 	spinlock_init(&socket->lock, "socket options");
 	list_init(&socket->registry_node);
 	if (inherited)
@@ -1010,6 +1013,7 @@ static int socket_get(int fd, file_t *file_out,
 
 int ksocket_create(int family, int type, int protocol, int *fd_out)
 {
+	struct process_credentials credentials;
 	int base_type = type & ~(LINUX_SOCK_NONBLOCK | LINUX_SOCK_CLOEXEC);
 	int descriptor;
 
@@ -1023,9 +1027,13 @@ int ksocket_create(int family, int type, int protocol, int *fd_out)
 		return -LINUX_ESOCKTNOSUPPORT;
 	if (type & ~(base_type | LINUX_SOCK_NONBLOCK | LINUX_SOCK_CLOEXEC))
 		return -LINUX_EINVAL;
-	if (base_type == LINUX_SOCK_RAW &&
-	    protocol != LINUX_IPPROTO_ICMP)
-		return -LINUX_EPROTONOSUPPORT;
+	if (base_type == LINUX_SOCK_RAW) {
+		process_credentials_get(&credentials);
+		if (credentials.euid)
+			return -LINUX_EPERM;
+		if (protocol != LINUX_IPPROTO_ICMP)
+			return -LINUX_EPROTONOSUPPORT;
+	}
 	if ((base_type == LINUX_SOCK_STREAM &&
 	     protocol != LINUX_IPPROTO_IP &&
 	     protocol != LINUX_IPPROTO_TCP) ||

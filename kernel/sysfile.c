@@ -142,7 +142,7 @@ uint64 sys_linux_openat(void)
 	if (linux_open_flags(linux_flags, &flags) < 0)
 		return -LINUX_EINVAL;
 	mode &= VFS_MODE_PERMISSIONS;
-	mode &= ~cur_proc()->umask;
+	mode &= ~process_umask_get();
 	result = vfs_open(path, flags, mode, &fd);
 	if (result < 0)
 		return linux_error(result);
@@ -460,7 +460,7 @@ uint64 sys_linux_mkdirat(void)
 	if (path[0] != '/' && dirfd != LINUX_AT_FDCWD)
 		return -LINUX_EBADF;
 	mode &= VFS_MODE_PERMISSIONS;
-	mode &= ~cur_proc()->umask;
+	mode &= ~process_umask_get();
 	result = vfs_mkdir(path, mode);
 	return result < 0 ? linux_error(result) : 0;
 }
@@ -601,14 +601,24 @@ uint64 sys_linux_fdatasync(void)
 uint64 sys_linux_faccessat(void)
 {
 	char path[MAXPATH];
-	int dirfd, result;
+	uint32 access = 0;
+	int dirfd, mode, result;
 
 	argint(0, &dirfd);
+	argint(2, &mode);
 	if (argstr(1, path, sizeof(path)) < 0)
 		return -LINUX_EFAULT;
 	if (path[0] != '/' && dirfd != LINUX_AT_FDCWD)
 		return -LINUX_EBADF;
-	result = vfs_access(path);
+	if (mode & ~(LINUX_R_OK | LINUX_W_OK | LINUX_X_OK))
+		return -LINUX_EINVAL;
+	if (mode & LINUX_R_OK)
+		access |= VFS_ACCESS_READ;
+	if (mode & LINUX_W_OK)
+		access |= VFS_ACCESS_WRITE;
+	if (mode & LINUX_X_OK)
+		access |= VFS_ACCESS_EXEC;
+	result = vfs_access(path, access, 0);
 	return result < 0 ? linux_error(result) : 0;
 }
 
@@ -620,7 +630,7 @@ uint64 sys_linux_utimensat(void)
 	char path[MAXPATH];
 	uint64 address, path_address;
 	uint32 mask = 0;
-	int use_fd = 0;
+	int owner_only = 0, use_fd = 0;
 	int dirfd, flags, i, result;
 
 	argint(0, &dirfd);
@@ -639,6 +649,8 @@ uint64 sys_linux_utimensat(void)
 		if (copyin(process->pagetable, (char *)linux_times, address,
 		           sizeof(linux_times)) < 0)
 			return -LINUX_EFAULT;
+		owner_only = linux_times[0].nanoseconds != LINUX_UTIME_NOW ||
+			     linux_times[1].nanoseconds != LINUX_UTIME_NOW;
 		for (i = 0; i < 2; i++) {
 			if (linux_times[i].nanoseconds == LINUX_UTIME_OMIT)
 				continue;
@@ -674,11 +686,11 @@ uint64 sys_linux_utimensat(void)
 		}
 	}
 	if (use_fd)
-		result = vfs_set_times_fd(dirfd, times, mask);
+		result = vfs_set_times_fd(dirfd, times, mask, owner_only);
 	else
 		result = vfs_set_times_path(path,
 				!(flags & LINUX_AT_SYMLINK_NOFOLLOW),
-				times, mask);
+				times, mask, owner_only);
 	return result < 0 ? linux_error(result) : 0;
 }
 

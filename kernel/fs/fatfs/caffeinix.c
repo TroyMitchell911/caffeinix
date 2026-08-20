@@ -230,7 +230,8 @@ static int fatfs_lookup(struct vfs_inode *directory, const char *name,
 }
 
 static int fatfs_create(struct vfs_inode *directory, const char *name,
-			uint32 mode, struct vfs_inode **result)
+			uint32 mode, uint32 uid, uint32 gid,
+			struct vfs_inode **result)
 {
 	struct fatfs_inode *parent = directory->private;
 	char *path = palloc();
@@ -239,6 +240,8 @@ static int fatfs_create(struct vfs_inode *directory, const char *name,
 	int status;
 
 	(void)mode;
+	(void)uid;
+	(void)gid;
 	if (!path)
 		return VFS_ERR_NOMEM;
 	status = fatfs_join(path, parent->path, name);
@@ -266,7 +269,8 @@ out:
 }
 
 static int fatfs_mkdir(struct vfs_inode *directory, const char *name,
-		       uint32 mode, struct vfs_inode **result)
+		       uint32 mode, uint32 uid, uint32 gid,
+		       struct vfs_inode **result)
 {
 	struct fatfs_inode *parent = directory->private;
 	char *path = palloc();
@@ -274,6 +278,8 @@ static int fatfs_mkdir(struct vfs_inode *directory, const char *name,
 	int status;
 
 	(void)mode;
+	(void)uid;
+	(void)gid;
 	if (!path)
 		return VFS_ERR_NOMEM;
 	status = fatfs_join(path, parent->path, name);

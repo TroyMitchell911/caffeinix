@@ -17,6 +17,11 @@
 #define VFS_OPEN_APPEND     (1U << 6)
 #define VFS_OPEN_NONBLOCK   (1U << 7)
 #define VFS_OPEN_NOCTTY     (1U << 8)
+#define VFS_OPEN_EXEC       (1U << 9)
+
+#define VFS_ACCESS_EXEC  (1U << 0)
+#define VFS_ACCESS_WRITE (1U << 1)
+#define VFS_ACCESS_READ  (1U << 2)
 
 #define VFS_WRITE_NOAPPEND  (1U << 0)
 
@@ -90,6 +95,8 @@ enum vfs_result {
 	VFS_ERR_PIPE = -48,
 	VFS_ERR_INTR = -49,
 	VFS_ERR_OVERFLOW = -50,
+	VFS_ERR_ACCES = -51,
+	VFS_ERR_TXTBSY = -52,
 };
 
 #define VFS_RENAME_NOREPLACE (1U << 0)
@@ -170,9 +177,11 @@ struct vfs_inode_operations {
 	int (*lookup)(struct vfs_inode *directory, const char *name,
 	              struct vfs_inode **result);
 	int (*create)(struct vfs_inode *directory, const char *name,
-	              uint32 mode, struct vfs_inode **result);
+	              uint32 mode, uint32 uid, uint32 gid,
+	              struct vfs_inode **result);
 	int (*mkdir)(struct vfs_inode *directory, const char *name,
-	             uint32 mode, struct vfs_inode **result);
+	             uint32 mode, uint32 uid, uint32 gid,
+	             struct vfs_inode **result);
 	int (*unlink)(struct vfs_inode *directory, const char *name);
 	int (*rmdir)(struct vfs_inode *directory, const char *name);
 	int (*rename)(struct vfs_inode *old_directory, const char *old_name,
@@ -181,7 +190,8 @@ struct vfs_inode_operations {
 	int (*link)(struct vfs_inode *inode, struct vfs_inode *directory,
 	            const char *name);
 	int (*symlink)(struct vfs_inode *directory, const char *name,
-	               const char *target, struct vfs_inode **result);
+	               const char *target, uint32 uid, uint32 gid,
+	               struct vfs_inode **result);
 	int (*readlink)(struct vfs_inode *inode, char *buffer, uint32 size);
 	int (*truncate)(struct vfs_inode *inode, uint64 size);
 	int (*set_times)(struct vfs_inode *inode,
@@ -242,6 +252,8 @@ struct vfs_super_block {
 
 struct vfs_inode {
 	int ref;
+	uint32 write_open_count;
+	uint32 exec_open_count;
 	struct vfs_super_block *superblock;
 	uint64 number;
 	enum vfs_inode_type type;
@@ -291,6 +303,8 @@ struct vfs_mount_snapshot {
 
 struct vfs_file {
 	int ref;
+	uint32 access_ref;
+	uint8 inode_access;
 	struct sleeplock position_lock;
 	struct vfs_path path;
 	const struct vfs_file_operations *operations;
@@ -328,6 +342,11 @@ int vfs_open_file(const char *path, uint32 flags, uint32 mode,
 		  struct vfs_file **result);
 struct vfs_file *vfs_file_get(struct vfs_file *file);
 void vfs_file_put(struct vfs_file *file);
+struct vfs_file *vfs_file_hold(struct vfs_file *file);
+void vfs_file_unhold(struct vfs_file *file);
+void vfs_file_release_inode_access(struct vfs_file *file);
+int vfs_exec_mapping_get(struct vfs_file *file);
+void vfs_exec_mapping_put(struct vfs_file *file);
 int64 vfs_file_pread(struct vfs_file *file, int user_destination,
 		     uint64 destination, uint64 count, uint64 offset);
 int64 vfs_file_pread_raw(struct vfs_file *file, int user_destination,
@@ -372,9 +391,10 @@ int vfs_stat_fd(int fd, struct vfs_stat *stat);
 int vfs_stat_path(const char *path, int follow_symlink,
 		  struct vfs_stat *stat);
 int vfs_set_times_path(const char *path, int follow_symlink,
-		       const struct vfs_timespec times[2], uint32 mask);
+		       const struct vfs_timespec times[2], uint32 mask,
+		       int owner_only);
 int vfs_set_times_fd(int fd, const struct vfs_timespec times[2],
-		     uint32 mask);
+		     uint32 mask, int owner_only);
 int vfs_current_time(struct vfs_timespec *time);
 int vfs_next_dirent(int fd, vfs_dirent_emit_t emit, void *context);
 int vfs_mkdir(const char *path, uint32 mode);
@@ -389,7 +409,7 @@ int vfs_fsync(int fd);
 int vfs_sync(void);
 int vfs_chdir(const char *path);
 int vfs_getcwd(char *buffer, uint32 size);
-int vfs_access(const char *path);
+int vfs_access(const char *path, uint32 mode, int use_effective_ids);
 int vfs_get_fd_flags(int fd, uint8 *flags);
 int vfs_set_fd_flags(int fd, uint8 flags);
 int vfs_get_file_flags(int fd, uint32 *flags);

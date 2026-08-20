@@ -25,6 +25,9 @@
 #define VFS_LOOKUP_PARENT (1U << 0)
 #define VFS_LOOKUP_NOFOLLOW_FINAL (1U << 1)
 
+#define VFS_INODE_ACCESS_WRITE (1U << 0)
+#define VFS_INODE_ACCESS_EXEC  (1U << 1)
+
 struct vfs_walk_buffer {
 	char component[VFS_NAME_MAX + 1];
 	char combined[VFS_PATH_MAX];
@@ -58,6 +61,186 @@ static int string_equal(const char *left, const char *right)
 
 	return left_length == right_length &&
 	       !strncmp(left, right, left_length);
+}
+
+static int vfs_credentials_in_group(
+	const struct process_credentials *credentials, uint32 gid,
+	int use_real_ids)
+{
+	uint32 primary = use_real_ids ? credentials->gid : credentials->fsgid;
+	uint32 index;
+
+	if (primary == gid)
+		return 1;
+	for (index = 0; index < credentials->group_count; index++) {
+		if (credentials->groups[index] == gid)
+			return 1;
+	}
+	return 0;
+}
+
+static int vfs_inode_permission_credentials(
+	const struct vfs_inode *inode, uint32 access,
+	const struct process_credentials *credentials, int use_real_ids)
+{
+	uint32 bits;
+	uint32 uid = use_real_ids ? credentials->uid : credentials->fsuid;
+
+	if (!access)
+		return VFS_OK;
+	if (!uid) {
+		if ((access & VFS_ACCESS_EXEC) &&
+		    inode->type != VFS_INODE_DIRECTORY &&
+		    !(inode->mode & 0111))
+			return VFS_ERR_ACCES;
+		return VFS_OK;
+	}
+	if (uid == inode->uid)
+		bits = (inode->mode >> 6) & 7;
+	else if (vfs_credentials_in_group(credentials, inode->gid,
+					  use_real_ids))
+		bits = (inode->mode >> 3) & 7;
+	else
+		bits = inode->mode & 7;
+	return (bits & access) == access ? VFS_OK : VFS_ERR_ACCES;
+}
+
+static int vfs_inode_permission(const struct vfs_inode *inode,
+				uint32 access)
+{
+	struct process_credentials credentials;
+
+	process_credentials_get(&credentials);
+	return vfs_inode_permission_credentials(inode, access, &credentials, 0);
+}
+
+static int vfs_inode_same_identity(const struct vfs_inode *left,
+				   const struct vfs_inode *right)
+{
+	return left->superblock == right->superblock &&
+	       left->number == right->number;
+}
+
+static int vfs_inode_access_acquire(struct vfs_inode *inode, uint8 access)
+{
+	struct vfs_inode *candidate;
+	uint32 writers = 0, executors = 0;
+	int result = VFS_OK;
+
+	if (!access || !inode || inode->type != VFS_INODE_REGULAR)
+		return VFS_OK;
+	spinlock_acquire(&vfs.lock);
+	for (candidate = vfs.inodes;
+	     candidate != &vfs.inodes[VFS_INODE_MAX]; candidate++) {
+		if (candidate->ref < 1 ||
+		    !vfs_inode_same_identity(candidate, inode))
+			continue;
+		writers += candidate->write_open_count;
+		executors += candidate->exec_open_count;
+	}
+	if ((access & VFS_INODE_ACCESS_WRITE) && executors)
+		result = VFS_ERR_TXTBSY;
+	else if ((access & VFS_INODE_ACCESS_EXEC) && writers)
+		result = VFS_ERR_TXTBSY;
+	else if ((access & VFS_INODE_ACCESS_WRITE) &&
+		 inode->write_open_count == ~(uint32)0)
+		result = VFS_ERR_MFILE;
+	else if ((access & VFS_INODE_ACCESS_EXEC) &&
+		 inode->exec_open_count == ~(uint32)0)
+		result = VFS_ERR_MFILE;
+	else {
+		if (access & VFS_INODE_ACCESS_WRITE)
+			inode->write_open_count++;
+		if (access & VFS_INODE_ACCESS_EXEC)
+			inode->exec_open_count++;
+	}
+	spinlock_release(&vfs.lock);
+	return result;
+}
+
+static void vfs_inode_access_release(struct vfs_inode *inode, uint8 access)
+{
+	if (!access)
+		return;
+	spinlock_acquire(&vfs.lock);
+	if (!inode || inode->ref < 1 ||
+	    ((access & VFS_INODE_ACCESS_WRITE) && !inode->write_open_count) ||
+	    ((access & VFS_INODE_ACCESS_EXEC) && !inode->exec_open_count))
+		PANIC("VFS inode access release");
+	if (access & VFS_INODE_ACCESS_WRITE)
+		inode->write_open_count--;
+	if (access & VFS_INODE_ACCESS_EXEC)
+		inode->exec_open_count--;
+	spinlock_release(&vfs.lock);
+}
+
+void vfs_file_release_inode_access(struct vfs_file *file)
+{
+	struct vfs_inode *inode = 0;
+
+	if (!file || !file->inode_access)
+		return;
+	if (file->path.dentry)
+		inode = file->path.dentry->inode;
+	vfs_inode_access_release(inode, file->inode_access);
+	file->inode_access = 0;
+}
+
+int vfs_exec_mapping_get(struct vfs_file *file)
+{
+	struct vfs_inode *inode;
+
+	if (!file || !file->path.dentry ||
+	    !(inode = file->path.dentry->inode))
+		return VFS_ERR_INVAL;
+	return vfs_inode_access_acquire(inode, VFS_INODE_ACCESS_EXEC);
+}
+
+void vfs_exec_mapping_put(struct vfs_file *file)
+{
+	struct vfs_inode *inode;
+
+	if (!file || !file->path.dentry ||
+	    !(inode = file->path.dentry->inode))
+		PANIC("VFS exec mapping release");
+	vfs_inode_access_release(inode, VFS_INODE_ACCESS_EXEC);
+}
+static void vfs_creation_credentials(const struct vfs_inode *parent,
+				     uint32 *mode, uint32 *uid,
+				     uint32 *gid, int directory)
+{
+	struct process_credentials credentials;
+
+	process_credentials_get(&credentials);
+	*uid = credentials.fsuid;
+	*gid = parent->mode & 02000 ? parent->gid : credentials.fsgid;
+	if (directory && parent->mode & 02000)
+		*mode |= 02000;
+	else if (credentials.fsuid && (*mode & 02000) &&
+		 !vfs_credentials_in_group(&credentials, *gid, 0))
+		*mode &= ~02000;
+}
+
+static int vfs_mutation_permission(const struct vfs_inode *directory)
+{
+	if (!directory || directory->type != VFS_INODE_DIRECTORY)
+		return VFS_ERR_NOTDIR;
+	return vfs_inode_permission(directory,
+				    VFS_ACCESS_WRITE | VFS_ACCESS_EXEC);
+}
+
+static int vfs_sticky_permission(const struct vfs_inode *directory,
+				 const struct vfs_inode *target)
+{
+	struct process_credentials credentials;
+
+	if (!(directory->mode & 01000))
+		return VFS_OK;
+	process_credentials_get(&credentials);
+	if (!credentials.fsuid || credentials.fsuid == directory->uid ||
+	    (target && credentials.fsuid == target->uid))
+		return VFS_OK;
+	return VFS_ERR_PERM;
 }
 
 static sleeplock_t vfs_inode_write_lock(struct vfs_inode *inode)
@@ -192,6 +375,8 @@ void vfs_inode_put(struct vfs_inode *inode)
 		spinlock_release(&vfs.lock);
 		return;
 	}
+	if (inode->write_open_count || inode->exec_open_count)
+		PANIC("release accessed VFS inode");
 	inode->ref = -1;
 	operations = inode->superblock->operations;
 	spinlock_release(&vfs.lock);
@@ -418,8 +603,7 @@ int vfs_mount_root(const char *filesystem, struct block_device *device,
 static int vfs_same_inode(struct vfs_inode *left,
 			  struct vfs_inode *right)
 {
-	return left->superblock == right->superblock &&
-	       left->number == right->number;
+	return vfs_inode_same_identity(left, right);
 }
 
 static struct vfs_mount *vfs_child_mount(const struct vfs_path *path)
@@ -536,8 +720,9 @@ static int vfs_join_link(char *destination, const char *target,
 	return VFS_OK;
 }
 
-static int vfs_walk(const char *name, uint32 flags, struct vfs_path *result,
-		    char *last)
+static int vfs_walk_credentials(
+	const char *name, uint32 flags, struct vfs_path *result, char *last,
+	const struct process_credentials *credentials)
 {
 	struct vfs_walk_buffer *buffer;
 	struct vfs_inode *inode;
@@ -574,6 +759,16 @@ static int vfs_walk(const char *name, uint32 flags, struct vfs_path *result,
 			pfree(buffer);
 			return VFS_OK;
 		}
+		if (current.dentry->inode->type != VFS_INODE_DIRECTORY) {
+			status = VFS_ERR_NOTDIR;
+			goto fail;
+		}
+		status = credentials ? vfs_inode_permission_credentials(
+			current.dentry->inode, VFS_ACCESS_EXEC, credentials, 0) :
+			vfs_inode_permission(current.dentry->inode,
+					     VFS_ACCESS_EXEC);
+		if (status < 0)
+			goto fail;
 		if ((flags & VFS_LOOKUP_PARENT) && final) {
 			safe_strncpy(last, buffer->component,
 			             VFS_NAME_MAX + 1);
@@ -597,10 +792,6 @@ static int vfs_walk(const char *name, uint32 flags, struct vfs_path *result,
 				return VFS_OK;
 			}
 			continue;
-		}
-		if (current.dentry->inode->type != VFS_INODE_DIRECTORY) {
-			status = VFS_ERR_NOTDIR;
-			goto fail;
 		}
 		if (!current.dentry->inode->operations ||
 		    !current.dentry->inode->operations->lookup) {
@@ -680,6 +871,12 @@ fail:
 	vfs_path_put(&current);
 	pfree(buffer);
 	return status;
+}
+
+static int vfs_walk(const char *name, uint32 flags, struct vfs_path *result,
+		    char *last)
+{
+	return vfs_walk_credentials(name, flags, result, last, 0);
 }
 
 int vfs_mount(const char *filesystem, struct block_device *device,
@@ -817,6 +1014,7 @@ static int vfs_create_path(const char *name, uint32 mode,
 	struct vfs_dentry *dentry;
 	struct vfs_path parent;
 	char last[VFS_NAME_MAX + 1];
+	uint32 uid, gid;
 	int status;
 
 	status = vfs_walk(name, VFS_LOOKUP_PARENT, &parent, last);
@@ -826,13 +1024,19 @@ static int vfs_create_path(const char *name, uint32 mode,
 		vfs_path_put(&parent);
 		return VFS_ERR_INVAL;
 	}
+	status = vfs_mutation_permission(parent.dentry->inode);
+	if (status < 0) {
+		vfs_path_put(&parent);
+		return status;
+	}
 	if (!parent.dentry->inode->operations ||
 	    !parent.dentry->inode->operations->create) {
 		vfs_path_put(&parent);
 		return VFS_ERR_NOTSUPP;
 	}
+	vfs_creation_credentials(parent.dentry->inode, &mode, &uid, &gid, 0);
 	status = parent.dentry->inode->operations->create(
-		parent.dentry->inode, last, mode, &inode);
+		parent.dentry->inode, last, mode, uid, gid, &inode);
 	if (status < 0) {
 		vfs_path_put(&parent);
 		return status;
@@ -859,8 +1063,13 @@ int vfs_open_file(const char *name, uint32 flags, uint32 mode,
 	struct vfs_path path;
 	sleeplock_t lock;
 	file_t file;
+	uint8 inode_access = 0;
+	uint32 access = 0;
 	int existed, status;
 
+	if ((flags & VFS_OPEN_EXEC) &&
+	    (flags & (VFS_OPEN_WRITE | VFS_OPEN_TRUNCATE)))
+		return VFS_ERR_INVAL;
 	status = vfs_walk(name, 0, &path, 0);
 	existed = status == VFS_OK;
 	if (!existed && status != VFS_ERR_NOENT)
@@ -880,6 +1089,17 @@ int vfs_open_file(const char *name, uint32 flags, uint32 mode,
 	status = vfs_inode_stat(path.dentry->inode, &stat);
 	if (status < 0)
 		goto fail;
+	if (flags & VFS_OPEN_EXEC)
+		access |= VFS_ACCESS_EXEC;
+	else {
+		if (flags & VFS_OPEN_READ)
+			access |= VFS_ACCESS_READ;
+		if (flags & VFS_OPEN_WRITE)
+			access |= VFS_ACCESS_WRITE;
+	}
+	status = vfs_inode_permission(path.dentry->inode, access);
+	if (status < 0)
+		goto fail;
 	if ((flags & VFS_OPEN_DIRECTORY) &&
 	    stat.type != VFS_INODE_DIRECTORY) {
 		status = VFS_ERR_NOTDIR;
@@ -890,12 +1110,32 @@ int vfs_open_file(const char *name, uint32 flags, uint32 mode,
 		status = VFS_ERR_ISDIR;
 		goto fail;
 	}
+	file = file_alloc();
+	if (!file) {
+		status = VFS_ERR_MFILE;
+		goto fail;
+	}
+	file->path = path;
+	file->operations = path.dentry->inode->file_operations;
+	file->capabilities = file->operations ? file->operations->flags : 0;
+	file->flags = flags | (flags & VFS_OPEN_EXEC ? VFS_OPEN_READ : 0);
+	if (stat.type == VFS_INODE_REGULAR) {
+		if (flags & VFS_OPEN_EXEC)
+			inode_access = VFS_INODE_ACCESS_EXEC;
+		else if (flags & (VFS_OPEN_WRITE | VFS_OPEN_TRUNCATE))
+			inode_access = VFS_INODE_ACCESS_WRITE;
+	}
+	status = vfs_inode_access_acquire(path.dentry->inode, inode_access);
+	if (status < 0)
+		goto fail_file;
+	file->inode_access = inode_access;
+	file->access_ref = inode_access ? 1 : 0;
 	if ((flags & VFS_OPEN_TRUNCATE) &&
 	    stat.type == VFS_INODE_REGULAR) {
 		if (!path.dentry->inode->operations ||
 		    !path.dentry->inode->operations->truncate) {
 			status = VFS_ERR_NOTSUPP;
-			goto fail;
+			goto fail_file;
 		}
 		lock = vfs_inode_write_lock(path.dentry->inode);
 		if (lock)
@@ -915,29 +1155,21 @@ int vfs_open_file(const char *name, uint32 flags, uint32 mode,
 		if (lock)
 			sleeplock_release(lock);
 		if (status < 0)
-			goto fail;
+			goto fail_file;
 		stat.size = 0;
 	}
-	file = file_alloc();
-	if (!file) {
-		status = VFS_ERR_MFILE;
-		goto fail;
-	}
-	file->path = path;
-	file->operations = path.dentry->inode->file_operations;
-	file->capabilities = file->operations ? file->operations->flags : 0;
-	file->flags = flags;
 	file->position = flags & VFS_OPEN_APPEND ? stat.size : 0;
 	if (file->operations && file->operations->open) {
 		status = file->operations->open(path.dentry->inode, file);
-		if (status < 0) {
-			file_close(file);
-			return status;
-		}
+		if (status < 0)
+			goto fail_file;
 	}
 	*result = file;
 	return VFS_OK;
 
+fail_file:
+	file_close(file);
+	return status;
 fail:
 	vfs_path_put(&path);
 	return status;
@@ -951,6 +1183,16 @@ struct vfs_file *vfs_file_get(struct vfs_file *file)
 void vfs_file_put(struct vfs_file *file)
 {
 	file_close(file);
+}
+
+struct vfs_file *vfs_file_hold(struct vfs_file *file)
+{
+	return file_hold(file);
+}
+
+void vfs_file_unhold(struct vfs_file *file)
+{
+	file_unhold(file);
 }
 
 int64 vfs_file_pread_raw(struct vfs_file *file, int user_destination,
@@ -1660,8 +1902,27 @@ int vfs_stat_path(const char *name, int follow_symlink,
 	return status;
 }
 
+static int vfs_time_permission(struct vfs_inode *inode, int owner_only)
+{
+	struct process_credentials credentials;
+	struct vfs_stat stat;
+	int status;
+
+	status = vfs_inode_stat(inode, &stat);
+	if (status < 0)
+		return status;
+	process_credentials_get(&credentials);
+	if (!credentials.fsuid || credentials.fsuid == stat.uid)
+		return VFS_OK;
+	if (owner_only)
+		return VFS_ERR_PERM;
+	return vfs_inode_permission_credentials(inode, VFS_ACCESS_WRITE,
+						&credentials, 0);
+}
+
 int vfs_set_times_path(const char *name, int follow_symlink,
-		       const struct vfs_timespec times[2], uint32 mask)
+		       const struct vfs_timespec times[2], uint32 mask,
+		       int owner_only)
 {
 	struct vfs_path path;
 	struct vfs_inode *inode;
@@ -1676,32 +1937,49 @@ int vfs_set_times_path(const char *name, int follow_symlink,
 	inode = path.dentry->inode;
 	if (!mask)
 		status = VFS_OK;
-	else if (!inode->operations || !inode->operations->set_times)
-		status = VFS_ERR_NOTSUPP;
-	else
-		status = inode->operations->set_times(inode, times, mask);
+	else {
+		status = vfs_time_permission(inode, owner_only);
+		if (status == VFS_OK) {
+			status = !inode->operations ||
+				 !inode->operations->set_times ?
+				 VFS_ERR_NOTSUPP :
+				 inode->operations->set_times(inode, times, mask);
+		}
+	}
 	vfs_path_put(&path);
 	return status;
 }
 
 int vfs_set_times_fd(int fd, const struct vfs_timespec times[2],
-		     uint32 mask)
+		     uint32 mask, int owner_only)
 {
 	struct vfs_inode *inode;
 	file_t file;
+	int status;
 
 	if (!times || (mask & ~(VFS_TIME_ATIME | VFS_TIME_MTIME)))
 		return VFS_ERR_INVAL;
 	if (fd_get(fd, &file) != VFS_OK)
 		return VFS_ERR_BADF;
-	if (!file->path.dentry)
-		return VFS_ERR_INVAL;
+	if (!file->path.dentry) {
+		status = VFS_ERR_INVAL;
+		goto out;
+	}
 	inode = file->path.dentry->inode;
-	if (!mask)
-		return VFS_OK;
+	if (!mask) {
+		status = VFS_OK;
+		goto out;
+	}
+	status = vfs_time_permission(inode, owner_only);
+	if (status < 0)
+		goto out;
 	if (!inode->operations || !inode->operations->set_times)
-		return VFS_ERR_NOTSUPP;
-	return inode->operations->set_times(inode, times, mask);
+		status = VFS_ERR_NOTSUPP;
+	else
+		status = inode->operations->set_times(inode, times, mask);
+out:
+	vfs_file_put(file);
+	return status;
 }
 
 int vfs_next_dirent(int fd, vfs_dirent_emit_t emit, void *context)
@@ -1750,6 +2028,7 @@ int vfs_mkdir(const char *name, uint32 mode)
 	struct vfs_inode *inode;
 	struct vfs_path parent;
 	char last[VFS_NAME_MAX + 1];
+	uint32 uid, gid;
 	int status;
 
 	status = vfs_walk(name, VFS_LOOKUP_PARENT, &parent, last);
@@ -1759,13 +2038,19 @@ int vfs_mkdir(const char *name, uint32 mode)
 		vfs_path_put(&parent);
 		return VFS_ERR_INVAL;
 	}
+	status = vfs_mutation_permission(parent.dentry->inode);
+	if (status < 0) {
+		vfs_path_put(&parent);
+		return status;
+	}
 	if (!parent.dentry->inode->operations ||
 	    !parent.dentry->inode->operations->mkdir) {
 		vfs_path_put(&parent);
 		return VFS_ERR_NOTSUPP;
 	}
+	vfs_creation_credentials(parent.dentry->inode, &mode, &uid, &gid, 1);
 	status = parent.dentry->inode->operations->mkdir(
-		parent.dentry->inode, last, mode, &inode);
+		parent.dentry->inode, last, mode, uid, gid, &inode);
 	if (status == VFS_OK)
 		vfs_inode_put(inode);
 	vfs_path_put(&parent);
@@ -1798,6 +2083,13 @@ int vfs_unlink(const char *name, int remove_directory)
 		return status;
 	}
 	operations = parent.dentry->inode->operations;
+	status = vfs_mutation_permission(parent.dentry->inode);
+	if (status < 0)
+		goto out_unlink;
+	status = vfs_sticky_permission(parent.dentry->inode,
+				       target.dentry->inode);
+	if (status < 0)
+		goto out_unlink;
 	if (remove_directory) {
 		status = operations && operations->rmdir ?
 			operations->rmdir(parent.dentry->inode, last) :
@@ -1807,6 +2099,7 @@ int vfs_unlink(const char *name, int remove_directory)
 			operations->unlink(parent.dentry->inode, last) :
 			VFS_ERR_NOTSUPP;
 	}
+out_unlink:
 	vfs_path_put(&parent);
 	vfs_path_put(&target);
 	return status;
@@ -1837,6 +2130,9 @@ int vfs_link(const char *old_name, const char *new_name,
 		status = VFS_ERR_INVAL;
 		goto out;
 	}
+	status = vfs_mutation_permission(parent.dentry->inode);
+	if (status < 0)
+		goto out;
 	if (source.mount != parent.mount ||
 	    source.dentry->inode->superblock !=
 	    parent.dentry->inode->superblock) {
@@ -1860,6 +2156,7 @@ int vfs_symlink(const char *target, const char *link_name)
 	struct vfs_inode *inode;
 	struct vfs_path parent;
 	char last[VFS_NAME_MAX + 1];
+	uint32 mode = 0777, uid, gid;
 	int status;
 
 	if (!target || !target[0] || strlen(target) >= VFS_PATH_MAX)
@@ -1871,10 +2168,16 @@ int vfs_symlink(const char *target, const char *link_name)
 		vfs_path_put(&parent);
 		return VFS_ERR_INVAL;
 	}
+	status = vfs_mutation_permission(parent.dentry->inode);
+	if (status < 0) {
+		vfs_path_put(&parent);
+		return status;
+	}
+	vfs_creation_credentials(parent.dentry->inode, &mode, &uid, &gid, 0);
 	operations = parent.dentry->inode->operations;
 	status = operations && operations->symlink ?
 		operations->symlink(parent.dentry->inode, last, target,
-		                    &inode) : VFS_ERR_NOTSUPP;
+		                    uid, gid, &inode) : VFS_ERR_NOTSUPP;
 	if (status == VFS_OK)
 		vfs_inode_put(inode);
 	vfs_path_put(&parent);
@@ -1908,10 +2211,10 @@ int vfs_rename(const char *old_name, const char *new_name,
 	       uint32 flags)
 {
 	const struct vfs_inode_operations *operations;
-	struct vfs_path source, old_parent, new_parent;
+	struct vfs_path source, old_parent, new_parent, destination;
 	char old_last[VFS_NAME_MAX + 1];
 	char new_last[VFS_NAME_MAX + 1];
-	int status;
+	int destination_found = 0, status;
 
 	if (flags & ~VFS_RENAME_NOREPLACE)
 		return VFS_ERR_INVAL;
@@ -1941,12 +2244,35 @@ int vfs_rename(const char *old_name, const char *new_name,
 		status = VFS_ERR_XDEV;
 		goto out;
 	}
+	status = vfs_mutation_permission(old_parent.dentry->inode);
+	if (status < 0)
+		goto out;
+	status = vfs_mutation_permission(new_parent.dentry->inode);
+	if (status < 0)
+		goto out;
+	status = vfs_sticky_permission(old_parent.dentry->inode,
+				       source.dentry->inode);
+	if (status < 0)
+		goto out;
+	status = vfs_walk(new_name, VFS_LOOKUP_NOFOLLOW_FINAL,
+			  &destination, 0);
+	if (status == VFS_OK) {
+		destination_found = 1;
+		status = vfs_sticky_permission(new_parent.dentry->inode,
+					       destination.dentry->inode);
+		if (status < 0)
+			goto out;
+	} else if (status != VFS_ERR_NOENT) {
+		goto out;
+	}
 	operations = old_parent.dentry->inode->operations;
 	status = operations && operations->rename ?
 		operations->rename(old_parent.dentry->inode, old_last,
 		                   new_parent.dentry->inode, new_last,
 		                   flags) : VFS_ERR_NOTSUPP;
 out:
+	if (destination_found)
+		vfs_path_put(&destination);
 	vfs_path_put(&new_parent);
 out_old_parent:
 	vfs_path_put(&old_parent);
@@ -2011,6 +2337,11 @@ int vfs_chdir(const char *name)
 		vfs_path_put(&path);
 		return VFS_ERR_NOTDIR;
 	}
+	status = vfs_inode_permission(path.dentry->inode, VFS_ACCESS_EXEC);
+	if (status < 0) {
+		vfs_path_put(&path);
+		return status;
+	}
 	vfs_path_put(&process->cwd);
 	process->cwd = path;
 	return VFS_OK;
@@ -2067,13 +2398,23 @@ int vfs_getcwd(char *buffer, uint32 size)
 	return length;
 }
 
-int vfs_access(const char *name)
+int vfs_access(const char *name, uint32 mode, int use_effective_ids)
 {
+	struct process_credentials credentials;
 	struct vfs_path path;
-	int status = vfs_walk(name, 0, &path, 0);
+	int status;
 
-	if (status == VFS_OK)
+	process_credentials_get(&credentials);
+	credentials.fsuid = use_effective_ids ? credentials.euid :
+		credentials.uid;
+	credentials.fsgid = use_effective_ids ? credentials.egid :
+		credentials.gid;
+	status = vfs_walk_credentials(name, 0, &path, 0, &credentials);
+	if (status == VFS_OK) {
+		status = vfs_inode_permission_credentials(path.dentry->inode,
+						      mode, &credentials, 0);
 		vfs_path_put(&path);
+	}
 	return status;
 }
 

@@ -63,10 +63,22 @@
 #define LINUX_SYS_rt_sigreturn      139
 #define LINUX_SYS_setpriority       140
 #define LINUX_SYS_getpriority       141
+#define LINUX_SYS_setregid          143
+#define LINUX_SYS_setgid            144
+#define LINUX_SYS_setreuid          145
+#define LINUX_SYS_setuid            146
+#define LINUX_SYS_setresuid         147
+#define LINUX_SYS_getresuid         148
+#define LINUX_SYS_setresgid         149
+#define LINUX_SYS_getresgid         150
+#define LINUX_SYS_setfsuid          151
+#define LINUX_SYS_setfsgid          152
 #define LINUX_SYS_setpgid           154
 #define LINUX_SYS_getpgid           155
 #define LINUX_SYS_getsid            156
 #define LINUX_SYS_setsid            157
+#define LINUX_SYS_getgroups         158
+#define LINUX_SYS_setgroups         159
 #define LINUX_SYS_uname             160
 #define LINUX_SYS_umask             166
 #define LINUX_SYS_prctl             167
@@ -114,6 +126,11 @@
 #define LINUX_SYS_RISCV_FLUSH_ICACHE_ALL \
 	LINUX_SYS_RISCV_FLUSH_ICACHE_LOCAL
 
+#define LINUX_F_OK                    0
+#define LINUX_X_OK                    1
+#define LINUX_W_OK                    2
+#define LINUX_R_OK                    4
+
 #define LINUX_EPERM                   1
 #define LINUX_ENOENT                  2
 #define LINUX_ESRCH                   3
@@ -138,6 +155,7 @@
 #define LINUX_ENFILE                 23
 #define LINUX_EMFILE                 24
 #define LINUX_ENOTTY                 25
+#define LINUX_ETXTBSY                26
 #define LINUX_EFBIG                  27
 #define LINUX_ENOSPC                 28
 #define LINUX_ESPIPE                 29

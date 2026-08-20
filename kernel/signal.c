@@ -984,16 +984,20 @@ uint64 sys_linux_rt_sigpending(void)
 static int signal_send_syscall(int thread_group, int tid, int signal,
 			       int thread_directed)
 {
+	struct process_credentials credentials;
 	struct signal_info information = {
 		.signal = signal,
 		.code = thread_directed ? LINUX_SI_TKILL : LINUX_SI_USER,
 		.sender_pid = cur_proc()->pid,
-		.sender_uid = 0,
 	};
 	int result;
 
 	if (signal < 0 || signal > SIGNAL_COUNT)
 		return -LINUX_EINVAL;
+	process_credentials_get(&credentials);
+	information.sender_uid = credentials.uid;
+	information.sender_euid = credentials.euid;
+	information.sender_sid = cur_proc()->sid;
 	if (thread_directed)
 		result = signal_send_thread(thread_group, tid, signal,
 		                            &information);
@@ -1001,6 +1005,8 @@ static int signal_send_syscall(int thread_group, int tid, int signal,
 		result = signal_send_processes(tid, signal, &information);
 	if (result == SIGNAL_QUEUE_FULL)
 		return -LINUX_EAGAIN;
+	if (result == SIGNAL_QUEUE_DENIED)
+		return -LINUX_EPERM;
 	return result < 0 ? -LINUX_ESRCH : 0;
 }
 

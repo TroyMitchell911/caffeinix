@@ -332,21 +332,27 @@ static void procfs_build_pid_status(struct procfs_buffer *buffer,
 		snapshot->state == 'D' ? "disk sleep" :
 		snapshot->state == 'T' ? "stopped" : "zombie";
 
+	uint32 index;
+
 	procfs_printf(buffer,
 		"Name:\t%s\nState:\t%c (%s)\nTgid:\t%d\nPid:\t%d\n"
 		"PPid:\t%d\nTracerPid:\t0\n"
 		"Uid:\t%u\t%u\t%u\t%u\n"
 		"Gid:\t%u\t%u\t%u\t%u\n"
-		"FDSize:\t%d\nGroups:\t\nThreads:\t%u\n"
-		"VmSize:\t%lu kB\nVmRSS:\t%lu kB\n"
+		"FDSize:\t%d\nGroups:\t",
+		snapshot->name, snapshot->state, state, snapshot->pid,
+		snapshot->pid, snapshot->ppid,
+		snapshot->uid, snapshot->euid, snapshot->suid, snapshot->fsuid,
+		snapshot->gid, snapshot->egid, snapshot->sgid, snapshot->fsgid,
+		NOFILE);
+	for (index = 0; index < snapshot->group_count; index++)
+		procfs_printf(buffer, "%u ", snapshot->groups[index]);
+	procfs_printf(buffer,
+		"\nThreads:\t%u\nVmSize:\t%lu kB\nVmRSS:\t%lu kB\n"
 		"SigPnd:\t%016lx\nShdPnd:\t%016lx\n"
 		"SigBlk:\t%016lx\nSigIgn:\t%016lx\n"
 		"SigCgt:\t%016lx\n",
-		snapshot->name, snapshot->state, state, snapshot->pid,
-		snapshot->pid, snapshot->ppid,
-		snapshot->uid, snapshot->euid, snapshot->euid, snapshot->euid,
-		snapshot->gid, snapshot->egid, snapshot->egid, snapshot->egid,
-		NOFILE, snapshot->threads, snapshot->virtual_size / 1024,
+		snapshot->threads, snapshot->virtual_size / 1024,
 		snapshot->resident_pages * (PGSIZE / 1024),
 		snapshot->signal_pending, snapshot->signal_shared_pending,
 		snapshot->signal_blocked, snapshot->signal_ignored,

@@ -23,6 +23,20 @@
 struct tty;
 
 #define PROCESS_CMDLINE_MAX PGSIZE
+#define PROCESS_GROUP_MAX   32
+
+struct process_credentials {
+	uint32 uid;
+	uint32 euid;
+	uint32 suid;
+	uint32 fsuid;
+	uint32 gid;
+	uint32 egid;
+	uint32 sgid;
+	uint32 fsgid;
+	uint32 group_count;
+	uint32 groups[PROCESS_GROUP_MAX];
+};
 
 struct process_snapshot {
 	char name[MAXNAME];
@@ -36,8 +50,14 @@ struct process_snapshot {
 	int nice;
 	uint32 uid;
 	uint32 euid;
+	uint32 suid;
+	uint32 fsuid;
 	uint32 gid;
 	uint32 egid;
+	uint32 sgid;
+	uint32 fsgid;
+	uint32 group_count;
+	uint32 groups[PROCESS_GROUP_MAX];
 	uint32 threads;
 	uint32 runnable_threads;
 	uint32 blocked_threads;
@@ -102,6 +122,7 @@ typedef struct process{
 	uint8 mmap_registered;
 	struct vfs_path root;
 	struct vfs_path cwd;
+	struct process_credentials credentials;
 	uint32 umask;
 	void *cmdline;
 	uint32 cmdline_length;
@@ -182,6 +203,9 @@ uint32 process_snapshot_pids(int *pids, uint32 capacity);
 void process_snapshot_system(struct process_system_snapshot *snapshot);
 void process_set_cmdline(process_t process, void *cmdline,
 			 uint32 length);
+void process_credentials_get(struct process_credentials *credentials);
+uint32 process_umask_get(void);
+uint32 process_umask_set(uint32 mask);
 
 int either_copyout(int user_dst, uint64 dst, void* src, uint64 len);
 int either_copyin(void *dst, int user_src, uint64 src, uint64 len);

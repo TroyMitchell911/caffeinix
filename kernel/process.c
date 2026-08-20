@@ -304,6 +304,7 @@ static process_t process_alloc(void)
 		return 0;
 	}
 	signal_process_init(p);
+	memset(&p->credentials, 0, sizeof(p->credentials));
 	p->umask = 0022;
 	p->start_time_ns = ktime_get_boot_ns();
 	p->state = PROCESS_EMBRYO;
@@ -593,6 +594,17 @@ static void process_snapshot_locked(process_t process,
 	snapshot->ppid = process->parent ? process->parent->pid : 0;
 	snapshot->pgid = process->pgid;
 	snapshot->sid = process->sid;
+	snapshot->uid = process->credentials.uid;
+	snapshot->euid = process->credentials.euid;
+	snapshot->suid = process->credentials.suid;
+	snapshot->fsuid = process->credentials.fsuid;
+	snapshot->gid = process->credentials.gid;
+	snapshot->egid = process->credentials.egid;
+	snapshot->sgid = process->credentials.sgid;
+	snapshot->fsgid = process->credentials.fsgid;
+	snapshot->group_count = process->credentials.group_count;
+	memmove(snapshot->groups, process->credentials.groups,
+		snapshot->group_count * sizeof(snapshot->groups[0]));
 	snapshot->tty = tty_device_number(process->controlling_tty);
 	snapshot->tty_pgid = process->controlling_tty ?
 		process->controlling_tty->foreground_pgid : -1;
@@ -760,6 +772,47 @@ void process_set_cmdline(process_t process, void *cmdline, uint32 length)
 		pfree(old);
 }
 
+void process_credentials_get(struct process_credentials *credentials)
+{
+	process_t process = cur_proc();
+
+	if (!credentials)
+		return;
+	memset(credentials, 0, sizeof(*credentials));
+	if (!process)
+		return;
+	spinlock_acquire(&process->lock);
+	*credentials = process->credentials;
+	spinlock_release(&process->lock);
+}
+
+uint32 process_umask_get(void)
+{
+	process_t process = cur_proc();
+	uint32 mask = 0;
+
+	if (!process)
+		return 0;
+	spinlock_acquire(&process->lock);
+	mask = process->umask;
+	spinlock_release(&process->lock);
+	return mask;
+}
+
+uint32 process_umask_set(uint32 mask)
+{
+	process_t process = cur_proc();
+	uint32 old_mask;
+
+	if (!process)
+		return 0;
+	spinlock_acquire(&process->lock);
+	old_mask = process->umask;
+	process->umask = mask & 0777;
+	spinlock_release(&process->lock);
+	return old_mask;
+}
+
 int process_fork(uint64 child_stack)
 {
         int pid, i;
@@ -785,8 +838,9 @@ int process_fork(uint64 child_stack)
 		return -1;
 	}
 
-	newp->umask = oldp->umask;
 	spinlock_acquire(&oldp->lock);
+	newp->credentials = oldp->credentials;
+	newp->umask = oldp->umask;
 	had_cmdline = oldp->cmdline != 0;
 	if (had_cmdline) {
 		newp->cmdline = palloc_zero();
@@ -1645,13 +1699,15 @@ static void process_notify_parent_locked(process_t child, int code,
 		.signal = LINUX_SIGCHLD,
 		.code = code,
 		.sender_pid = child->pid,
-		.sender_uid = 0,
 		.status = status,
 	};
 	int suppress;
 
 	if (!spinlock_holding(&wait_lock) || !parent)
 		return;
+	spinlock_acquire(&child->lock);
+	information.sender_uid = child->credentials.uid;
+	spinlock_release(&child->lock);
 	spinlock_acquire(&parent->lock);
 	suppress = (code == LINUX_CLD_STOPPED ||
 	            code == LINUX_CLD_CONTINUED) &&
@@ -1676,12 +1732,31 @@ static void process_continue_event_locked(process_t process, int resumed)
 	                             LINUX_SIGCONT);
 }
 
+static int process_signal_permitted_locked(
+	process_t process, int signal, const struct signal_info *information)
+{
+	const struct process_credentials *credentials = &process->credentials;
+
+	if (!information ||
+	    (information->code != LINUX_SI_USER &&
+	     information->code != LINUX_SI_TKILL))
+		return 1;
+	if (!information->sender_euid ||
+	    information->sender_uid == credentials->uid ||
+	    information->sender_uid == credentials->suid ||
+	    information->sender_euid == credentials->uid ||
+	    information->sender_euid == credentials->suid)
+		return 1;
+	return signal == LINUX_SIGCONT &&
+	       information->sender_sid == process->sid;
+}
+
 static int process_signal_group_locked(
 	int pgid, int signal, const struct signal_info *information)
 {
 	process_t process;
 	list_t entry;
-	int delivered = 0, full = 0;
+	int delivered = 0, denied = 0, full = 0;
 
 	if (!spinlock_holding(&wait_lock))
 		PANIC("process group signal unlocked");
@@ -1692,7 +1767,11 @@ static int process_signal_group_locked(
 		if (process->state != PROCESS_LIVE || process->pgid != pgid)
 			continue;
 		spinlock_acquire(&process->lock);
-		if (!signal)
+		if (!process_signal_permitted_locked(process, signal,
+					     information)) {
+			result = SIGNAL_QUEUE_DENIED;
+			denied = 1;
+		} else if (!signal)
 			result = 0;
 		else
 			result = resumed = signal_queue_process_locked(
@@ -1709,7 +1788,8 @@ static int process_signal_group_locked(
 	}
 	if (delivered)
 		return 0;
-	return full ? SIGNAL_QUEUE_FULL : -1;
+	return full ? SIGNAL_QUEUE_FULL :
+		denied ? SIGNAL_QUEUE_DENIED : -1;
 }
 
 int signal_send_process(int pid, int signal,
@@ -1722,7 +1802,10 @@ int signal_send_process(int pid, int signal,
 	process = process_find_locked(pid);
 	if (process) {
 		spinlock_acquire(&process->lock);
-		if (!signal)
+		if (!process_signal_permitted_locked(process, signal,
+					     information))
+			result = SIGNAL_QUEUE_DENIED;
+		else if (!signal)
 			result = 0;
 		else
 			result = resumed = signal_queue_process_locked(
@@ -1741,7 +1824,7 @@ int signal_send_processes(int selector, int signal,
 	process_t caller = cur_proc();
 	process_t process;
 	list_t entry;
-	int delivered = 0, full = 0;
+	int delivered = 0, denied = 0, full = 0;
 	int result;
 
 	if (selector > 0)
@@ -1766,7 +1849,11 @@ int signal_send_processes(int selector, int signal,
 		if (selector == -1 && (process == first || process == caller))
 			continue;
 		spinlock_acquire(&process->lock);
-		if (!signal)
+		if (!process_signal_permitted_locked(process, signal,
+					     information)) {
+			result = SIGNAL_QUEUE_DENIED;
+			denied = 1;
+		} else if (!signal)
 			result = 0;
 		else
 			result = resumed = signal_queue_process_locked(
@@ -1784,7 +1871,8 @@ int signal_send_processes(int selector, int signal,
 	spinlock_release(&wait_lock);
 	if (delivered)
 		return 0;
-	return full ? SIGNAL_QUEUE_FULL : -1;
+	return full ? SIGNAL_QUEUE_FULL :
+		denied ? SIGNAL_QUEUE_DENIED : -1;
 }
 
 int signal_send_thread(int thread_group, int tid, int signal,
@@ -1813,7 +1901,10 @@ int signal_send_thread(int thread_group, int tid, int signal,
 			spinlock_release(&process->lock);
 			continue;
 		}
-		if (!signal)
+		if (!process_signal_permitted_locked(process, signal,
+					     information))
+			result = SIGNAL_QUEUE_DENIED;
+		else if (!signal)
 			result = 0;
 		else
 			result = resumed = signal_queue_thread_locked(
@@ -1900,18 +1991,36 @@ static thread_t process_find_thread_locked(int tid, process_t *owner)
 
 int process_set_nice(int tid, int nice)
 {
+	struct process_credentials caller;
 	process_t process = 0;
 	thread_t thread;
-	int result = -LINUX_ESRCH;
+	int old_nice, result = -LINUX_ESRCH;
 
-	if (!tid)
-		return scheduler_set_nice(cur_thread(), nice) < 0 ?
+	process_credentials_get(&caller);
+	if (!tid) {
+		thread = cur_thread();
+		old_nice = scheduler_get_nice(thread);
+		if (nice < old_nice && caller.euid)
+			return -LINUX_EACCES;
+		return scheduler_set_nice(thread, nice) < 0 ?
 			-LINUX_EINVAL : 0;
+	}
 	spinlock_acquire(&wait_lock);
 	thread = process_find_thread_locked(tid, &process);
-	if (thread)
-		result = scheduler_set_nice(thread, nice) < 0 ?
-			-LINUX_EINVAL : 0;
+	if (thread) {
+		if (caller.euid && caller.euid != process->credentials.uid &&
+		    caller.euid != process->credentials.euid) {
+			result = -LINUX_EPERM;
+		} else {
+			old_nice = scheduler_get_nice(thread);
+			if (nice < old_nice && caller.euid)
+				result = -LINUX_EACCES;
+			else if (scheduler_set_nice(thread, nice) < 0)
+				result = -LINUX_EINVAL;
+			else
+				result = 0;
+		}
+	}
 	if (process)
 		spinlock_release(&process->lock);
 	spinlock_release(&wait_lock);

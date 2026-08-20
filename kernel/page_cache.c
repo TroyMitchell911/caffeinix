@@ -65,7 +65,7 @@ static int page_cache_same_inode(const struct page_cache_entry *entry,
 static void page_cache_release(struct page_cache_entry *entry)
 {
 	list_remove(&entry->node);
-	vfs_file_put(entry->file);
+	vfs_file_unhold(entry->file);
 	pfree(entry->page);
 	free(entry);
 	page_cache.stats.pages--;
@@ -205,7 +205,7 @@ enum page_cache_get_result page_cache_get(struct vfs_file *file,
 		goto failed;
 	}
 	list_init(&entry->node);
-	entry->file = vfs_file_get(file);
+	entry->file = vfs_file_hold(file);
 	entry->superblock = inode->superblock;
 	entry->inode_number = inode->number;
 	entry->offset = offset;
@@ -253,7 +253,7 @@ int page_cache_mark_dirty(struct vfs_file *file, uint64 offset)
 		goto out;
 	if (!(entry->file->flags & VFS_OPEN_WRITE)) {
 		old_file = entry->file;
-		entry->file = vfs_file_get(file);
+		entry->file = vfs_file_hold(file);
 	}
 	entry->dirty = 1;
 	entry->writeback_mapped = 1;
@@ -261,7 +261,7 @@ int page_cache_mark_dirty(struct vfs_file *file, uint64 offset)
 out:
 	sleeplock_release(&page_cache.lock);
 	if (old_file)
-		vfs_file_put(old_file);
+		vfs_file_unhold(old_file);
 	return result;
 }
 

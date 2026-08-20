@@ -42,6 +42,8 @@ int64 linux_error(int result)
 		return -LINUX_ENAMETOOLONG;
 	case VFS_ERR_BUSY:
 		return -LINUX_EBUSY;
+	case VFS_ERR_TXTBSY:
+		return -LINUX_ETXTBSY;
 	case VFS_ERR_LOOP:
 		return -LINUX_ELOOP;
 	case VFS_ERR_XDEV:
@@ -112,6 +114,8 @@ int64 linux_error(int result)
 		return -LINUX_EINTR;
 	case VFS_ERR_OVERFLOW:
 		return -LINUX_EOVERFLOW;
+	case VFS_ERR_ACCES:
+		return -LINUX_EACCES;
 	default:
 		return -LINUX_EIO;
 	}
@@ -279,10 +283,22 @@ extern uint64 sys_linux_rt_sigtimedwait(void);
 extern uint64 sys_linux_rt_sigreturn(void);
 extern uint64 sys_linux_setpriority(void);
 extern uint64 sys_linux_getpriority(void);
+extern uint64 sys_linux_setregid(void);
+extern uint64 sys_linux_setgid(void);
+extern uint64 sys_linux_setreuid(void);
+extern uint64 sys_linux_setuid(void);
+extern uint64 sys_linux_setresuid(void);
+extern uint64 sys_linux_getresuid(void);
+extern uint64 sys_linux_setresgid(void);
+extern uint64 sys_linux_getresgid(void);
+extern uint64 sys_linux_setfsuid(void);
+extern uint64 sys_linux_setfsgid(void);
 extern uint64 sys_linux_setpgid(void);
 extern uint64 sys_linux_getpgid(void);
 extern uint64 sys_linux_getsid(void);
 extern uint64 sys_linux_setsid(void);
+extern uint64 sys_linux_getgroups(void);
+extern uint64 sys_linux_setgroups(void);
 extern uint64 sys_linux_getrandom(void);
 extern uint64 sys_linux_symlinkat(void);
 extern uint64 sys_linux_sync(void);
@@ -374,10 +390,22 @@ static syscall_t linux_syscalls[LINUX_SYS_pwritev2 + 1] = {
 	[LINUX_SYS_rt_sigreturn] = sys_linux_rt_sigreturn,
 	[LINUX_SYS_setpriority] = sys_linux_setpriority,
 	[LINUX_SYS_getpriority] = sys_linux_getpriority,
+	[LINUX_SYS_setregid] = sys_linux_setregid,
+	[LINUX_SYS_setgid] = sys_linux_setgid,
+	[LINUX_SYS_setreuid] = sys_linux_setreuid,
+	[LINUX_SYS_setuid] = sys_linux_setuid,
+	[LINUX_SYS_setresuid] = sys_linux_setresuid,
+	[LINUX_SYS_getresuid] = sys_linux_getresuid,
+	[LINUX_SYS_setresgid] = sys_linux_setresgid,
+	[LINUX_SYS_getresgid] = sys_linux_getresgid,
+	[LINUX_SYS_setfsuid] = sys_linux_setfsuid,
+	[LINUX_SYS_setfsgid] = sys_linux_setfsgid,
 	[LINUX_SYS_setpgid] = sys_linux_setpgid,
 	[LINUX_SYS_getpgid] = sys_linux_getpgid,
 	[LINUX_SYS_getsid] = sys_linux_getsid,
 	[LINUX_SYS_setsid] = sys_linux_setsid,
+	[LINUX_SYS_getgroups] = sys_linux_getgroups,
+	[LINUX_SYS_setgroups] = sys_linux_setgroups,
 	[LINUX_SYS_uname] = sys_linux_uname,
 	[LINUX_SYS_umask] = sys_linux_umask,
 	[LINUX_SYS_prctl] = sys_linux_prctl,
