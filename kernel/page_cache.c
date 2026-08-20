@@ -10,6 +10,9 @@
 #include <sleeplock.h>
 #include <vfs.h>
 
+#define PAGE_CACHE_READAHEAD_ORDER 2
+#define PAGE_CACHE_READAHEAD_PAGES (1U << PAGE_CACHE_READAHEAD_ORDER)
+
 struct page_cache_entry {
 	struct list node;
 	struct vfs_file *file;
@@ -177,6 +180,130 @@ uint64 page_cache_reclaim_unmapped(void)
 	return reclaimed;
 }
 
+static int page_cache_readahead_locked(struct vfs_file *file,
+				       struct vfs_inode *inode,
+				       uint64 offset, uint32 bytes,
+				       void **result,
+				       enum page_cache_get_result *failure)
+{
+	struct page_cache_entry *entries[PAGE_CACHE_READAHEAD_PAGES] = { 0 };
+	void *pages[PAGE_CACHE_READAHEAD_PAGES] = { 0 };
+	void *buffer;
+	uint64 available, read_bytes;
+	uint32 count, index;
+	int64 status;
+
+	if (inode->size <= offset)
+		return 0;
+	available = inode->size - offset;
+	if (available <= bytes)
+		return 0;
+	if (available > (uint64)PAGE_CACHE_READAHEAD_PAGES * PGSIZE)
+		count = PAGE_CACHE_READAHEAD_PAGES;
+	else
+		count = (available + PGSIZE - 1) / PGSIZE;
+	for (index = 1; index < count; index++) {
+		if (page_cache_find(inode->superblock, inode->number,
+				    offset + (uint64)index * PGSIZE)) {
+			count = index;
+			break;
+		}
+	}
+	if (count < 2)
+		return 0;
+	buffer = alloc_pages(PAGE_CACHE_READAHEAD_ORDER, PALLOC_ZERO);
+	if (!buffer)
+		return 0;
+	for (index = 0; index < count; index++) {
+		entries[index] = malloc(sizeof(*entries[index]));
+		pages[index] = palloc_zero();
+		if (entries[index] && pages[index])
+			continue;
+		if (!index && page_cache_reclaim_locked(1)) {
+			if (!entries[index])
+				entries[index] = malloc(sizeof(*entries[index]));
+			if (!pages[index])
+				pages[index] = palloc_zero();
+			if (entries[index] && pages[index])
+				continue;
+		}
+		if (!index)
+			goto fallback;
+		if (pages[index]) {
+			pfree(pages[index]);
+			pages[index] = 0;
+		}
+		if (entries[index]) {
+			free(entries[index]);
+			entries[index] = 0;
+		}
+		count = index;
+		break;
+	}
+	if (count < 2)
+		goto fallback;
+	read_bytes = (uint64)count * PGSIZE;
+	if (read_bytes > available)
+		read_bytes = available;
+	status = vfs_file_pread_raw(file, 0, (uint64)buffer, read_bytes,
+				     offset);
+	if (status != (int64)read_bytes) {
+		*failure = PAGE_CACHE_GET_IO;
+		goto failed;
+	}
+	for (index = 0; index < count; index++) {
+		uint64 copied = read_bytes - (uint64)index * PGSIZE;
+
+		if (copied > PGSIZE)
+			copied = PGSIZE;
+		memmove(pages[index], buffer + (uint64)index * PGSIZE,
+			copied);
+		list_init(&entries[index]->node);
+		entries[index]->file = vfs_file_hold(file);
+		entries[index]->superblock = inode->superblock;
+		entries[index]->inode_number = inode->number;
+		entries[index]->offset = offset + (uint64)index * PGSIZE;
+		entries[index]->page = pages[index];
+		entries[index]->dirty = 0;
+		entries[index]->writeback_mapped = 0;
+		entries[index]->executable_mapped = 0;
+		entries[index]->evicting = 0;
+		list_insert_after(&page_cache.entries, &entries[index]->node);
+		page_cache.stats.pages++;
+	}
+	free_pages(buffer, PAGE_CACHE_READAHEAD_ORDER);
+	if (palloc_get(pages[0]) < 0)
+		goto failed_inserted;
+	list_remove(&entries[0]->node);
+	list_insert_after(&page_cache.entries, &entries[0]->node);
+	page_cache.stats.misses++;
+	*result = pages[0];
+	return 1;
+
+failed_inserted:
+	for (index = 0; index < count; index++)
+		page_cache_release(entries[index]);
+	return -1;
+fallback:
+	free_pages(buffer, PAGE_CACHE_READAHEAD_ORDER);
+	for (index = 0; index < PAGE_CACHE_READAHEAD_PAGES; index++) {
+		if (pages[index])
+			pfree(pages[index]);
+		if (entries[index])
+			free(entries[index]);
+	}
+	return 0;
+failed:
+	free_pages(buffer, PAGE_CACHE_READAHEAD_ORDER);
+	for (index = 0; index < count; index++) {
+		if (pages[index])
+			pfree(pages[index]);
+		if (entries[index])
+			free(entries[index]);
+	}
+	return -1;
+}
+
 enum page_cache_get_result page_cache_get(struct vfs_file *file,
 					  uint64 offset, uint32 bytes,
 					  void **page)
@@ -186,6 +313,7 @@ enum page_cache_get_result page_cache_get(struct vfs_file *file,
 	enum page_cache_get_result failure = PAGE_CACHE_GET_ERROR;
 	void *allocated;
 	int64 read_result;
+	int readahead;
 
 	if (!file || !page || !bytes || bytes > PGSIZE ||
 	    offset % PGSIZE || !file->path.dentry ||
@@ -209,6 +337,13 @@ enum page_cache_get_result page_cache_get(struct vfs_file *file,
 		*page = entry->page;
 		sleeplock_release(&page_cache.lock);
 		return PAGE_CACHE_GET_OK;
+	}
+	readahead = page_cache_readahead_locked(file, inode, offset, bytes,
+						 page, &failure);
+	if (readahead) {
+		sleeplock_release(&page_cache.lock);
+		return readahead > 0 ? PAGE_CACHE_GET_OK :
+			failure;
 	}
 	entry = malloc(sizeof(*entry));
 	allocated = palloc_zero();
@@ -601,12 +736,16 @@ void page_cache_get_stats(struct page_cache_stats *stats)
 		return;
 	sleeplock_acquire(&page_cache.lock);
 	*stats = page_cache.stats;
+	stats->reclaimable_pages = 0;
 	stats->mapped_pages = 0;
 	stats->shared_pages = 0;
 	stats->mapping_references = 0;
 	for (node = page_cache.entries.next; node != &page_cache.entries;
 	     node = node->next) {
 		entry = list_entry(node, struct page_cache_entry, node);
+		if (!entry->dirty && !entry->writeback_mapped &&
+		    !entry->evicting)
+			stats->reclaimable_pages++;
 		references = palloc_refcount(entry->page);
 		if (references > 1) {
 			stats->mapped_pages++;

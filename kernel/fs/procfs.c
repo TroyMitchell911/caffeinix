@@ -7,6 +7,7 @@
 #include <mystring.h>
 #include <netdevice.h>
 #include <network_stack.h>
+#include <page_cache.h>
 #include <palloc.h>
 #include <printf.h>
 #include <process.h>
@@ -413,15 +414,23 @@ static void procfs_build_mounts(struct procfs_buffer *buffer)
 
 static void procfs_build_meminfo(struct procfs_buffer *buffer)
 {
+	struct page_cache_stats cache;
 	uint64 total = palloc_usable_bytes() / 1024;
 	uint64 free = palloc_free_pages() * (PGSIZE / 1024);
+	uint64 available, cached;
+
+	page_cache_get_stats(&cache);
+	cached = cache.pages * (PGSIZE / 1024);
+	available = free + cache.reclaimable_pages * (PGSIZE / 1024);
+	if (available > total)
+		available = total;
 
 	procfs_printf(buffer,
 		"MemTotal:       %lu kB\n"
 		"MemFree:        %lu kB\n"
 		"MemAvailable:   %lu kB\n"
 		"Buffers:        0 kB\n"
-		"Cached:         0 kB\n"
+		"Cached:         %lu kB\n"
 		"SwapCached:     0 kB\n"
 		"Active:         0 kB\n"
 		"Inactive:       0 kB\n"
@@ -429,7 +438,7 @@ static void procfs_build_meminfo(struct procfs_buffer *buffer)
 		"SReclaimable:   0 kB\n"
 		"SwapTotal:      0 kB\n"
 		"SwapFree:       0 kB\n",
-		total, free, free);
+		total, free, available, cached);
 }
 
 static void procfs_build_uptime(struct procfs_buffer *buffer)
