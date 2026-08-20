@@ -84,10 +84,15 @@
 #define LINUX_SYS_mprotect          226
 #define LINUX_SYS_msync             227
 #define LINUX_SYS_accept4           242
+#define LINUX_SYS_riscv_flush_icache 259
 #define LINUX_SYS_wait4             260
 #define LINUX_SYS_renameat2         276
 #define LINUX_SYS_getrandom         278
 #define LINUX_SYS_membarrier        283
+
+#define LINUX_SYS_RISCV_FLUSH_ICACHE_LOCAL 1UL
+#define LINUX_SYS_RISCV_FLUSH_ICACHE_ALL \
+	LINUX_SYS_RISCV_FLUSH_ICACHE_LOCAL
 
 #define LINUX_EPERM                   1
 #define LINUX_ENOENT                  2

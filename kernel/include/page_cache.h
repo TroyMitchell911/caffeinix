@@ -35,6 +35,7 @@ enum page_cache_get_result page_cache_get(struct vfs_file *file,
 					  uint64 offset, uint32 bytes,
 					  void **page);
 int page_cache_mark_dirty(struct vfs_file *file, uint64 offset);
+int page_cache_mark_executable(struct vfs_file *file, uint64 offset);
 int page_cache_refresh(struct vfs_file *file, int user_source,
 		       uint64 source, uint64 offset, uint64 count,
 		       uint64 old_size);

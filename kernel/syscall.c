@@ -136,6 +136,7 @@ extern uint64 sys_linux_shutdown(void);
 extern uint64 sys_linux_sendmsg(void);
 extern uint64 sys_linux_recvmsg(void);
 extern uint64 sys_linux_accept4(void);
+extern uint64 sys_linux_riscv_flush_icache(void);
 extern uint64 sys_linux_ftruncate(void);
 
 typedef uint64 (*syscall_t)(void);
@@ -220,6 +221,7 @@ static syscall_t linux_syscalls[LINUX_SYS_membarrier + 1] = {
 	[LINUX_SYS_mprotect] = sys_linux_mprotect,
 	[LINUX_SYS_msync] = sys_linux_msync,
 	[LINUX_SYS_accept4] = sys_linux_accept4,
+	[LINUX_SYS_riscv_flush_icache] = sys_linux_riscv_flush_icache,
 	[LINUX_SYS_wait4] = sys_linux_wait4,
 	[LINUX_SYS_renameat2] = sys_linux_renameat2,
 	[LINUX_SYS_getrandom] = sys_linux_getrandom,

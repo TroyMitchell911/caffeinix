@@ -17,6 +17,7 @@
 #define SBI_HSM_HART_START 0
 #define SBI_HSM_HART_GET_STATUS 2
 #define SBI_IPI_SEND_IPI 0
+#define SBI_RFENCE_REMOTE_FENCE_I 0
 #define SBI_RFENCE_REMOTE_SFENCE_VMA 1
 
 #define SBI_SUCCESS 0
@@ -145,6 +146,16 @@ int64 sbi_send_ipi(uint64 hart_id)
 	/* A one-bit mask based at hart_id also handles sparse hart IDs. */
 	result = sbi_ecall(SBI_EXT_IPI, SBI_IPI_SEND_IPI, 1, hart_id,
 	                   0, 0, 0, 0);
+	return result.error;
+}
+
+int64 sbi_remote_fence_i(uint64 hart_id)
+{
+	struct sbi_return result;
+
+	/* A one-bit mask based at hart_id also handles sparse hart IDs. */
+	result = sbi_ecall(SBI_EXT_RFENCE, SBI_RFENCE_REMOTE_FENCE_I,
+	                   1, hart_id, 0, 0, 0, 0);
 	return result.error;
 }
 

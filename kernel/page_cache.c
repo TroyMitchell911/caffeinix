@@ -1,3 +1,4 @@
+#include <cpu.h>
 #include <list.h>
 #include <mmap.h>
 #include <mystring.h>
@@ -18,6 +19,7 @@ struct page_cache_entry {
 	void *page;
 	uint8 dirty;
 	uint8 writeback_mapped;
+	uint8 executable_mapped;
 	uint8 evicting;
 };
 
@@ -210,6 +212,7 @@ enum page_cache_get_result page_cache_get(struct vfs_file *file,
 	entry->page = allocated;
 	entry->dirty = 0;
 	entry->writeback_mapped = 0;
+	entry->executable_mapped = 0;
 	entry->evicting = 0;
 	list_insert_after(&page_cache.entries, &entry->node);
 	page_cache.stats.pages++;
@@ -262,6 +265,25 @@ out:
 	return result;
 }
 
+int page_cache_mark_executable(struct vfs_file *file, uint64 offset)
+{
+	struct page_cache_entry *entry;
+	struct vfs_inode *inode;
+	int result = -1;
+
+	if (!file || !file->path.dentry ||
+	    !(inode = file->path.dentry->inode) || offset % PGSIZE)
+		return -1;
+	sleeplock_acquire(&page_cache.lock);
+	entry = page_cache_find(inode->superblock, inode->number, offset);
+	if (entry && !entry->evicting) {
+		entry->executable_mapped = 1;
+		result = 0;
+	}
+	sleeplock_release(&page_cache.lock);
+	return result;
+}
+
 int page_cache_refresh(struct vfs_file *file, int user_source,
 		       uint64 source, uint64 offset, uint64 count,
 		       uint64 old_size)
@@ -270,7 +292,7 @@ int page_cache_refresh(struct vfs_file *file, int user_source,
 	struct vfs_inode *inode;
 	uint64 end, finish, refresh_start, start;
 	list_t node;
-	int result = 0;
+	int flush_icache = 0, result = 0;
 
 	if (!count)
 		return 0;
@@ -288,6 +310,8 @@ int page_cache_refresh(struct vfs_file *file, int user_source,
 		    end <= entry->offset ||
 		    refresh_start >= entry->offset + PGSIZE)
 			continue;
+		if (entry->executable_mapped)
+			flush_icache = 1;
 		if (old_size < offset) {
 			start = old_size > entry->offset ?
 				old_size : entry->offset;
@@ -313,6 +337,8 @@ int page_cache_refresh(struct vfs_file *file, int user_source,
 		}
 	}
 	sleeplock_release(&page_cache.lock);
+	if (flush_icache)
+		cpu_icache_flush_all();
 	return result;
 }
 

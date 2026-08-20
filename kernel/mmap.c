@@ -496,6 +496,13 @@ retry:
 		permissions &= ~PTE_W;
 		permissions |= PTE_SW_COW;
 	}
+	if (cached && (area->protection & LINUX_PROT_EXEC) &&
+	    page_cache_mark_executable(
+		area->file, area->offset + page_address - area->start) < 0) {
+		pfree(page);
+		result = MMAP_FAULT_NOMEM;
+		goto out;
+	}
 	if (cached && (area->flags & 0xf) == LINUX_MAP_SHARED &&
 	    (permissions & PTE_W) &&
 	    page_cache_mark_dirty(area->file,
@@ -512,7 +519,7 @@ retry:
 	}
 	sfence_vma();
 	if (area->protection & LINUX_PROT_EXEC)
-		fence_i();
+		cpu_icache_flush_all();
 out:
 	sleeplock_release(&process->mmap_lock);
 	if (result == MMAP_FAULT_RETRY)

@@ -1,5 +1,6 @@
-#include <linux_uapi.h>
+#include <cpu.h>
 #include <ktime.h>
+#include <linux_uapi.h>
 #include <mem_layout.h>
 #include <mystring.h>
 #include <process.h>
@@ -182,6 +183,26 @@ uint64 sys_linux_umask(void)
 	argint(0, &mask);
 	process->umask = mask & 0777;
 	return old_mask;
+}
+
+uint64 sys_linux_riscv_flush_icache(void)
+{
+	uint64 end, flags, start;
+
+	argaddr(0, &start);
+	argaddr(1, &end);
+	argaddr(2, &flags);
+	(void)start;
+	(void)end;
+	if (flags & ~LINUX_SYS_RISCV_FLUSH_ICACHE_ALL)
+		return -LINUX_EINVAL;
+
+	/*
+	 * Until address spaces track stale instruction caches per hart,
+	 * conservatively flush every online hart for both Linux modes.
+	 */
+	cpu_icache_flush_all();
+	return 0;
 }
 
 uint64 sys_linux_clone(void)
