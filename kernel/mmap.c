@@ -414,8 +414,10 @@ static enum mmap_fault_result mmap_file_fault(struct vm_area *area,
 		if (bytes > PGSIZE)
 			bytes = PGSIZE;
 	} else {
-		if (vfs_inode_stat(area->file->path.dentry->inode, &stat) < 0)
-			return MMAP_FAULT_BUSERR;
+		result = vfs_inode_stat(area->file->path.dentry->inode, &stat);
+		if (result < 0)
+			return result == VFS_ERR_NOMEM ? MMAP_FAULT_NOMEM :
+				MMAP_FAULT_BUSERR;
 		if (file_offset >= stat.size)
 			return MMAP_FAULT_BUSERR;
 		bytes = stat.size - file_offset;
@@ -471,7 +473,7 @@ enum mmap_fault_result mmap_handle_fault(process_t process, uint64 address,
 	struct vm_area *area;
 	enum mmap_fault_result result;
 	uint64 page_address = PGROUNDDOWN(address);
-	int permissions, reclaimed = 0;
+	int permissions;
 	int cached;
 	void *page;
 
@@ -563,11 +565,9 @@ out:
 	sleeplock_release(&process->mmap_lock);
 	if (result == MMAP_FAULT_RETRY)
 		goto retry;
-	if (result == MMAP_FAULT_NOMEM && !reclaimed) {
-		reclaimed = mmap_reclaim_clean_pages(MMAP_RECLAIM_TARGET) != 0;
-		if (reclaimed)
-			goto retry;
-	}
+	if (result == MMAP_FAULT_NOMEM &&
+	    mmap_reclaim_clean_pages(MMAP_RECLAIM_TARGET))
+		goto retry;
 	return result;
 }
 
