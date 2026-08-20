@@ -20,6 +20,9 @@ COMMANDS = (
     "/bin/ls / >/dev/null",
     "/bin/ls /",
 )
+EXTERNAL_COMMANDS = COMMANDS[1:]
+COMPLETION_PREFIX = b"/bin/ec"
+COMPLETION_PATTERN = rb"/bin/echo "
 PROMPT_PATTERN = rb"(?:^|\r?\n)(?:[~/][~/A-Za-z0-9_.-]* )?# "
 
 
@@ -28,6 +31,7 @@ class Guest:
         self.timeout = timeout
         self.buffer = b""
         self.master, slave = pty.openpty()
+        boot_started = time.perf_counter_ns()
         command = [
             qemu,
             "-machine", "virt",
@@ -52,6 +56,8 @@ class Guest:
         os.close(slave)
         try:
             self.read_regex(PROMPT_PATTERN)
+            self.boot_to_shell_ms = (
+                time.perf_counter_ns() - boot_started) / 1_000_000
         except Exception:
             self.close()
             raise
@@ -101,6 +107,19 @@ class Guest:
                     f"benchmark command failed: {command}: {error!r}")
         return elapsed
 
+    def complete(self):
+        start = time.perf_counter_ns()
+        os.write(self.master, COMPLETION_PREFIX + b"\t")
+        output = self.read_regex(COMPLETION_PATTERN)
+        elapsed = (time.perf_counter_ns() - start) / 1_000_000
+        if b"[PANIC]" in output:
+            tail = output[-4096:].decode("utf-8", errors="replace")
+            raise RuntimeError(
+                "kernel panic during completion benchmark:\n" + tail)
+        os.write(self.master, b"\x03")
+        self.read_regex(PROMPT_PATTERN)
+        return elapsed
+
     def cpu_ticks(self):
         with open(f"/proc/{self.process.pid}/stat", encoding="ascii") as file:
             fields = file.read().split()
@@ -136,6 +155,8 @@ def benchmark(args, cpus):
         for command in COMMANDS:
             for _ in range(args.warmups):
                 guest.run(command)
+        for _ in range(args.warmups):
+            guest.complete()
         idle = guest.idle_cpu_percent(args.idle_seconds)
         commands = {}
         for command in COMMANDS:
@@ -145,9 +166,16 @@ def benchmark(args, cpus):
                 "min_ms": round(min(samples), 3),
                 "max_ms": round(max(samples), 3),
             }
+        samples = [guest.complete() for _ in range(args.samples)]
         return {
+            "boot_to_shell_ms": round(guest.boot_to_shell_ms, 3),
             "idle_host_cpu_percent": round(idle, 1),
             "commands": commands,
+            "completion": {
+                "median_ms": round(statistics.median(samples), 3),
+                "min_ms": round(min(samples), 3),
+                "max_ms": round(max(samples), 3),
+            },
         }
     finally:
         guest.close()
@@ -166,6 +194,10 @@ def parse_arguments():
     parser.add_argument("--idle-seconds", type=float, default=3)
     parser.add_argument("--timeout", type=float, default=60)
     parser.add_argument("--max-idle-cpu", type=float, default=100)
+    parser.add_argument("--max-command-ms", type=float, default=500)
+    parser.add_argument("--max-completion-ms", type=float, default=500)
+    parser.add_argument("--max-smp-ratio", type=float, default=3)
+    parser.add_argument("--max-boot-ms", type=float, default=15000)
     parser.add_argument("--check", action="store_true")
     parser.add_argument("--output")
     args = parser.parse_args()
@@ -189,16 +221,59 @@ def main():
                        one[command]["median_ms"], 3)
         for command in COMMANDS
     }
+    result["eight_to_one_completion_ratio"] = round(
+        result["results"]["8"]["completion"]["median_ms"] /
+        result["results"]["1"]["completion"]["median_ms"], 3)
     output = json.dumps(result, indent=2, sort_keys=True)
     print(output)
     if args.output:
         with open(args.output, "w", encoding="utf-8") as file:
             file.write(output + "\n")
-    if args.check and result["results"]["8"][
-            "idle_host_cpu_percent"] >= args.max_idle_cpu:
-        print("eight-CPU guest consumes a full host CPU while idle",
-              file=sys.stderr)
-        return 1
+    if args.check:
+        if result["results"]["8"][
+                "idle_host_cpu_percent"] >= args.max_idle_cpu:
+            print("eight-CPU guest consumes a full host CPU while idle",
+                  file=sys.stderr)
+            return 1
+        for cpus in ("1", "8"):
+            measured = result["results"][cpus]
+            if measured["boot_to_shell_ms"] > args.max_boot_ms:
+                print(
+                    f"{cpus}-CPU boot took "
+                    f"{measured['boot_to_shell_ms']:.3f} ms",
+                    file=sys.stderr)
+                return 1
+            for command in EXTERNAL_COMMANDS:
+                median = measured["commands"][command]["median_ms"]
+                if median > args.max_command_ms:
+                    print(
+                        f"{cpus}-CPU {command!r} median was "
+                        f"{median:.3f} ms",
+                        file=sys.stderr)
+                    return 1
+            completion = measured["completion"]["median_ms"]
+            if completion > args.max_completion_ms:
+                print(
+                    f"{cpus}-CPU completion median was "
+                    f"{completion:.3f} ms",
+                    file=sys.stderr)
+                return 1
+        for command in EXTERNAL_COMMANDS:
+            ratio = result["eight_to_one_median_ratio"][command]
+            if ratio > args.max_smp_ratio:
+                print(
+                    f"{command!r} slowed down {ratio:.3f} times "
+                    "with eight CPUs",
+                    file=sys.stderr)
+                return 1
+        if (result["eight_to_one_completion_ratio"] >
+                args.max_smp_ratio):
+            print(
+                "completion slowed down "
+                f"{result['eight_to_one_completion_ratio']:.3f} times "
+                "with eight CPUs",
+                file=sys.stderr)
+            return 1
     return 0
 
 
