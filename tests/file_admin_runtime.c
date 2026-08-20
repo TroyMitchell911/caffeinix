@@ -621,6 +621,22 @@ static int check_mknodat_dirfd(void)
 		return -1;
 	return 0;
 }
+
+static int check_existing_directory_errors(void)
+{
+	static const char *const paths[] = {
+		"/", ".", "/tmp/.", "/tmp/..",
+	};
+	size_t index;
+
+	for (index = 0; index < sizeof(paths) / sizeof(paths[0]); index++) {
+		errno = 0;
+		if (mkdir(paths[index], 0700) != -1 || errno != EEXIST)
+			return -1;
+	}
+	return 0;
+}
+
 static int check_block_device(void)
 {
 	struct stat stat_buffer;
@@ -903,6 +919,8 @@ int main(void)
 		return fail("fchownat dirfd");
 	if (check_mknodat_dirfd())
 		return fail("mknodat dirfd");
+	if (check_existing_directory_errors())
+		return fail("existing directory mkdir");
 	if (check_metadata_alias_refresh())
 		return fail("metadata alias refresh");
 	if (check_metadata_authorization_race())
