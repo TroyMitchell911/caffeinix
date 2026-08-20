@@ -9,6 +9,7 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/sysinfo.h>
 #include <sys/sysmacros.h>
 #include <sys/syscall.h>
 #include <sys/uio.h>
@@ -22,6 +23,13 @@
 #define CREATE_VISIBILITY_FILE "/ext-create-visibility"
 #define CREATE_VISIBILITY_DIR  "/ext-create-visibility-dir"
 #define CREATE_VISIBILITY_NODE "/ext-create-visibility-node"
+#define DENTRY_CACHE_FILES 600
+#define DENTRY_CACHE_DIRECTORY "/tmp/dentry-cache-runtime"
+#define DENTRY_LOOKUP_ATTEMPTS 4
+#define DENTRY_LOOKUP_WORKERS 16
+#define DENTRY_RACE_PATH "/tmp/dentry-race-target"
+#define DENTRY_RELEASE_BYTES (8 * 1024 * 1024)
+#define DENTRY_RELEASE_TOLERANCE (2 * 1024 * 1024)
 
 static char append_truncate_buffer[
 	APPEND_RECORD_SIZE * (APPEND_RECORDS * 3 + 1)];
@@ -762,10 +770,208 @@ out:
 	return result;
 }
 
+static int test_dentry_cache(void)
+{
+	char path[96];
+	struct stat state;
+	int fd, index;
+
+	if (mkdir(DENTRY_CACHE_DIRECTORY, 0700))
+		return -1;
+	for (index = 0; index < DENTRY_CACHE_FILES; index++) {
+		snprintf(path, sizeof(path), "%s/file-%03d",
+			 DENTRY_CACHE_DIRECTORY, index);
+		fd = open(path, O_CREAT | O_EXCL | O_RDWR, 0600);
+		if (fd < 0 || close(fd))
+			return -1;
+	}
+	for (index = 0; index < DENTRY_CACHE_FILES; index++) {
+		snprintf(path, sizeof(path), "%s/file-%03d",
+			 DENTRY_CACHE_DIRECTORY, index);
+		if (stat(path, &state) || !S_ISREG(state.st_mode))
+			return -1;
+	}
+	if (unlink(DENTRY_CACHE_DIRECTORY "/file-000"))
+		return -1;
+	errno = 0;
+	if (!stat(DENTRY_CACHE_DIRECTORY "/file-000", &state) ||
+	    errno != ENOENT)
+		return -1;
+	if (rename(DENTRY_CACHE_DIRECTORY "/file-001",
+		   DENTRY_CACHE_DIRECTORY "/renamed") ||
+	    !stat(DENTRY_CACHE_DIRECTORY "/file-001", &state) ||
+	    errno != ENOENT ||
+	    stat(DENTRY_CACHE_DIRECTORY "/renamed", &state))
+		return -1;
+	return 0;
+}
+
+static int write_large_file(const char *path)
+{
+	static unsigned char page[4096];
+	int fd, written = 0;
+
+	fd = open(path, O_CREAT | O_EXCL | O_RDWR, 0600);
+	if (fd < 0)
+		return -1;
+	while (written < DENTRY_RELEASE_BYTES) {
+		if (write(fd, page, sizeof(page)) != sizeof(page)) {
+			close(fd);
+			return -1;
+		}
+		written += sizeof(page);
+	}
+	return close(fd);
+}
+
+static int memory_returned(unsigned long before)
+{
+	struct sysinfo after;
+
+	if (sysinfo(&after))
+		return -1;
+	return before > after.freeram + DENTRY_RELEASE_TOLERANCE ? -1 : 0;
+}
+
+static int memory_released(unsigned long before, unsigned long bytes)
+{
+	struct sysinfo after;
+
+	if (sysinfo(&after))
+		return -1;
+	return after.freeram + DENTRY_RELEASE_TOLERANCE < before + bytes ?
+		-1 : 0;
+}
+
+static int evict_stale_dentries(void)
+{
+	char path[96];
+	struct stat state;
+	int index;
+
+	for (index = 2; index < DENTRY_CACHE_FILES; index++) {
+		snprintf(path, sizeof(path), "%s/file-%03d",
+			 DENTRY_CACHE_DIRECTORY, index);
+		if (stat(path, &state) || !S_ISREG(state.st_mode))
+			return -1;
+	}
+	return 0;
+}
+
+static int pipe_wait(int fd, int count)
+{
+	char byte;
+	int index;
+
+	for (index = 0; index < count; index++) {
+		if (read(fd, &byte, 1) != 1)
+			return -1;
+	}
+	return 0;
+}
+
+static int test_concurrent_dentry_lookup(void)
+{
+	char gates[DENTRY_LOOKUP_WORKERS] = { 0 };
+	pid_t children[DENTRY_LOOKUP_WORKERS];
+	int start[2], ready[2], done[2], finish[2];
+	struct sysinfo allocated;
+	int measured = 0, created = 0;
+	int failed = 0, index, status, workers = 0;
+
+	if (pipe(start) || pipe(ready) || pipe(done) || pipe(finish))
+		return 1;
+	for (index = 0; index < DENTRY_LOOKUP_WORKERS; index++) {
+		children[index] = fork();
+		if (children[index] < 0) {
+			failed = 1;
+			break;
+		}
+		workers++;
+		if (!children[index]) {
+			struct stat state;
+			char byte = 0;
+			int result = 0;
+
+			close(start[1]);
+			close(ready[0]);
+			close(done[0]);
+			close(finish[1]);
+			if (write(ready[1], &byte, 1) != 1 ||
+			    read(start[0], &byte, 1) != 1 ||
+			    stat(DENTRY_RACE_PATH, &state) ||
+			    !S_ISREG(state.st_mode))
+				result = 1;
+			if (write(done[1], &byte, 1) != 1 ||
+			    read(finish[0], &byte, 1) != 1)
+				result = 1;
+			_exit(result);
+		}
+	}
+	close(start[0]);
+	close(ready[1]);
+	close(done[1]);
+	close(finish[0]);
+	if (workers != DENTRY_LOOKUP_WORKERS ||
+	    pipe_wait(ready[0], workers))
+		failed = 3;
+	if (!failed && write_large_file(DENTRY_RACE_PATH))
+		failed = 4;
+	else if (!failed)
+		created = 1;
+	if (!failed && evict_stale_dentries())
+		failed = 5;
+	if (write(start[1], gates, workers) != (ssize_t)workers)
+		failed = failed ? failed : 6;
+	close(start[1]);
+	if (pipe_wait(done[0], workers))
+		failed = failed ? failed : 7;
+	if (!failed && sysinfo(&allocated))
+		failed = 8;
+	else if (!failed)
+		measured = 1;
+	if (created && unlink(DENTRY_RACE_PATH))
+		failed = failed ? failed : 9;
+	if (measured && memory_released(allocated.freeram,
+					      DENTRY_RELEASE_BYTES))
+		failed = failed ? failed : 10;
+	if (write(finish[1], gates, workers) != (ssize_t)workers)
+		failed = failed ? failed : 11;
+	close(finish[1]);
+	for (index = 0; index < workers; index++) {
+		if (waitpid(children[index], &status, 0) != children[index] ||
+		    !WIFEXITED(status) || WEXITSTATUS(status))
+			failed = failed ? failed : 12;
+	}
+	close(ready[0]);
+	close(done[0]);
+	return failed;
+}
+
+static int test_removed_dentry_release(void)
+{
+	static const char unlinked[] = "/tmp/dentry-release-unlinked";
+	static const char target[] = "/tmp/dentry-release-target";
+	static const char source[] = "/tmp/dentry-release-source";
+	struct sysinfo before;
+	struct stat state;
+
+	if (sysinfo(&before) || write_large_file(unlinked) ||
+	    stat(unlinked, &state) || unlink(unlinked) ||
+	    memory_returned(before.freeram))
+		return -1;
+	if (sysinfo(&before) || write_large_file(target) ||
+	    stat(target, &state) || make_file(source, "replacement") ||
+	    rename(source, target) || memory_returned(before.freeram) ||
+	    unlink(target))
+		return -1;
+	return 0;
+}
+
 int main(void)
 {
 	int result = test_devices();
-	int fat_mounted;
+	int attempt, fat_mounted;
 
 	if (result)
 		return fail(result);
@@ -788,6 +994,18 @@ int main(void)
 	if (test_renamed_cwd("/tmp/tmp-runtime"))
 		return fail(237);
 	pass("TMPFS_OK\n");
+	if (test_removed_dentry_release())
+		return fail(201);
+	pass("VFS_DENTRY_RELEASE_OK\n");
+	if (test_dentry_cache())
+		return fail(200);
+	pass("VFS_CACHE_OK\n");
+	for (attempt = 0; attempt < DENTRY_LOOKUP_ATTEMPTS; attempt++) {
+		result = test_concurrent_dentry_lookup();
+		if (result)
+			return fail(210 + result);
+	}
+	pass("VFS_DENTRY_RACE_OK\n");
 	result = test_fat(&fat_mounted);
 	if (result)
 		return fail(result);
