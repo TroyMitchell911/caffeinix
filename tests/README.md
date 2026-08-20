@@ -154,6 +154,8 @@ The guest selftest covers:
 - real, effective, saved, and filesystem credentials, supplementary groups,
   umask inheritance, file ownership, discretionary access, sticky-directory
   deletion, signal authorization, and credential auxv values across exec;
+- filesystem capacity reporting, chmod/chown ownership updates, FIFO nodes,
+  extent allocation, and raw virtio block-device discovery and I/O;
 - symlink metadata through `lstat`;
 - FAT open-file restrictions, unsupported Unix links, overwrite rename, and
   UTF-8 long names;

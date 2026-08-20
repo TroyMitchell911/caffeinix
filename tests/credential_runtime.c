@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <grp.h>
 #include <netinet/in.h>
+#include <sched.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -31,6 +32,7 @@
 #define ROOT_WRITABLE "/credential-root-writable"
 #define CREDENTIAL_PROGRAM "/bin/setid-exec-runtime"
 #define ZERO_MODE_FILE "/tmp/credential-zero-mode"
+#define SETID_EXEC_RACE_ROUNDS 256
 
 static int fail(const char *step)
 {
@@ -171,6 +173,15 @@ static int setid_exec_hold_child(const char *ready_text,
 	    read(release, &byte, 1) != 1)
 		return fail("set-ID exec hold");
 	return 0;
+}
+
+static int setid_exec_race_child(void)
+{
+	if (getuid() != 1001 || getgid() != 1001 || getegid() != 1001)
+		return 91;
+	if (!geteuid() || !getauxval(AT_EUID))
+		return 90;
+	return geteuid() == 1001 && getauxval(AT_EUID) == 1001 ? 0 : 92;
 }
 
 static int permission_child(pid_t parent)
@@ -380,6 +391,74 @@ static int check_executable_write_exclusion(void)
 	return failed ? -1 : 0;
 }
 
+static int check_setid_exec_snapshot_race(void)
+{
+	struct stat state;
+	volatile unsigned int delay;
+	char marker = 'R';
+	int failed = 0, index, ready[2], start[2], status;
+	pid_t child = -1;
+
+	if (pipe(ready) || pipe(start))
+		return -1;
+	for (index = 0; index < SETID_EXEC_RACE_ROUNDS; index++) {
+		if (chown(CREDENTIAL_PROGRAM, 1001, 1001) ||
+		    chmod(CREDENTIAL_PROGRAM, 04755)) {
+			failed = 1;
+			break;
+		}
+		child = fork();
+		if (child < 0) {
+			failed = 1;
+			break;
+		}
+		if (!child) {
+			close(ready[0]);
+			close(start[1]);
+			if (drop_to_unprivileged_user() ||
+			    write(ready[1], &marker, 1) != 1 ||
+			    read(start[0], &marker, 1) != 1)
+				_exit(93);
+			execl(CREDENTIAL_PROGRAM, "setid-exec-runtime",
+			      "setid-exec-race", NULL);
+			_exit(94);
+		}
+		if (read(ready[0], &marker, 1) != 1 ||
+		    write(start[1], &marker, 1) != 1) {
+			failed = 1;
+			kill(child, SIGKILL);
+		}
+		for (delay = 0; delay < (unsigned int)(index & 63) * 32;
+		     delay++)
+			;
+		if (!failed &&
+		    (chown(CREDENTIAL_PROGRAM, 0, 0) ||
+		     stat(CREDENTIAL_PROGRAM, &state) || state.st_uid ||
+		     (state.st_mode & 06000))) {
+			failed = 1;
+			kill(child, SIGKILL);
+		}
+		if (waitpid(child, &status, 0) != child || !WIFEXITED(status) ||
+		    WEXITSTATUS(status))
+			failed = 1;
+		child = -1;
+		if (failed)
+			break;
+	}
+	if (child > 0) {
+		kill(child, SIGKILL);
+		waitpid(child, &status, 0);
+	}
+	close(ready[0]);
+	close(ready[1]);
+	close(start[0]);
+	close(start[1]);
+	if (chown(CREDENTIAL_PROGRAM, 0, 0) ||
+	    chmod(CREDENTIAL_PROGRAM, 0755))
+		failed = 1;
+	return failed ? -1 : 0;
+}
+
 int main(int argc, char **argv)
 {
 	struct stat stat_buffer;
@@ -393,6 +472,8 @@ int main(int argc, char **argv)
 		return setid_exec_child();
 	if (argc == 4 && !strcmp(argv[1], "setid-exec-hold"))
 		return setid_exec_hold_child(argv[2], argv[3]);
+	if (argc == 2 && !strcmp(argv[1], "setid-exec-race"))
+		return setid_exec_race_child();
 	if (getuid() || geteuid() || getgid() || getegid())
 		return fail("initial ids");
 	if ((uid_t)syscall(SYS_setfsuid, (uid_t)-1) != 0 ||
@@ -473,6 +554,8 @@ int main(int argc, char **argv)
 	setid_result = wait_success(child, "set-ID exec child");
 	if (!setid_result && check_executable_write_exclusion())
 		setid_result = fail("set-ID write exclusion");
+	if (!setid_result && check_setid_exec_snapshot_race())
+		setid_result = fail("set-ID exec snapshot race");
 	if (chown(CREDENTIAL_PROGRAM, 0, 0) ||
 	    chmod(CREDENTIAL_PROGRAM, 0755))
 		return fail("set-ID exec restore");

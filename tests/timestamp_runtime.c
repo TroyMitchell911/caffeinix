@@ -8,6 +8,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -15,6 +16,8 @@
 #define TEST_ATIME_NANOSECONDS 123456789
 #define TEST_MTIME_SECONDS 1700000100
 #define TEST_MTIME_NANOSECONDS 987654321
+#define TIMESTAMP_OWNER_RACE "/tmp/timestamp-owner-race"
+#define TIMESTAMP_RACE_ROUNDS 256
 
 static void fail(const char *operation)
 {
@@ -166,12 +169,128 @@ static void test_omit_short_circuit(void)
 		fail("UTIME_OMIT path short circuit");
 }
 
+static void test_dirfd(void)
+{
+	static const char directory[] = "/tmp/timestamp-dirfd";
+	static const char path[] = "/tmp/timestamp-dirfd/child";
+	struct timespec times[2] = {
+		{ TEST_ATIME_SECONDS, TEST_ATIME_NANOSECONDS },
+		{ TEST_MTIME_SECONDS, TEST_MTIME_NANOSECONDS },
+	};
+	struct stat state;
+	int directory_fd, file_fd;
+
+	if (mkdir(directory, 0700))
+		fail("dirfd directory");
+	make_file(path);
+	directory_fd = open(directory, O_RDONLY | O_DIRECTORY);
+	if (directory_fd < 0 ||
+	    utimensat(directory_fd, "child", times, 0) ||
+	    stat(path, &state) ||
+	    state.st_atim.tv_sec != TEST_ATIME_SECONDS ||
+	    state.st_atim.tv_nsec != TEST_ATIME_NANOSECONDS ||
+	    state.st_mtim.tv_sec != TEST_MTIME_SECONDS ||
+	    state.st_mtim.tv_nsec != TEST_MTIME_NANOSECONDS)
+		fail("relative dirfd timestamps");
+	file_fd = open(path, O_RDONLY);
+	if (file_fd < 0)
+		fail("dirfd regular file");
+	errno = 0;
+	if (utimensat(file_fd, "child", times, 0) != -1 ||
+	    errno != ENOTDIR)
+		fail("regular dirfd timestamps");
+	errno = 0;
+	if (utimensat(-1, "child", times, 0) != -1 || errno != EBADF)
+		fail("invalid dirfd timestamps");
+	if (utimensat(-1, path, times, 0) || close(file_fd) ||
+	    close(directory_fd))
+		fail("absolute timestamp dirfd");
+}
+
+static int timestamp_race_child(int start, int done)
+{
+	struct timespec times[2] = {
+		{ TEST_ATIME_SECONDS, TEST_ATIME_NANOSECONDS },
+		{ TEST_MTIME_SECONDS, TEST_MTIME_NANOSECONDS },
+	};
+	char marker;
+	int index;
+
+	if (setgid(1001) || setuid(1001))
+		return 1;
+	for (index = 0; index < TIMESTAMP_RACE_ROUNDS; index++) {
+		if (read(start, &marker, 1) != 1)
+			return 2;
+		errno = 0;
+		if (utimensat(AT_FDCWD, TIMESTAMP_OWNER_RACE, times, 0) &&
+		    errno != EPERM)
+			return 3;
+		if (write(done, &marker, 1) != 1)
+			return 4;
+	}
+	return 0;
+}
+
+static void test_owner_change_race(void)
+{
+	struct timespec owner_times[2] = {
+		{ TEST_ATIME_SECONDS + 1000, TEST_ATIME_NANOSECONDS },
+		{ TEST_MTIME_SECONDS + 1000, TEST_MTIME_NANOSECONDS },
+	};
+	struct stat state;
+	volatile unsigned int delay;
+	char marker = 'R';
+	int done[2], index, start[2], status;
+	pid_t child;
+
+	unlink(TIMESTAMP_OWNER_RACE);
+	make_file(TIMESTAMP_OWNER_RACE);
+	if (chown(TIMESTAMP_OWNER_RACE, 1001, 1001) ||
+	    pipe(start) || pipe(done))
+		fail("timestamp owner race setup");
+	child = fork();
+	if (child < 0)
+		fail("timestamp owner race fork");
+	if (!child) {
+		close(start[1]);
+		close(done[0]);
+		_exit(timestamp_race_child(start[0], done[1]));
+	}
+	close(start[0]);
+	close(done[1]);
+	for (index = 0; index < TIMESTAMP_RACE_ROUNDS; index++) {
+		if (utimensat(AT_FDCWD, TIMESTAMP_OWNER_RACE,
+			      owner_times, 0) ||
+		    write(start[1], &marker, 1) != 1)
+			fail("timestamp owner race start");
+		for (delay = 0; delay < (unsigned int)(index & 63) * 32;
+		     delay++)
+			;
+		if (chown(TIMESTAMP_OWNER_RACE, 0, 0) ||
+		    utimensat(AT_FDCWD, TIMESTAMP_OWNER_RACE,
+			      owner_times, 0) ||
+		    read(done[0], &marker, 1) != 1 ||
+		    stat(TIMESTAMP_OWNER_RACE, &state) ||
+		    !same_time(&state.st_atim, &owner_times[0]) ||
+		    !same_time(&state.st_mtim, &owner_times[1]) ||
+		    chown(TIMESTAMP_OWNER_RACE, 1001, 1001))
+			fail("timestamp owner race serialization");
+	}
+	close(start[1]);
+	close(done[0]);
+	if (waitpid(child, &status, 0) != child || !WIFEXITED(status) ||
+	    WEXITSTATUS(status) || unlink(TIMESTAMP_OWNER_RACE))
+		fail("timestamp owner race child");
+}
+
 int main(void)
 {
 	test_filesystem("/timestamp-runtime");
 	test_filesystem("/tmp/timestamp-runtime");
 	test_symlink();
 	test_omit_short_circuit();
+	test_dirfd();
+	test_owner_change_race();
 	puts("TIMESTAMP_RUNTIME_OK");
 	return 0;
 }

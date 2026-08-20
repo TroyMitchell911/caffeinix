@@ -94,6 +94,8 @@ static void main_boot(void)
 	if (uart_core_selftest() < 0)
 		PANIC("UART core selftest");
 	block_device_init();
+	if (block_core_selftest_start() < 0)
+		PANIC("block core selftest");
 	net_device_init();
 	if (net_core_selftest() < 0)
 		PANIC("network core selftest");

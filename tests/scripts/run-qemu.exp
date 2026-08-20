@@ -273,6 +273,40 @@ expect {
 }
 expect_prompt
 
+send -- "/bin/file-admin-runtime\r"
+expect {
+	-re {\r?\nFILE_ADMIN_RUNTIME_OK} {}
+	-re {FILE_ADMIN_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "file administration test reported failure"
+	}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic in file administration test"
+	}
+	timeout { abort_with_dump "file administration test timeout" }
+	eof { abort_test "QEMU exited during file administration test" }
+}
+expect_prompt
+
+send -- "touch /tmp/bb-admin && chmod 640 /tmp/bb-admin && "
+send -- "test \"\$(stat -c %a /tmp/bb-admin)\" = 640 && "
+send -- "chown 1234:56 /tmp/bb-admin && "
+send -- "test \"\$(stat -c %u:%g /tmp/bb-admin)\" = 1234:56 && "
+send -- "echo BUSYBOX_METADATA_OK\r"
+expect_marker BUSYBOX_METADATA_OK "BusyBox file metadata"
+expect_prompt
+
+send -- "mkfifo /tmp/bb-admin-fifo && "
+send -- "fallocate -l 4096 /tmp/bb-admin-space && "
+send -- "df / >/dev/null && id >/dev/null && "
+send -- "echo BUSYBOX_ADMIN_TOOLS_OK\r"
+expect_marker BUSYBOX_ADMIN_TOOLS_OK "BusyBox file tools"
+expect_prompt
+
+send -- "rm /tmp/bb-admin /tmp/bb-admin-fifo /tmp/bb-admin-space && "
+send -- "echo BUSYBOX_FILE_ADMIN_OK\r"
+expect_marker BUSYBOX_FILE_ADMIN_OK "BusyBox file administration"
+expect_prompt
+
 send -- "case \"\$(ps)\" in *PID*) echo BUSYBOX_PS_OK;; esac\r"
 expect_marker BUSYBOX_PS_OK "BusyBox ps"
 expect_prompt

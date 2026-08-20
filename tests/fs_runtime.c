@@ -21,6 +21,7 @@
 
 #define CREATE_VISIBILITY_FILE "/ext-create-visibility"
 #define CREATE_VISIBILITY_DIR  "/ext-create-visibility-dir"
+#define CREATE_VISIBILITY_NODE "/ext-create-visibility-node"
 
 static char append_truncate_buffer[
 	APPEND_RECORD_SIZE * (APPEND_RECORDS * 3 + 1)];
@@ -95,6 +96,7 @@ static int test_ext4_creation_visibility(void)
 
 	unlink(CREATE_VISIBILITY_FILE);
 	rmdir(CREATE_VISIBILITY_DIR);
+	unlink(CREATE_VISIBILITY_NODE);
 	state = mmap(NULL, 4096, PROT_READ | PROT_WRITE,
 	             MAP_SHARED | MAP_ANONYMOUS, -1, 0);
 	if (state == MAP_FAILED)
@@ -108,7 +110,8 @@ static int test_ext4_creation_visibility(void)
 			poll(NULL, 0, 1);
 		while (!__atomic_load_n(&state->stop, __ATOMIC_ACQUIRE)) {
 			if (transient_mode_visible(CREATE_VISIBILITY_FILE) ||
-			    transient_mode_visible(CREATE_VISIBILITY_DIR)) {
+			    transient_mode_visible(CREATE_VISIBILITY_DIR) ||
+			    transient_mode_visible(CREATE_VISIBILITY_NODE)) {
 				__atomic_store_n(&state->failed, 1,
 				                 __ATOMIC_RELEASE);
 				break;
@@ -122,7 +125,9 @@ static int test_ext4_creation_visibility(void)
 		          O_CREAT | O_EXCL | O_WRONLY, 0000);
 		if (fd < 0 || close(fd) || unlink(CREATE_VISIBILITY_FILE) ||
 		    mkdir(CREATE_VISIBILITY_DIR, 0000) ||
-		    rmdir(CREATE_VISIBILITY_DIR)) {
+		    rmdir(CREATE_VISIBILITY_DIR) ||
+		    mknod(CREATE_VISIBILITY_NODE, S_IFCHR | 0000,
+		          makedev(1, 3)) || unlink(CREATE_VISIBILITY_NODE)) {
 			__atomic_store_n(&state->failed, 1,
 			                 __ATOMIC_RELEASE);
 			break;
@@ -139,6 +144,7 @@ static int test_ext4_creation_visibility(void)
 out:
 	unlink(CREATE_VISIBILITY_FILE);
 	rmdir(CREATE_VISIBILITY_DIR);
+	unlink(CREATE_VISIBILITY_NODE);
 	munmap(state, 4096);
 	return result;
 }

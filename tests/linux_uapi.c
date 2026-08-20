@@ -8,6 +8,7 @@
 #include <asm/signal.h>
 #include <asm/sigcontext.h>
 #include <asm/stat.h>
+#include <asm/statfs.h>
 #include <asm/termbits.h>
 #include <asm/unistd.h>
 #include <asm/ucontext.h>
@@ -31,12 +32,21 @@
 
 _Static_assert(LINUX_SYS_getcwd == __NR_getcwd, "getcwd number");
 _Static_assert(LINUX_SYS_openat == __NR_openat, "openat number");
+_Static_assert(LINUX_SYS_mknodat == __NR_mknodat, "mknodat number");
 _Static_assert(LINUX_SYS_pipe2 == __NR_pipe2, "pipe2 number");
 _Static_assert(LINUX_SYS_symlinkat == __NR_symlinkat,
 	       "symlinkat number");
 _Static_assert(LINUX_SYS_linkat == __NR_linkat, "linkat number");
 _Static_assert(LINUX_SYS_ftruncate == __NR_ftruncate,
 	       "ftruncate number");
+_Static_assert(LINUX_SYS_fallocate == __NR_fallocate,
+	       "fallocate number");
+_Static_assert(LINUX_SYS_statfs == __NR_statfs, "statfs number");
+_Static_assert(LINUX_SYS_fstatfs == __NR_fstatfs, "fstatfs number");
+_Static_assert(LINUX_SYS_fchmodat == __NR_fchmodat,
+	       "fchmodat number");
+_Static_assert(LINUX_SYS_fchownat == __NR_fchownat,
+	       "fchownat number");
 _Static_assert(LINUX_SYS_ppoll == __NR_ppoll, "ppoll number");
 _Static_assert(LINUX_SYS_readv == __NR_readv, "readv number");
 _Static_assert(LINUX_SYS_writev == __NR_writev, "writev number");
@@ -138,6 +148,15 @@ _Static_assert(LINUX_SYS_renameat2 == __NR_renameat2,
 	       "renameat2 number");
 _Static_assert(LINUX_SYS_getrandom == __NR_getrandom,
 	       "getrandom number");
+_Static_assert(sizeof(struct linux_statfs) == sizeof(struct statfs),
+	       "statfs size");
+_Static_assert(offsetof(struct linux_statfs, blocks) ==
+	       offsetof(struct statfs, f_blocks), "statfs blocks offset");
+_Static_assert(offsetof(struct linux_statfs, flags) ==
+	       offsetof(struct statfs, f_flags), "statfs flags offset");
+_Static_assert(LINUX_BLKSSZGET == BLKSSZGET, "BLKSSZGET value");
+_Static_assert(LINUX_BLKGETSIZE64 == BLKGETSIZE64,
+	       "BLKGETSIZE64 value");
 #ifdef RWF_NOAPPEND
 _Static_assert(LINUX_RWF_NOAPPEND == RWF_NOAPPEND,
 	       "RWF_NOAPPEND value");

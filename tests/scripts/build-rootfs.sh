@@ -542,6 +542,12 @@ install -m 755 "$staging/bin/credential-runtime" \
 
 "$musl_cc" \
 	-static -march=rv64gc -mabi=lp64d \
+	-O2 -Wall -Wextra -Werror -pthread \
+	"$tests_dir/file_admin_runtime.c" \
+	-o "$staging/bin/file-admin-runtime"
+
+"$musl_cc" \
+	-static -march=rv64gc -mabi=lp64d \
 	-O2 -Wall -Wextra -Werror \
 	"$tests_dir/memory_runtime.c" \
 	-o "$staging/bin/memory-static"

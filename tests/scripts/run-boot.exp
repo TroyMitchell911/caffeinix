@@ -221,6 +221,27 @@ expect {
 	eof { abort_test "QEMU exited after credential test" }
 }
 
+send -- "/bin/file-admin-runtime\r"
+expect {
+	-re {\r?\nFILE_ADMIN_RUNTIME_OK} {}
+	-re {FILE_ADMIN_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "file administration test reported failure"
+	}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic in file administration test"
+	}
+	timeout { abort_with_dump "file administration test timeout" }
+	eof { abort_test "QEMU exited during file administration test" }
+}
+expect {
+	-re {\r?\n# $} {}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic after file administration test"
+	}
+	timeout { abort_test "shell prompt timeout" }
+	eof { abort_test "QEMU exited after file administration test" }
+}
+
 send -- "/bin/aslr-runtime\r"
 expect {
 	-re {\r?\nASLR_RUNTIME_OK} {}
