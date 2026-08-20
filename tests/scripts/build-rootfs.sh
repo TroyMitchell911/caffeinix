@@ -126,26 +126,68 @@ musl_linker_rule="s|-dynamic-linker $musl_build_interp|"
 musl_linker_rule+="-dynamic-linker $musl_guest_interp|"
 sed -i "$musl_linker_rule" "$musl_sysroot/lib/musl-gcc.specs"
 
+musl_cc=$musl_sysroot/bin/musl-gcc
 busybox_source=$work_dir/busybox-$busybox_version
 busybox_log=$test_output/busybox-build.log
-make -C "$busybox_source" allnoconfig >"$busybox_log" 2>&1
+make -C "$busybox_source" \
+	ARCH=riscv \
+	CROSS_COMPILE="$cross_compile" \
+	CC="$musl_cc" \
+	allnoconfig >"$busybox_log" 2>&1
 
-while IFS= read -r setting; do
-	case "$setting" in
-		''|'#'*) continue ;;
-	esac
-	symbol=${setting%%=*}
-	sed -i \
-		-e "s|^# $symbol is not set$|$setting|" \
-		-e "s|^$symbol=.*|$setting|" \
-		"$busybox_source/.config"
-done < "$topdir/configs/busybox.config"
+apply_busybox_fragment()
+{
+	local setting symbol
 
-set +o pipefail
-yes '' | make -C "$busybox_source" oldconfig >>"$busybox_log" 2>&1
-set -o pipefail
+	while IFS= read -r setting; do
+		case "$setting" in
+			''|'#'*) continue ;;
+		esac
+		symbol=${setting%%=*}
+		sed -i \
+			-e "s|^# $symbol is not set$|$setting|" \
+			-e "s|^$symbol=.*|$setting|" \
+			"$busybox_source/.config"
+	done < "$topdir/configs/busybox.config"
+}
 
-musl_cc=$musl_sysroot/bin/musl-gcc
+busybox_fragment_matches()
+{
+	local setting
+
+	while IFS= read -r setting; do
+		case "$setting" in
+			''|'#'*) continue ;;
+		esac
+		grep -Fqx "$setting" "$busybox_source/.config" || return 1
+	done < "$topdir/configs/busybox.config"
+}
+
+for pass in 1 2 3 4; do
+	apply_busybox_fragment
+	set +o pipefail
+	yes '' | make -C "$busybox_source" \
+		ARCH=riscv \
+		CROSS_COMPILE="$cross_compile" \
+		CC="$musl_cc" \
+		oldconfig >>"$busybox_log" 2>&1
+	set -o pipefail
+	if busybox_fragment_matches; then
+		break
+	fi
+done
+if ! busybox_fragment_matches; then
+	echo "BusyBox rejected requested settings:" >&2
+	while IFS= read -r setting; do
+		case "$setting" in
+			''|'#'*) continue ;;
+		esac
+		grep -Fqx "$setting" "$busybox_source/.config" ||
+			echo "  $setting" >&2
+	done < "$topdir/configs/busybox.config"
+	exit 1
+fi
+
 if ! make -C "$busybox_source" -j"$jobs" \
 		ARCH=riscv \
 		CROSS_COMPILE="$cross_compile" \
@@ -176,11 +218,32 @@ if ! make -C "$busybox_source" \
 	exit 1
 fi
 
+generated_applets=$test_output/busybox.applets.generated
+{
+	find "$staging" -type l -printf '%f\n'
+	printf '%s\n' busybox
+} | LC_ALL=C sort -u > "$generated_applets"
+if [ ! -f "$topdir/configs/busybox.applets" ]; then
+	echo "missing BusyBox applet manifest" >&2
+	cat "$generated_applets" >&2
+	exit 1
+fi
+if ! cmp -s "$topdir/configs/busybox.applets" "$generated_applets"; then
+	echo "BusyBox applet manifest is stale" >&2
+	diff -u "$topdir/configs/busybox.applets" "$generated_applets" >&2 ||
+		true
+	exit 1
+fi
+
 sed -i \
 	's/^# CONFIG_STATIC is not set$/CONFIG_STATIC=y/' \
 	"$busybox_source/.config"
 set +o pipefail
-yes '' | make -C "$busybox_source" oldconfig >>"$busybox_log" 2>&1
+yes '' | make -C "$busybox_source" \
+	ARCH=riscv \
+	CROSS_COMPILE="$cross_compile" \
+	CC="$musl_cc" \
+	oldconfig >>"$busybox_log" 2>&1
 set -o pipefail
 make -C "$busybox_source" clean >>"$busybox_log" 2>&1
 if ! make -C "$busybox_source" -j"$jobs" \
@@ -200,11 +263,40 @@ fi
 
 install -d \
 	"$staging/dev" \
+	"$staging/etc" \
 	"$staging/lib" \
-	"$staging/tmp" \
 	"$staging/mnt/fat" \
 	"$staging/proc" \
-	"$staging/sys"
+	"$staging/root" \
+	"$staging/sys" \
+	"$staging/tmp" \
+	"$staging/var/log" \
+	"$staging/var/run" \
+	"$staging/var/spool/cron/crontabs"
+
+printf '%s\n' \
+	'root:x:0:0:root:/root:/bin/sh' \
+	'nobody:x:65534:65534:nobody:/tmp:/sbin/nologin' \
+	> "$staging/etc/passwd"
+printf '%s\n' \
+	'root:x:0:' \
+	'nobody:x:65534:' \
+	> "$staging/etc/group"
+printf '%s\n' \
+	'root:*:0:0:99999:7:::' \
+	'nobody:*:0:0:99999:7:::' \
+	> "$staging/etc/shadow"
+chmod 600 "$staging/etc/shadow"
+printf '%s\n' '/bin/sh' '/bin/ash' > "$staging/etc/shells"
+printf '%s\n' '127.0.0.1 localhost' > "$staging/etc/hosts"
+printf '%s\n' 'nameserver 127.0.0.1' > "$staging/etc/resolv.conf"
+install -m 644 "$topdir/configs/busybox.applets" \
+	"$staging/etc/busybox.applets"
+printf '%s\n' \
+	'proc /proc proc defaults 0 0' \
+	'devfs /dev devfs defaults 0 0' \
+	'tmpfs /tmp tmpfs defaults 0 0' \
+	> "$staging/etc/fstab"
 
 install -m 755 "$musl_sysroot/lib/libc.so" "$staging/lib/libc.so"
 ln -s libc.so "$staging/lib/ld-musl-riscv64.so.1"
