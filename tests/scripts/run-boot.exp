@@ -200,6 +200,27 @@ expect {
 	eof { abort_test "QEMU exited after procfs test" }
 }
 
+send -- "/bin/credential-runtime\r"
+expect {
+	-re {\r?\nCREDENTIAL_RUNTIME_OK} {}
+	-re {CREDENTIAL_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "credential test reported failure"
+	}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic in credential test"
+	}
+	timeout { abort_with_dump "credential test timeout" }
+	eof { abort_test "QEMU exited during credential test" }
+}
+expect {
+	-re {\r?\n# $} {}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic after credential test"
+	}
+	timeout { abort_test "shell prompt timeout" }
+	eof { abort_test "QEMU exited after credential test" }
+}
+
 send -- "/bin/aslr-runtime\r"
 expect {
 	-re {\r?\nASLR_RUNTIME_OK} {}

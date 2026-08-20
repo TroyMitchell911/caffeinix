@@ -14,6 +14,7 @@
 
 static struct vfs_file files[2];
 static int file_refs[2];
+static int exec_refs[2];
 
 struct test_backing {
 	struct vma_backing backing;
@@ -54,6 +55,34 @@ void vfs_file_put(struct vfs_file *file)
 	CHECK(index >= 0 && index < 2);
 	CHECK(file_refs[index] > 0);
 	file_refs[index]--;
+}
+
+struct vfs_file *vfs_file_hold(struct vfs_file *file)
+{
+	return vfs_file_get(file);
+}
+
+void vfs_file_unhold(struct vfs_file *file)
+{
+	vfs_file_put(file);
+}
+
+int vfs_exec_mapping_get(struct vfs_file *file)
+{
+	int index = file - files;
+
+	CHECK(index >= 0 && index < 2);
+	exec_refs[index]++;
+	return 0;
+}
+
+void vfs_exec_mapping_put(struct vfs_file *file)
+{
+	int index = file - files;
+
+	CHECK(index >= 0 && index < 2);
+	CHECK(exec_refs[index] > 0);
+	exec_refs[index]--;
 }
 
 static const struct vm_area *area_at(const struct vma_set *set, int index)
@@ -157,9 +186,9 @@ static void test_elf_overlap(void)
 	CHECK(vma_insert_elf(&set, 0x12000, 0x15000,
 				     LINUX_PROT_READ | LINUX_PROT_WRITE,
 				     &files[0], 0x2000) < 0);
-	CHECK(vma_count(&set) == 1 && file_refs[0] == 1);
+	CHECK(vma_count(&set) == 1 && file_refs[0] == 1 && exec_refs[0] == 1);
 	vma_set_destroy(&set);
-	CHECK(!file_refs[0]);
+	CHECK(!file_refs[0] && !exec_refs[0]);
 
 	vma_set_init(&set);
 	CHECK(vma_insert_elf(&set, 0x10000, 0x13000,
@@ -167,7 +196,7 @@ static void test_elf_overlap(void)
 	CHECK(vma_insert_elf(&set, 0x12000, 0x15000,
 				     LINUX_PROT_READ | LINUX_PROT_WRITE,
 			     &files[0], 0x2000) == 0);
-	CHECK(vma_count(&set) == 2 && file_refs[0] == 2);
+	CHECK(vma_count(&set) == 2 && file_refs[0] == 2 && exec_refs[0] == 2);
 	area = area_at(&set, 0);
 	CHECK(area->start == 0x10000 && area->end == 0x12000);
 	CHECK(area->file_length == 0x2000);
@@ -178,10 +207,11 @@ static void test_elf_overlap(void)
 	CHECK(area->file_length == 0x3000);
 	vma_set_init(&clone);
 	CHECK(vma_set_clone(&clone, &set) == 0);
-	CHECK(vma_count(&clone) == 2 && file_refs[0] == 4);
+	CHECK(vma_count(&clone) == 2 && file_refs[0] == 4 &&
+	      exec_refs[0] == 4);
 	vma_set_destroy(&clone);
 	vma_set_destroy(&set);
-	CHECK(!file_refs[0]);
+	CHECK(!file_refs[0] && !exec_refs[0]);
 
 	vma_set_init(&set);
 	CHECK(vma_insert_elf(&set, 0x10000, 0x13000,
@@ -189,13 +219,13 @@ static void test_elf_overlap(void)
 	CHECK(vma_insert_elf(&set, 0x12000, 0x15000,
 			     LINUX_PROT_READ | LINUX_PROT_WRITE,
 			     &files[0], 0x8000) == 0);
-	CHECK(vma_count(&set) == 3 && file_refs[0] == 2);
+	CHECK(vma_count(&set) == 3 && file_refs[0] == 2 && exec_refs[0] == 2);
 	area = area_at(&set, 1);
 	CHECK(area->origin == VMA_ANONYMOUS && !area->file);
 	CHECK(!area->file_length);
 	CHECK(area->protection == (LINUX_PROT_READ | LINUX_PROT_WRITE));
 	vma_set_destroy(&set);
-	CHECK(!file_refs[0]);
+	CHECK(!file_refs[0] && !exec_refs[0]);
 }
 
 static void test_split_and_protect(void)
@@ -255,7 +285,7 @@ static void test_clone_and_move(void)
 	CHECK(!vma_count(&clone) && vma_count(&moved) == 2);
 	vma_set_destroy(&source);
 	vma_set_destroy(&moved);
-	CHECK(!file_refs[1]);
+	CHECK(!file_refs[1] && !exec_refs[1]);
 }
 
 static void test_shared_backing(void)

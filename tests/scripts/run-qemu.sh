@@ -332,6 +332,11 @@ run_boot_smoke()
 		echo "procfs runtime marker is missing" >&2
 		exit 1
 	fi
+	if [ "$(awk '$0 == "CREDENTIAL_RUNTIME_OK" { count++ }
+		END { print count + 0 }' "$clean")" -ne 1 ]; then
+		echo "credential runtime marker is missing" >&2
+		exit 1
+	fi
 	if [ "$(awk '$0 == "ASLR_RUNTIME_OK" { count++ }
 		END { print count + 0 }' "$clean")" -ne 1 ]; then
 		echo "address randomization marker is missing" >&2
@@ -507,6 +512,7 @@ for marker in \
 	SYSTEM_RUNTIME_OK \
 	TIMESTAMP_RUNTIME_OK \
 	PROCFS_RUNTIME_OK \
+	CREDENTIAL_RUNTIME_OK \
 	BUSYBOX_PS_OK \
 	BUSYBOX_FREE_OK \
 	BUSYBOX_UPTIME_OK \

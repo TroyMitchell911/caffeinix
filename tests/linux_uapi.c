@@ -80,10 +80,28 @@ _Static_assert(LINUX_SYS_setpriority == __NR_setpriority,
 	       "setpriority number");
 _Static_assert(LINUX_SYS_getpriority == __NR_getpriority,
 	       "getpriority number");
+_Static_assert(LINUX_SYS_setregid == __NR_setregid, "setregid number");
+_Static_assert(LINUX_SYS_setgid == __NR_setgid, "setgid number");
+_Static_assert(LINUX_SYS_setreuid == __NR_setreuid, "setreuid number");
+_Static_assert(LINUX_SYS_setuid == __NR_setuid, "setuid number");
+_Static_assert(LINUX_SYS_setresuid == __NR_setresuid,
+	       "setresuid number");
+_Static_assert(LINUX_SYS_getresuid == __NR_getresuid,
+	       "getresuid number");
+_Static_assert(LINUX_SYS_setresgid == __NR_setresgid,
+	       "setresgid number");
+_Static_assert(LINUX_SYS_getresgid == __NR_getresgid,
+	       "getresgid number");
+_Static_assert(LINUX_SYS_setfsuid == __NR_setfsuid, "setfsuid number");
+_Static_assert(LINUX_SYS_setfsgid == __NR_setfsgid, "setfsgid number");
 _Static_assert(LINUX_SYS_setpgid == __NR_setpgid, "setpgid number");
 _Static_assert(LINUX_SYS_getpgid == __NR_getpgid, "getpgid number");
 _Static_assert(LINUX_SYS_getsid == __NR_getsid, "getsid number");
 _Static_assert(LINUX_SYS_setsid == __NR_setsid, "setsid number");
+_Static_assert(LINUX_SYS_getgroups == __NR_getgroups,
+	       "getgroups number");
+_Static_assert(LINUX_SYS_setgroups == __NR_setgroups,
+	       "setgroups number");
 _Static_assert(LINUX_SYS_clock_gettime == __NR_clock_gettime,
 	       "clock_gettime number");
 _Static_assert(LINUX_SYS_clock_getres == __NR_clock_getres,

@@ -261,6 +261,18 @@ expect {
 }
 expect_prompt
 
+send -- "/bin/credential-runtime\r"
+expect {
+	-re {\r?\nCREDENTIAL_RUNTIME_OK} {}
+	-re {CREDENTIAL_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "credential test reported failure"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in credential test" }
+	timeout { abort_test "credential test timeout" }
+	eof { abort_test "QEMU exited during credential test" }
+}
+expect_prompt
+
 send -- "case \"\$(ps)\" in *PID*) echo BUSYBOX_PS_OK;; esac\r"
 expect_marker BUSYBOX_PS_OK "BusyBox ps"
 expect_prompt

@@ -2,6 +2,8 @@
 
 set -euo pipefail
 
+umask 0022
+
 export LC_ALL=C.UTF-8
 
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
@@ -529,6 +531,14 @@ done
 	-O2 -Wall -Wextra -Werror \
 	"$tests_dir/procfs_runtime.c" \
 	-o "$staging/bin/procfs-runtime"
+
+"$musl_cc" \
+	-static -march=rv64gc -mabi=lp64d \
+	-O2 -Wall -Wextra -Werror \
+	"$tests_dir/credential_runtime.c" \
+	-o "$staging/bin/credential-runtime"
+install -m 755 "$staging/bin/credential-runtime" \
+	"$staging/bin/setid-exec-runtime"
 
 "$musl_cc" \
 	-static -march=rv64gc -mabi=lp64d \

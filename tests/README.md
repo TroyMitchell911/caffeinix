@@ -151,6 +151,9 @@ The guest selftest covers:
 - procfs process snapshots, command-line lifetime, process-exit races, mount,
   memory, uptime, scheduler, and IPv4 statistics, together with BusyBox
   `ps`, `top`, `free`, `uptime`, `pidof`, and `netstat` consumers;
+- real, effective, saved, and filesystem credentials, supplementary groups,
+  umask inheritance, file ownership, discretionary access, sticky-directory
+  deletion, signal authorization, and credential auxv values across exec;
 - symlink metadata through `lstat`;
 - FAT open-file restrictions, unsupported Unix links, overwrite rename, and
   UTF-8 long names;
