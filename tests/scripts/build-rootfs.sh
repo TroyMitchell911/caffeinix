@@ -569,6 +569,12 @@ done
 "$musl_cc" \
 	-static -march=rv64gc -mabi=lp64d \
 	-O2 -Wall -Wextra -Werror \
+	"$tests_dir/dns_runtime.c" \
+	-o "$staging/bin/dns-runtime"
+
+"$musl_cc" \
+	-static -march=rv64gc -mabi=lp64d \
+	-O2 -Wall -Wextra -Werror \
 	"$tests_dir/pressure_runtime.c" \
 	-o "$staging/bin/pressure-runtime"
 

@@ -79,6 +79,15 @@ proc expect_marker {marker description} {
 	}
 }
 
+proc expect_background_marker {marker description} {
+	expect {
+		-re $marker {}
+		-re {\[PANIC\]} { abort_test "kernel panic during $description" }
+		timeout { abort_test "$description timeout" }
+		eof { abort_test "QEMU exited during $description" }
+	}
+}
+
 proc expect_editor_prompt {} {
 	expect {
 		-re {\x1b\[\?1049l# $} {}
@@ -1071,6 +1080,76 @@ expect {
 	timeout { abort_test "network runtime test timeout" }
 	eof { abort_test "QEMU exited during network runtime test" }
 }
+expect_prompt
+
+send -- "case \"\$(ifconfig eth0)\" in "
+send -- "*\"inet addr:10.0.2.15\"*\"UP BROADCAST RUNNING\"*) "
+send -- "echo BUSYBOX_IFCONFIG_OK;; esac\r"
+expect_marker BUSYBOX_IFCONFIG_OK "BusyBox ifconfig"
+expect_prompt
+
+send -- "case \"\$(route -n)\" in "
+send -- "*\"0.0.0.0\"*\"10.0.2.2\"*\"UG\"*\"eth0\"*) "
+send -- "echo BUSYBOX_ROUTE_OK;; esac\r"
+expect_marker BUSYBOX_ROUTE_OK "BusyBox route"
+expect_prompt
+
+send -- "ping -q -c 1 -W 2 10.0.2.2 && echo BUSYBOX_PING_OK\r"
+expect {
+	-re {\r?\nBUSYBOX_PING_OK} {}
+	-re {not found|applet not found|Bad system call} {
+		abort_test "BusyBox ping is unavailable"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in BusyBox ping" }
+	timeout { abort_test "BusyBox ping timeout" }
+	eof { abort_test "QEMU exited during BusyBox ping" }
+}
+expect_prompt
+
+send -- "/bin/dns-runtime\r"
+expect {
+	-re {\r?\nDNS_RUNTIME_OK} {}
+	-re {DNS_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "musl resolver test reported failure"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in musl resolver test" }
+	timeout { abort_test "musl resolver test timeout" }
+	eof { abort_test "QEMU exited during musl resolver test" }
+}
+expect_prompt
+
+send -- "/bin/dns-runtime serve & dns_fixture_pid=\$!\r"
+expect_background_marker DNS_FIXTURE_READY "BusyBox nslookup fixture"
+send -- "case \"\$(nslookup fixture.test)\" in *10.0.2.2*) "
+send -- "echo BUSYBOX_NSLOOKUP_OK;; esac\r"
+expect_marker BUSYBOX_NSLOOKUP_OK "BusyBox nslookup"
+expect_prompt
+send -- "wait \$dns_fixture_pid\r"
+expect_prompt
+
+send -- "/bin/dns-runtime serve & dns_fixture_pid=\$!\r"
+expect_background_marker DNS_FIXTURE_READY "BusyBox DNS wget fixture"
+send -- "wget -q -O /tmp/dns-http.out "
+send -- "http://fixture.test:18084/fixture && "
+send -- "test \"\$(cat /tmp/dns-http.out)\" = caffeinix-http && "
+send -- "echo BUSYBOX_DNS_WGET_OK\r"
+expect_marker BUSYBOX_DNS_WGET_OK "BusyBox DNS wget"
+expect_prompt
+send -- "wait \$dns_fixture_pid\r"
+expect_prompt
+
+send -- "mkdir -p /tmp/httpd-root && "
+send -- "echo busybox-httpd > /tmp/httpd-root/index.html\r"
+expect_prompt
+send -- "httpd -f -p 127.0.0.1:18085 -h /tmp/httpd-root &\r"
+expect_prompt
+send -- "httpd_pid=\$!; sleep 0.1; "
+send -- "wget -q -O /tmp/httpd.out http://127.0.0.1:18085/ && "
+send -- "test \"\$(cat /tmp/httpd.out)\" = busybox-httpd && "
+send -- "echo BUSYBOX_HTTPD_OK\r"
+expect_marker BUSYBOX_HTTPD_OK "BusyBox HTTP server"
+expect_prompt
+send -- "kill -KILL \$httpd_pid; sleep 0.1\r"
 expect_prompt
 
 send -- "/bin/pressure-runtime\r"
