@@ -480,7 +480,7 @@ export QEMU_LOG=$qemu_log
 expect "$script_dir/run-qemu.exp"
 normalize_kernel_log "$qemu_log" "$clean_log"
 check_net_device_log "$clean_log" 1
-check_boot_log "$clean_log" "$QEMU_CPUS" 2 4
+check_boot_log "$clean_log" "$QEMU_CPUS" 2 5
 
 for marker in \
 	BUSYBOX_SHELL_OK \
