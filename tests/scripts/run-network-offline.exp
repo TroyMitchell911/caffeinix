@@ -2,6 +2,11 @@
 
 proc abort_test {message} {
 	puts stderr "offline network test failed: $message"
+	catch {send -- "\001x"}
+	set saved_timeout $::timeout
+	set ::timeout 5
+	catch {expect eof}
+	set ::timeout $saved_timeout
 	catch {close}
 	exit 1
 }
