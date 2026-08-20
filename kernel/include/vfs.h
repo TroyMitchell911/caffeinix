@@ -19,6 +19,14 @@
 #define VFS_OPEN_NOCTTY     (1U << 8)
 #define VFS_OPEN_EXEC       (1U << 9)
 
+#define VFS_MOUNT_NOATIME    (1U << 0)
+#define VFS_MOUNT_NODIRATIME (1U << 1)
+#define VFS_MOUNT_RELATIME   (1U << 2)
+#define VFS_MOUNT_STRICTATIME (1U << 3)
+#define VFS_MOUNT_ATIME_MASK \
+	(VFS_MOUNT_NOATIME | VFS_MOUNT_RELATIME | \
+	 VFS_MOUNT_STRICTATIME)
+
 #define VFS_ACCESS_EXEC  (1U << 0)
 #define VFS_ACCESS_WRITE (1U << 1)
 #define VFS_ACCESS_READ  (1U << 2)
@@ -226,6 +234,8 @@ struct vfs_inode_operations {
 	int (*set_times)(struct vfs_inode *inode,
 	                 const struct vfs_timespec times[2],
 	                 uint32 mask);
+	int (*accessed)(struct vfs_inode *inode,
+	               const struct vfs_timespec *time);
 	int (*getattr)(struct vfs_inode *inode, struct vfs_stat *stat);
 };
 
@@ -270,11 +280,13 @@ struct vfs_filesystem_type {
 };
 
 #define VFS_FS_REQUIRES_DEVICE (1U << 0)
+#define VFS_FS_SUPPORTS_ATIME  (1U << 2)
 
 struct vfs_super_block {
 	int ref;
 	struct sleeplock write_lock;
 	struct sleeplock attribute_lock;
+	struct sleeplock atime_lock;
 	struct vfs_filesystem_type *type;
 	struct block_device *device;
 	struct vfs_inode *root;
@@ -364,11 +376,11 @@ int vfs_inode_stat_default(struct vfs_inode *inode,
 int vfs_inode_stat(struct vfs_inode *inode, struct vfs_stat *stat);
 
 int vfs_mount_root(const char *filesystem, uint32 device_id,
-		   const void *data);
+		   uint32 flags, const void *data);
 int vfs_mount(const char *filesystem, uint32 device_id,
-	      const char *target, const void *data);
+	      const char *target, uint32 flags, const void *data);
 int vfs_mount_path(const char *filesystem, const char *source,
-		   const char *target, const void *data);
+		   const char *target, uint32 flags, const void *data);
 int vfs_unmount(const char *target, uint32 flags);
 uint32 vfs_snapshot_mounts(struct vfs_mount_snapshot *snapshots,
 			   uint32 capacity);
@@ -387,6 +399,7 @@ void vfs_file_release_inode_access(struct vfs_file *file);
 int vfs_exec_mapping_get(struct vfs_file *file);
 void vfs_exec_mapping_put(struct vfs_file *file);
 int vfs_file_mark_shared_dirty(struct vfs_file *file, uint64 offset);
+void vfs_file_accessed(struct vfs_file *file);
 int64 vfs_file_pread(struct vfs_file *file, int user_destination,
 		     uint64 destination, uint64 count, uint64 offset);
 int64 vfs_file_pread_raw(struct vfs_file *file, int user_destination,
@@ -450,7 +463,8 @@ int vfs_set_times_at(int dirfd, const char *path, int follow_symlink,
 int vfs_set_times_fd(int fd, const struct vfs_timespec times[2],
 		     uint32 mask, int owner_only);
 int vfs_current_time(struct vfs_timespec *time);
-int vfs_next_dirent(int fd, vfs_dirent_emit_t emit, void *context);
+int vfs_next_dirent(struct vfs_file *file, vfs_dirent_emit_t emit,
+		    void *context);
 int vfs_mkdir(const char *path, uint32 mode);
 int vfs_mknod(const char *path, enum vfs_inode_type type, uint32 mode,
 	      uint64 device);

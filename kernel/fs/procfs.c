@@ -397,8 +397,17 @@ static void procfs_build_mounts(struct procfs_buffer *buffer)
 		procfs_emit_mount_field(buffer, mounts[index].source);
 		procfs_printf(buffer, " ");
 		procfs_emit_mount_field(buffer, mounts[index].target);
-		procfs_printf(buffer, " %s rw 0 0\n",
+		procfs_printf(buffer, " %s rw",
 			      mounts[index].filesystem);
+		if (mounts[index].flags & VFS_MOUNT_NOATIME)
+			procfs_printf(buffer, ",noatime");
+		if (mounts[index].flags & VFS_MOUNT_NODIRATIME)
+			procfs_printf(buffer, ",nodiratime");
+		if (mounts[index].flags & VFS_MOUNT_RELATIME)
+			procfs_printf(buffer, ",relatime");
+		if (mounts[index].flags & VFS_MOUNT_STRICTATIME)
+			procfs_printf(buffer, ",strictatime");
+		procfs_printf(buffer, " 0 0\n");
 	}
 }
 

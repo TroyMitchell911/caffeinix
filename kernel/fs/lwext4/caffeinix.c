@@ -1067,8 +1067,6 @@ static int ext4fs_readlink(struct vfs_inode *inode, char *buffer,
 	struct ext4fs_inode *private = inode->private;
 	size_t count;
 	int result = ext4_readlink(private->path, buffer, size, &count);
-	if (result == EOK)
-		ext4fs_touch(private->path, EXT4_TIME_ATIME);
 
 	return result == EOK ? (int)count : ext4fs_result(result);
 }
@@ -1143,6 +1141,23 @@ static int ext4fs_set_times(struct vfs_inode *inode,
 	return ext4fs_refresh(inode);
 }
 
+static int ext4fs_accessed(struct vfs_inode *inode,
+			   const struct vfs_timespec *time)
+{
+	struct ext4_timespec times[3] = { 0 };
+	int result;
+
+	times[0].seconds = time->seconds;
+	times[0].nanoseconds = time->nanoseconds;
+	result = ext4_times_set_by_number(EXT4FS_MOUNT_POINT, inode->number,
+					  times, EXT4_TIME_ATIME);
+	if (result == ERANGE)
+		return VFS_ERR_OVERFLOW;
+	if (result != EOK)
+		return ext4fs_result(result);
+	return ext4fs_refresh(inode);
+}
+
 static int ext4fs_setattr(struct vfs_inode *inode,
 			  const struct vfs_iattr *attributes)
 {
@@ -1182,6 +1197,7 @@ static const struct vfs_inode_operations ext4fs_inode_operations = {
 	.truncate = ext4fs_truncate,
 	.setattr = ext4fs_setattr,
 	.set_times = ext4fs_set_times,
+	.accessed = ext4fs_accessed,
 	.getattr = ext4fs_getattr,
 };
 
@@ -1276,10 +1292,6 @@ static int64 ext4fs_read(struct vfs_file *file, int user_destination,
 	*position += total;
 	status = total;
 out:
-	if (status >= 0 && count)
-		ext4fs_touch(((struct ext4fs_inode *)
-			     file->path.dentry->inode->private)->path,
-			     EXT4_TIME_ATIME);
 	ext4fs_unlock_mount();
 	return status;
 }
@@ -1478,9 +1490,6 @@ static int ext4fs_readdir(struct vfs_file *file,
 	memmove(result->name, entry->name, length);
 	result->name[length] = 0;
 	file->position = result->next_offset;
-	ext4fs_touch(((struct ext4fs_inode *)
-		     file->path.dentry->inode->private)->path,
-		     EXT4_TIME_ATIME);
 	return 1;
 }
 
@@ -1603,7 +1612,7 @@ fail_buffer:
 
 static struct vfs_filesystem_type ext4fs_type = {
 	.name = "ext4",
-	.flags = VFS_FS_REQUIRES_DEVICE,
+	.flags = VFS_FS_REQUIRES_DEVICE | VFS_FS_SUPPORTS_ATIME,
 	.mount = ext4fs_mount,
 };
 

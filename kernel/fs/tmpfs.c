@@ -612,7 +612,6 @@ static int tmpfs_readlink(struct vfs_inode *inode, char *buffer,
 	sleeplock_acquire(&super->lock);
 	length = node->size > size ? size : node->size;
 	memmove(buffer, node->target, length);
-	tmpfs_touch_locked(node, VFS_TIME_ATIME);
 	sleeplock_release(&super->lock);
 	return length;
 }
@@ -806,6 +805,19 @@ static int tmpfs_setattr(struct vfs_inode *inode,
 	return VFS_OK;
 }
 
+static int tmpfs_accessed(struct vfs_inode *inode,
+			  const struct vfs_timespec *time)
+{
+	struct tmpfs_super *super = inode->superblock->private;
+	struct tmpfs_inode *node = inode->private;
+
+	sleeplock_acquire(&super->lock);
+	node->atime = *time;
+	tmpfs_refresh_locked(inode);
+	sleeplock_release(&super->lock);
+	return VFS_OK;
+}
+
 static const struct vfs_inode_operations tmpfs_inode_operations = {
 	.lookup = tmpfs_lookup,
 	.create = tmpfs_create,
@@ -820,6 +832,7 @@ static const struct vfs_inode_operations tmpfs_inode_operations = {
 	.truncate = tmpfs_truncate,
 	.setattr = tmpfs_setattr,
 	.set_times = tmpfs_set_times,
+	.accessed = tmpfs_accessed,
 	.getattr = tmpfs_getattr,
 };
 
@@ -857,8 +870,6 @@ static int64 tmpfs_read(struct vfs_file *file, int user_destination,
 		total += chunk;
 	}
 out:
-	if (total >= 0 && count)
-		tmpfs_touch_locked(inode, VFS_TIME_ATIME);
 	sleeplock_release(&super->lock);
 	return total;
 }
@@ -998,7 +1009,6 @@ static int tmpfs_readdir(struct vfs_file *file,
 		             sizeof(result->name));
 	}
 	result->next_offset = ++file->position;
-	tmpfs_touch_locked(directory, VFS_TIME_ATIME);
 	sleeplock_release(&super->lock);
 	return 1;
 }
@@ -1056,6 +1066,7 @@ static int tmpfs_mount(struct vfs_filesystem_type *type,
 
 static struct vfs_filesystem_type tmpfs_type = {
 	.name = "tmpfs",
+	.flags = VFS_FS_SUPPORTS_ATIME,
 	.mount = tmpfs_mount,
 };
 
