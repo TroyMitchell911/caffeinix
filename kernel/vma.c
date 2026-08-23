@@ -280,6 +280,9 @@ int vma_insert_elf_file(struct vma_set *set, uint64 start, uint64 end,
 			if (!area)
 				return -1;
 			overlap->end = start;
+			if (overlap->file_length > overlap->end - overlap->start)
+				overlap->file_length = overlap->end -
+					overlap->start;
 			list_insert_after(&overlap->node, &area->node);
 			overlap = area;
 		}
