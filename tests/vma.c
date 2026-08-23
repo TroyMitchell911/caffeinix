@@ -147,7 +147,7 @@ static void test_aligned_gap_selection(void)
 
 static void test_elf_overlap(void)
 {
-	struct vma_set set;
+	struct vma_set clone, set;
 	const struct vm_area *area;
 
 	vma_set_init(&set);
@@ -168,11 +168,18 @@ static void test_elf_overlap(void)
 				     LINUX_PROT_READ | LINUX_PROT_WRITE,
 			     &files[0], 0x2000) == 0);
 	CHECK(vma_count(&set) == 2 && file_refs[0] == 2);
+	area = area_at(&set, 0);
+	CHECK(area->start == 0x10000 && area->end == 0x12000);
+	CHECK(area->file_length == 0x2000);
 	area = area_at(&set, 1);
 	CHECK(area->start == 0x12000 && area->end == 0x15000);
 	CHECK(area->protection == (LINUX_PROT_READ | LINUX_PROT_WRITE));
 	CHECK(area->origin == VMA_FILE_BACKED && area->offset == 0x2000);
 	CHECK(area->file_length == 0x3000);
+	vma_set_init(&clone);
+	CHECK(vma_set_clone(&clone, &set) == 0);
+	CHECK(vma_count(&clone) == 2 && file_refs[0] == 4);
+	vma_set_destroy(&clone);
 	vma_set_destroy(&set);
 	CHECK(!file_refs[0]);
 
