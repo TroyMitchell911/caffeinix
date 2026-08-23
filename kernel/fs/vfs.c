@@ -1096,10 +1096,14 @@ int vfs_open_file(const char *name, uint32 flags, uint32 mode,
 			access |= VFS_ACCESS_READ;
 		if (flags & VFS_OPEN_WRITE)
 			access |= VFS_ACCESS_WRITE;
+		if (flags & VFS_OPEN_TRUNCATE)
+			access |= VFS_ACCESS_WRITE;
 	}
-	status = vfs_inode_permission(path.dentry->inode, access);
-	if (status < 0)
-		goto fail;
+	if (existed) {
+		status = vfs_inode_permission(path.dentry->inode, access);
+		if (status < 0)
+			goto fail;
+	}
 	if ((flags & VFS_OPEN_DIRECTORY) &&
 	    stat.type != VFS_INODE_DIRECTORY) {
 		status = VFS_ERR_NOTDIR;
