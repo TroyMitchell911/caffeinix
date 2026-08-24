@@ -440,11 +440,11 @@ int process_fork(uint64 child_stack)
 		spinlock_release(&wait_lock);
 		return -1;
 	}
-	sleeplock_release(&oldp->mmap_lock);
-
-        newp->sz = oldp->sz;
+	newp->sz = oldp->sz;
 	newp->brk = oldp->brk;
 	newp->brk_start = oldp->brk_start;
+	sleeplock_release(&oldp->mmap_lock);
+
 	newp->umask = oldp->umask;
 	newp->membarrier_private_expedited =
 		__atomic_load_n(&oldp->membarrier_private_expedited,
