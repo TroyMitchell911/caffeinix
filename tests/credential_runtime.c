@@ -27,8 +27,10 @@
 #define OWNED_FILE   "/tmp/credential-owned"
 #define STICKY_FILE  "/tmp/credential-root-sticky"
 #define UMASK_FILE   "/tmp/credential-umask"
+#define ROOT_READONLY "/credential-root-readonly"
 #define ROOT_WRITABLE "/credential-root-writable"
 #define CREDENTIAL_PROGRAM "/bin/setid-exec-runtime"
+#define ZERO_MODE_FILE "/tmp/credential-zero-mode"
 
 static int fail(const char *step)
 {
@@ -43,6 +45,15 @@ static int create_file(const char *path, mode_t mode)
 	if (fd < 0)
 		return -1;
 	return close(fd);
+}
+
+static int create_data_file(const char *path, mode_t mode)
+{
+	int fd = open(path, O_CREAT | O_EXCL | O_WRONLY, mode);
+
+	if (fd < 0 || write(fd, "data", 4) != 4 || close(fd))
+		return -1;
+	return 0;
 }
 
 static int status_contains(const char *expected)
@@ -230,6 +241,14 @@ static int permission_child(pid_t parent)
 	if (fd < 0 || close(fd) || stat(SETGID_FILE, &stat_buffer) ||
 	    stat_buffer.st_gid != 4321 || (stat_buffer.st_mode & S_ISGID))
 		return fail("setgid create restriction");
+	fd = open(ZERO_MODE_FILE, O_CREAT | O_EXCL | O_WRONLY, 0000);
+	if (fd < 0 || write(fd, "x", 1) != 1 || close(fd))
+		return fail("zero mode create");
+	errno = 0;
+	if (open(ROOT_READONLY, O_RDONLY | O_TRUNC) != -1 ||
+	    errno != EACCES)
+		return fail("readonly truncate");
+	errno = 0;
 	if (utimensat(AT_FDCWD, ROOT_WRITABLE, explicit, 0) != -1 ||
 	    errno != EPERM)
 		return fail("explicit timestamp permission");
@@ -401,6 +420,7 @@ int main(int argc, char **argv)
 	if (create_file(ROOT_PRIVATE, 0600) ||
 	    create_file(ROOT_GROUP, 0640) ||
 	    create_file(STICKY_FILE, 0644) ||
+	    create_data_file(ROOT_READONLY, 0444) ||
 	    create_file(ROOT_WRITABLE, 0666) ||
 	    chmod(ROOT_WRITABLE, 0666) || mkdir(PRIVATE_DIR, 0700) ||
 	    create_file(PRIVATE_CHILD, 0644) || mkdir(SETGID_DIR, 0777) ||
@@ -417,6 +437,8 @@ int main(int argc, char **argv)
 	    stat_buffer.st_gid != 1001 ||
 	    (stat_buffer.st_mode & 07777) != 0640)
 		return fail("inherited owner");
+	if (stat(ROOT_READONLY, &stat_buffer) || stat_buffer.st_size != 4)
+		return fail("truncate preserved");
 	child = fork();
 	if (child < 0)
 		return fail("exec fork");
@@ -457,9 +479,9 @@ int main(int argc, char **argv)
 	if (setid_result)
 		return 1;
 	if (unlink(ROOT_PRIVATE) || unlink(ROOT_GROUP) ||
-	    unlink(ROOT_WRITABLE) ||
+	    unlink(ROOT_READONLY) || unlink(ROOT_WRITABLE) ||
 	    unlink(STICKY_FILE) || unlink(OWNED_FILE) ||
-	    unlink(UMASK_FILE) ||
+	    unlink(ZERO_MODE_FILE) || unlink(UMASK_FILE) ||
 	    unlink(PRIVATE_CHILD) || rmdir(PRIVATE_DIR) ||
 	    unlink(SETGID_FILE) || rmdir(SETGID_DIR))
 		return fail("cleanup");
