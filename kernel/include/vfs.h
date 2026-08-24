@@ -137,6 +137,9 @@ struct vfs_dirent {
 	char name[VFS_NAME_MAX + 1];
 };
 
+typedef int (*vfs_dirent_emit_t)(const struct vfs_dirent *dirent,
+				 void *context);
+
 struct vfs_iovec {
 	uint64 base;
 	uint64 length;
@@ -182,6 +185,7 @@ struct vfs_file_operations {
 	int64 (*writev)(struct vfs_file *file, int user_source,
 		        const struct vfs_iovec *iovecs, uint32 count);
 	int (*readdir)(struct vfs_file *file, struct vfs_dirent *dirent);
+	int (*seekdir)(struct vfs_file *file, uint64 position);
 	int64 (*ioctl)(struct vfs_file *file, uint64 request, uint64 argument);
 	int (*fsync)(struct vfs_file *file);
 	int (*getattr)(struct vfs_file *file, struct vfs_stat *stat);
@@ -317,7 +321,7 @@ int vfs_seek(int fd, int64 offset, int whence, uint64 *result);
 int vfs_stat_fd(int fd, struct vfs_stat *stat);
 int vfs_stat_path(const char *path, int follow_symlink,
 		  struct vfs_stat *stat);
-int vfs_next_dirent(int fd, struct vfs_dirent *dirent);
+int vfs_next_dirent(int fd, vfs_dirent_emit_t emit, void *context);
 int vfs_mkdir(const char *path, uint32 mode);
 int vfs_unlink(const char *path, int remove_directory);
 int vfs_link(const char *old_path, const char *new_path,

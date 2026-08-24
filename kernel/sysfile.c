@@ -381,7 +381,14 @@ uint64 sys_linux_newfstatat(void)
 	return 0;
 }
 
-uint64 sys_linux_getdents64(void)
+struct linux_getdents_context {
+	process_t process;
+	uint64 address;
+	int length;
+	int used;
+};
+
+static int linux_emit_dirent(const struct vfs_dirent *dirent, void *opaque)
 {
 	struct {
 		uint64 ino;
@@ -390,38 +397,49 @@ uint64 sys_linux_getdents64(void)
 		uint8 type;
 		char name[VFS_NAME_MAX + 1];
 	} linux_dirent;
-	struct vfs_dirent dirent;
-	process_t process = cur_proc();
-	uint64 address;
-	int fd, length, result = 0, used = 0;
+	struct linux_getdents_context *context = opaque;
 	int name_length, record_length;
 
+	name_length = strlen(dirent->name);
+	record_length = (19 + name_length + 1 + 7) & ~7;
+	if (context->used + record_length > context->length)
+		return VFS_ERR_NOSPC;
+	memset(&linux_dirent, 0, sizeof(linux_dirent));
+	linux_dirent.ino = dirent->ino;
+	linux_dirent.offset = dirent->next_offset;
+	linux_dirent.reclen = record_length;
+	linux_dirent.type = dirent->type;
+	safe_strncpy(linux_dirent.name, dirent->name,
+	             sizeof(linux_dirent.name));
+	if (copyout(context->process->pagetable,
+	            context->address + context->used,
+	            (char *)&linux_dirent, record_length) < 0)
+		return VFS_ERR_FAULT;
+	context->used += record_length;
+	return VFS_OK;
+}
+
+uint64 sys_linux_getdents64(void)
+{
+	struct linux_getdents_context context = {
+		.process = cur_proc(),
+	};
+	int fd, result = 0;
+
 	argint(0, &fd);
-	argaddr(1, &address);
-	argint(2, &length);
-	if (length < 24)
+	argaddr(1, &context.address);
+	argint(2, &context.length);
+	if (context.length < 24)
 		return -LINUX_EINVAL;
-	while (length - used >= 24 &&
-	       (result = vfs_next_dirent(fd, &dirent)) > 0) {
-		name_length = strlen(dirent.name);
-		record_length = (19 + name_length + 1 + 7) & ~7;
-		if (used + record_length > length)
-			return used ? used : -LINUX_EINVAL;
-		memset(&linux_dirent, 0, sizeof(linux_dirent));
-		linux_dirent.ino = dirent.ino;
-		linux_dirent.offset = dirent.next_offset;
-		linux_dirent.reclen = record_length;
-		linux_dirent.type = dirent.type;
-		safe_strncpy(linux_dirent.name, dirent.name,
-		             sizeof(linux_dirent.name));
-		if (copyout(process->pagetable, address + used,
-		            (char *)&linux_dirent, record_length) < 0)
-			return used ? used : -LINUX_EFAULT;
-		used += record_length;
-	}
+	while (context.length - context.used >= 24 &&
+	       (result = vfs_next_dirent(fd, linux_emit_dirent,
+	                                 &context)) > 0)
+		;
+	if (result == VFS_ERR_NOSPC)
+		return context.used ? context.used : -LINUX_EINVAL;
 	if (result < 0)
-		return used ? used : linux_error(result);
-	return used;
+		return context.used ? context.used : linux_error(result);
+	return context.used;
 }
 
 uint64 sys_linux_fcntl(void)

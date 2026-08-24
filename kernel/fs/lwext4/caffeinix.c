@@ -1050,6 +1050,17 @@ static int ext4fs_readdir(struct vfs_file *file,
 	return 1;
 }
 
+static int ext4fs_seekdir(struct vfs_file *file, uint64 position)
+{
+	struct ext4fs_directory *handle = file->private;
+
+	if (!handle)
+		return VFS_ERR_INVAL;
+	handle->directory.next_off = position;
+	file->position = position;
+	return VFS_OK;
+}
+
 static const struct vfs_file_operations ext4fs_file_operations = {
 	.flags = VFS_FILE_CAN_PREAD,
 	.open = ext4fs_file_open,
@@ -1063,6 +1074,7 @@ static const struct vfs_file_operations ext4fs_directory_operations = {
 	.open = ext4fs_directory_open,
 	.release = ext4fs_directory_release,
 	.readdir = ext4fs_readdir,
+	.seekdir = ext4fs_seekdir,
 	.fsync = ext4fs_file_sync,
 };
 

@@ -659,10 +659,33 @@ static int fatfs_readdir(struct vfs_file *file,
 	return 1;
 }
 
+static int fatfs_seekdir(struct vfs_file *file, uint64 position)
+{
+	struct fatfs_directory *handle = file->private;
+	uint64 index;
+	FRESULT operation;
+
+	if (!handle)
+		return VFS_ERR_INVAL;
+	sleeplock_acquire(&fatfs_port.lock);
+	operation = f_rewinddir(&handle->directory);
+	for (index = 2; operation == FR_OK && index < position; index++) {
+		operation = f_readdir(&handle->directory, &handle->info);
+		if (operation == FR_OK && !handle->info.fname[0])
+			operation = FR_INT_ERR;
+	}
+	sleeplock_release(&fatfs_port.lock);
+	if (operation != FR_OK)
+		return fatfs_result(operation);
+	file->position = position;
+	return VFS_OK;
+}
+
 static const struct vfs_file_operations fatfs_directory_operations = {
 	.open = fatfs_directory_open,
 	.release = fatfs_directory_release,
 	.readdir = fatfs_readdir,
+	.seekdir = fatfs_seekdir,
 	.fsync = fatfs_directory_sync,
 };
 

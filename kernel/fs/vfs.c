@@ -1414,9 +1414,11 @@ int vfs_stat_path(const char *name, int follow_symlink,
 	return status;
 }
 
-int vfs_next_dirent(int fd, struct vfs_dirent *dirent)
+int vfs_next_dirent(int fd, vfs_dirent_emit_t emit, void *context)
 {
+	struct vfs_dirent dirent;
 	file_t file;
+	uint64 position;
 	int result;
 
 	if (fd_get(fd, &file) != VFS_OK)
@@ -1427,8 +1429,28 @@ int vfs_next_dirent(int fd, struct vfs_dirent *dirent)
 		result = VFS_ERR_NOTDIR;
 	else if (!file->operations || !file->operations->readdir)
 		result = VFS_ERR_NOTSUPP;
-	else
-		result = file->operations->readdir(file, dirent);
+	else if (!emit)
+		result = VFS_ERR_INVAL;
+	else {
+		int emitted;
+
+		sleeplock_acquire(&file->position_lock);
+		position = file->position;
+		result = file->operations->readdir(file, &dirent);
+		if (result > 0) {
+			emitted = emit(&dirent, context);
+			if (emitted < 0) {
+				result = file->operations->seekdir ?
+					file->operations->seekdir(file, position) :
+					VFS_OK;
+				if (result >= 0) {
+					file->position = position;
+					result = emitted;
+				}
+			}
+		}
+		sleeplock_release(&file->position_lock);
+	}
 	vfs_file_put(file);
 	return result;
 }
