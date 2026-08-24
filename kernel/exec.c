@@ -473,6 +473,7 @@ static int exec_elf(char *path, const char *execfn, char **argv, char **envp)
 	uint64 brk_start, entry, oldsz, sp, stack_base, sz = 0;
 	const char *name, *path_p;
 	int argc, error = -LINUX_ENOEXEC, stack_permissions = PTE_W;
+	int vfork_released;
 	uint32 stack_protection = LINUX_PROT_READ | LINUX_PROT_WRITE;
 
 	if (process_exec_begin(process, current) < 0)
@@ -596,7 +597,9 @@ static int exec_elf(char *path, const char *execfn, char **argv, char **envp)
 	process_set_cmdline(process, new_cmdline, new_cmdline_length);
 	new_cmdline = 0;
 	process_exec_end(process, 1);
-	process_freepagedir(oldpgdir, oldsz);
+	vfork_released = process_vfork_exec(process);
+	if (!vfork_released)
+		process_freepagedir(oldpgdir, oldsz);
 	vma_set_destroy(&old_vmas);
 	return argc;
 

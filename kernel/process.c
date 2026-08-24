@@ -24,6 +24,7 @@
 #include <mmap.h>
 #include <tty.h>
 #include <ktime.h>
+#include <cpu.h>
 
 #define PROCESS_CHILD_EVENT_NONE       0
 #define PROCESS_CHILD_EVENT_STOPPED    1
@@ -43,12 +44,47 @@ static volatile uint64 retired_process_user_time_ns;
 static volatile uint64 retired_process_system_time_ns;
 static volatile uint64 total_user_tasks;
 
+struct process_vfork {
+	struct sleeplock lock;
+	uint32 references;
+	process_t parent;
+	process_t child;
+	thread_t parent_thread;
+	pagedir_t shared_pagetable;
+	uint8 detached;
+	uint8 child_owns_shared;
+	uint8 released;
+};
+
 static void process_notify_parent_locked(process_t child, int code,
 					 int status);
 static int process_signal_group_locked(
 	int pgid, int signal, const struct signal_info *information);
 static int process_group_orphaned_locked(int pgid, int sid);
 static int process_group_stopped_locked(int pgid, int sid);
+
+static void process_vfork_state_get(struct process_vfork *state)
+{
+	if (!state || __atomic_fetch_add(&state->references, 1,
+					__ATOMIC_ACQUIRE) < 1)
+		PANIC("get inactive vfork state");
+}
+
+static void process_vfork_state_put(struct process_vfork *state)
+{
+	uint32 references;
+
+	if (!state)
+		return;
+	references = __atomic_fetch_sub(&state->references, 1,
+					__ATOMIC_RELEASE);
+	if (!references)
+		PANIC("put inactive vfork state");
+	if (references == 1) {
+		__atomic_thread_fence(__ATOMIC_ACQUIRE);
+		free(state);
+	}
+}
 
 static int process_parent_auto_reaps_locked(process_t child)
 {
@@ -310,6 +346,7 @@ static process_t process_alloc(void)
 	wait_queue_init(&p->signal_wait, "signal wait");
 	spinlock_init(&p->sleep_lock, "process sleep");
 	wait_queue_init(&p->sleep_wait, "process sleep");
+	wait_queue_init(&p->vfork_wait, "vfork");
 	sleeplock_init(&p->mmap_lock, "process mmap");
 	spinlock_init(&p->files_lock, "process files");
 	vma_set_init(&p->vmas);
@@ -373,6 +410,8 @@ static void process_free(process_t p)
 		PANIC("free process with signal waiter");
 	if (!wait_queue_empty(&p->sleep_wait))
 		PANIC("free process with sleep waiter");
+	if (!wait_queue_empty(&p->vfork_wait))
+		PANIC("free process with vfork waiter");
 	vma_set_destroy(&p->vmas);
 	signal_process_destroy(p);
 	pfree(p->signal_pending);
@@ -809,7 +848,85 @@ uint32 process_umask_set(uint32 mask)
 	return old_mask;
 }
 
-int process_fork(uint64 child_stack)
+static int process_vfork_map_child(process_t parent, process_t child,
+				   thread_t parent_thread,
+				   thread_t child_thread)
+{
+	struct process_vfork *state;
+	int result = -1;
+
+	state = malloc(sizeof(*state));
+	if (!state)
+		return -1;
+	memset(state, 0, sizeof(*state));
+	sleeplock_init(&state->lock, "vfork state");
+	state->references = 1;
+	state->parent = parent;
+	state->child = child;
+	state->parent_thread = parent_thread;
+	state->shared_pagetable = parent->pagetable;
+
+	sleeplock_acquire(&parent->mmap_lock);
+	if (!vm_mapped(parent->pagetable, TRAPFRAME(0)))
+		goto out;
+	vm_unmap(parent->pagetable, TRAPFRAME(0), 1, 0);
+	if (vm_map(parent->pagetable, TRAPFRAME(0),
+	           (uint64)child_thread->trapframe, PGSIZE,
+	           PTE_R | PTE_W) < 0) {
+		if (vm_map(parent->pagetable, TRAPFRAME(0),
+		           (uint64)parent_thread->trapframe, PGSIZE,
+		           PTE_R | PTE_W) < 0)
+			PANIC("restore vfork trapframe");
+		goto out;
+	}
+	child->vfork = state;
+	result = 0;
+out:
+	cpu_tlb_flush_all();
+	sleeplock_release(&parent->mmap_lock);
+	if (result < 0)
+		process_vfork_state_put(state);
+	return result;
+}
+
+static void process_vfork_detach_parent(process_t parent,
+					thread_t parent_thread,
+					process_t child)
+{
+	struct process_vfork *state;
+
+	if (!spinlock_holding(&parent->lock) ||
+	    parent_thread->vfork_child != child)
+		PANIC("detach invalid vfork parent");
+	state = child->vfork;
+	if (!state)
+		PANIC("detach missing vfork state");
+	process_vfork_state_get(state);
+	spinlock_release(&parent->lock);
+	sleeplock_acquire(&state->lock);
+	if (!state->released) {
+		if (state->detached || state->parent != parent ||
+		    state->parent_thread != parent_thread ||
+		    state->child != child || child->vfork != state)
+			PANIC("detach mismatched vfork state");
+		state->child_owns_shared = mmap_process_vfork_detach(
+			parent, child, state->shared_pagetable);
+		state->detached = 1;
+		spinlock_acquire(&parent->lock);
+		if (parent_thread->vfork_child != child)
+			PANIC("detach changed vfork parent");
+		parent_thread->vfork_child = 0;
+		state->parent = 0;
+		state->parent_thread = 0;
+		wait_queue_wake_all(&parent->vfork_wait);
+		spinlock_release(&parent->lock);
+	}
+	sleeplock_release(&state->lock);
+	process_vfork_state_put(state);
+	spinlock_acquire(&parent->lock);
+}
+
+static int process_fork_common(uint64 child_stack, int vfork)
 {
         int pid, i;
 	int had_cmdline;
@@ -827,7 +944,8 @@ int process_fork(uint64 child_stack)
 	spinlock_release(&newt->lock);
 	spinlock_release(&newp->lock);
 
-	if (mmap_process_fork(oldp, newp) < 0) {
+	if ((vfork ? mmap_process_vfork(oldp, newp) :
+	     mmap_process_fork(oldp, newp)) < 0) {
 		spinlock_acquire(&wait_lock);
 		process_free(newp);
 		spinlock_release(&wait_lock);
@@ -848,6 +966,8 @@ int process_fork(uint64 child_stack)
 	}
 	spinlock_release(&oldp->lock);
 	if (had_cmdline && !newp->cmdline) {
+		if (vfork)
+			newp->pagetable = 0;
 		spinlock_acquire(&wait_lock);
 		process_free(newp);
 		spinlock_release(&wait_lock);
@@ -859,6 +979,13 @@ int process_fork(uint64 child_stack)
 	*newt->trapframe = *oldt->trapframe;
 	if (child_stack)
 		newt->trapframe->sp = child_stack;
+	if (vfork && process_vfork_map_child(oldp, newp, oldt, newt) < 0) {
+		newp->pagetable = 0;
+		spinlock_acquire(&wait_lock);
+		process_free(newp);
+		spinlock_release(&wait_lock);
+		return -1;
+	}
 
         pid = newp->pid;
         newt->trapframe->a0 = 0;
@@ -880,6 +1007,13 @@ int process_fork(uint64 child_stack)
 	signal_process_fork(newp, oldp);
 	spinlock_release(&oldp->lock);
 	spinlock_release(&newp->lock);
+	if (vfork) {
+		spinlock_acquire(&oldp->lock);
+		if (oldt->vfork_child)
+			PANIC("nested vfork parent");
+		oldt->vfork_child = newp;
+		spinlock_release(&oldp->lock);
+	}
 
 	spinlock_acquire(&wait_lock);
 	spinlock_acquire(&newp->lock);
@@ -896,9 +1030,101 @@ int process_fork(uint64 child_stack)
 	scheduler_make_runnable(newt);
 	spinlock_release(&newt->lock);
 	spinlock_release(&wait_lock);
+	if (vfork) {
+		spinlock_acquire(&oldp->lock);
+		while (oldt->vfork_child == newp) {
+			if (wait_queue_sleep_killable(&oldp->vfork_wait,
+						      &oldp->lock) ==
+			    WAIT_QUEUE_INTERRUPTED)
+				process_vfork_detach_parent(oldp, oldt, newp);
+		}
+		spinlock_release(&oldp->lock);
+	}
 
         /* Return for parent process */
         return pid;
+}
+
+int process_fork(uint64 child_stack)
+{
+	return process_fork_common(child_stack, 0);
+}
+
+int process_vfork(uint64 child_stack)
+{
+	process_t process = cur_proc();
+	thread_t current = cur_thread();
+	int supported, result;
+
+	spinlock_acquire(&process->lock);
+	supported = process->state == PROCESS_LIVE &&
+		    !process->group_exiting && process->live_threads == 1 &&
+		    process->tnums == 1 &&
+		    current->id_p == 0 && !current->vfork_child;
+	spinlock_release(&process->lock);
+	if (!supported)
+		return -LINUX_EINVAL;
+	result = process_fork_common(child_stack, 1);
+	return result < 0 ? -LINUX_ENOMEM : result;
+}
+
+static void process_vfork_release_normal_locked(
+	process_t process, struct process_vfork *state, int register_mmap)
+{
+	thread_t parent_thread = state->parent_thread;
+	process_t parent = state->parent;
+	pagedir_t shared = state->shared_pagetable;
+
+	if (state->released || state->detached || state->child != process ||
+	    process->vfork != state || !parent_thread ||
+	    parent_thread->home != parent || !shared ||
+	    shared != parent->pagetable)
+		PANIC("invalid vfork parent");
+	if (register_mmap)
+		mmap_process_register(process);
+	sleeplock_acquire(&parent->mmap_lock);
+	if (!vm_mapped(shared, TRAPFRAME(0)))
+		PANIC("missing vfork trapframe");
+	vm_unmap(shared, TRAPFRAME(0), 1, 0);
+	if (vm_map(shared, TRAPFRAME(0), (uint64)parent_thread->trapframe,
+	           PGSIZE, PTE_R | PTE_W) < 0)
+		PANIC("restore vfork parent");
+	cpu_tlb_flush_all();
+	sleeplock_release(&parent->mmap_lock);
+	spinlock_acquire(&parent->lock);
+	if (parent_thread->vfork_child != process)
+		PANIC("vfork parent mismatch");
+	process->vfork = 0;
+	state->released = 1;
+	state->parent = 0;
+	state->parent_thread = 0;
+	parent_thread->vfork_child = 0;
+	wait_queue_wake_all(&parent->vfork_wait);
+	spinlock_release(&parent->lock);
+}
+
+int process_vfork_exec(process_t process)
+{
+	struct process_vfork *state;
+	int parent_owns_shared;
+
+	if (!process || !(state = process->vfork))
+		return 0;
+	sleeplock_acquire(&state->lock);
+	if (state->released || state->child != process ||
+	    process->vfork != state)
+		PANIC("exec invalid vfork state");
+	if (state->detached) {
+		parent_owns_shared = !state->child_owns_shared;
+		process->vfork = 0;
+		state->released = 1;
+	} else {
+		process_vfork_release_normal_locked(process, state, 1);
+		parent_owns_shared = 1;
+	}
+	sleeplock_release(&state->lock);
+	process_vfork_state_put(state);
+	return parent_owns_shared;
 }
 
 static int process_prefault_write(process_t process, uint64 address,
@@ -1079,18 +1305,58 @@ int process_group_exiting(process_t p, int *status)
 	return exiting;
 }
 
+static int process_vfork_exit(process_t process)
+{
+	struct process_vfork *state = process->vfork;
+	int shared_with_parent = 0;
+
+	if (!state)
+		return 0;
+	sleeplock_acquire(&state->lock);
+	if (state->released || state->child != process ||
+	    process->vfork != state)
+		PANIC("exit invalid vfork state");
+	if (state->detached) {
+		process->vfork = 0;
+		state->released = 1;
+	} else {
+		if (process->mmap_registered)
+			PANIC("registered vfork address space");
+		sleeplock_acquire(&process->mmap_lock);
+		vma_set_destroy(&process->vmas);
+		process->pagetable = 0;
+		sleeplock_release(&process->mmap_lock);
+		process_vfork_release_normal_locked(process, state, 0);
+		shared_with_parent = 1;
+	}
+	sleeplock_release(&state->lock);
+	process_vfork_state_put(state);
+	return shared_with_parent;
+}
+
 static void process_release_resources(process_t p)
 {
 	file_t files[NOFILE];
+	int shared_with_parent;
 	int count = 0, fd;
 
-	mmap_process_unregister(p);
-	sleeplock_acquire(&p->mmap_lock);
-	vma_set_destroy(&p->vmas);
-	if (vm_mapped(p->pagetable, USER_SIGRETURN))
-		vm_unmap(p->pagetable, USER_SIGRETURN, 1, 0);
-	vm_free_user(p->pagetable);
-	sleeplock_release(&p->mmap_lock);
+	shared_with_parent = process_vfork_exit(p);
+	if (!shared_with_parent && p->vfork_mmap_transferred) {
+		if (p->mmap_registered)
+			PANIC("registered transferred vfork mmap");
+		sleeplock_acquire(&p->mmap_lock);
+		vma_set_destroy(&p->vmas);
+		p->pagetable = 0;
+		sleeplock_release(&p->mmap_lock);
+	} else if (!shared_with_parent) {
+		mmap_process_unregister(p);
+		sleeplock_acquire(&p->mmap_lock);
+		vma_set_destroy(&p->vmas);
+		if (vm_mapped(p->pagetable, USER_SIGRETURN))
+			vm_unmap(p->pagetable, USER_SIGRETURN, 1, 0);
+		vm_free_user(p->pagetable);
+		sleeplock_release(&p->mmap_lock);
+	}
 	spinlock_acquire(&p->files_lock);
 	for (fd = 0; fd < NOFILE; fd++) {
 		if (!p->ofile[fd])

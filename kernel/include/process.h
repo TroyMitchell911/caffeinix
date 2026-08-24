@@ -21,6 +21,7 @@
 #include <signal.h>
 
 struct tty;
+struct process_vfork;
 
 #define PROCESS_CMDLINE_MAX PGSIZE
 #define PROCESS_GROUP_MAX   32
@@ -147,6 +148,9 @@ typedef struct process{
 	int child_event_signal;
 	uint8 auto_reap;
 	uint8 membarrier_private_expedited;
+	uint8 vfork_mmap_transferred;
+	struct process_vfork *vfork;
+	struct wait_queue vfork_wait;
 	uint64 real_timer_deadline;
 	uint64 real_timer_interval;
 	struct signal_pending *signal_pending;
@@ -169,6 +173,7 @@ void process_init(void);
 pagedir_t process_pagedir(process_t p, thread_t thread);
 void process_freepagedir(pagedir_t pgdir, uint64 sz);
 int process_fork(uint64 child_stack);
+int process_vfork(uint64 child_stack);
 int process_clone_thread(uint64 flags, uint64 child_stack,
 			 uint64 parent_tid, uint64 tls, uint64 child_tid);
 void process_thread_exit(int cause, int group);
@@ -179,6 +184,7 @@ int process_group_exiting(process_t process, int *status);
 int process_exec_begin(process_t process, thread_t thread);
 int process_exec_quiesce(process_t process, thread_t thread);
 void process_exec_end(process_t process, int committed);
+int process_vfork_exec(process_t process);
 int process_thread_exit_requested(thread_t thread, int *status);
 int process_wait(int target, uint64 status_address, uint64 usage_address,
 		 int options);

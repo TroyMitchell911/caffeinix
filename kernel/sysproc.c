@@ -965,9 +965,10 @@ uint64 sys_linux_clone(void)
 		return process_clone_thread(flags, child_stack, parent_tid,
 		                            tls, child_tid);
 	}
-	if ((flags & LINUX_CLONE_SIGNAL_MASK) != LINUX_SIGCHLD ||
-	    flags & ~(LINUX_CLONE_SIGNAL_MASK | LINUX_CLONE_VM |
-	              LINUX_CLONE_VFORK))
+	if (flags == (LINUX_CLONE_VM | LINUX_CLONE_VFORK |
+	              LINUX_SIGCHLD))
+		return process_vfork(child_stack);
+	if (flags != LINUX_SIGCHLD)
 		return -LINUX_EINVAL;
 	pid = process_fork(child_stack);
 	return pid < 0 ? -LINUX_ENOMEM : pid;

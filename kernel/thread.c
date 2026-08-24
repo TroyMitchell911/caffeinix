@@ -113,6 +113,7 @@ void thread_setup(void)
                 t->on_waitqueue = 0;
 		t->wait_private = 0;
 		t->wait_bitset = ~(uint32)0;
+		t->vfork_child = 0;
                 list_init(&t->wait_node);
 		t->on_timeout_queue = 0;
 		t->wait_interruptible = 0;
@@ -169,6 +170,7 @@ found:
         t->on_waitqueue = 0;
 	t->wait_private = 0;
 	t->wait_bitset = ~(uint32)0;
+	t->vfork_child = 0;
         list_init(&t->wait_node);
 	t->on_timeout_queue = 0;
 	t->wait_interruptible = 0;
@@ -238,6 +240,7 @@ found:
 	t->on_waitqueue = 0;
 	t->wait_private = 0;
 	t->wait_bitset = ~(uint32)0;
+	t->vfork_child = 0;
 	list_init(&t->wait_node);
 	t->on_timeout_queue = 0;
 	t->wait_interruptible = 0;
@@ -272,6 +275,7 @@ void kernel_thread_reap(thread_t t)
 	t->exit_status = 0;
 	t->wait_private = 0;
 	t->wait_bitset = ~(uint32)0;
+	t->vfork_child = 0;
 	t->wait_interruptible = 0;
 	thread_sched_init(t);
 	list_init(&t->wait_node);
@@ -292,6 +296,8 @@ void thread_free(thread_t t)
 
 	if (t->sched.on_runqueue)
                 PANIC("thread_free runnable");
+	if (t->vfork_child)
+		PANIC("thread_free vfork parent");
         if(t->on_waitqueue || t->waiting_on)
                 PANIC("thread_free waiting");
         if(p->tnums == 0)
@@ -332,6 +338,7 @@ void thread_free(thread_t t)
 	t->exit_status = 0;
 	t->wait_private = 0;
 	t->wait_bitset = ~(uint32)0;
+	t->vfork_child = 0;
 	t->wait_interruptible = 0;
 	thread_sched_init(t);
         list_init(&t->wait_node);

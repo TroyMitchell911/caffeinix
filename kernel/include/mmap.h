@@ -30,6 +30,9 @@ void mmap_init(void);
 void mmap_process_register(struct process *process);
 void mmap_process_unregister(struct process *process);
 int mmap_process_fork(struct process *parent, struct process *child);
+int mmap_process_vfork(struct process *parent, struct process *child);
+int mmap_process_vfork_detach(struct process *parent,
+			      struct process *child, uint64 *shared);
 int mmap_file_truncate(struct vfs_inode *inode, uint64 old_size,
 		       uint64 size);
 int mmap_reclaim_file_page(struct vfs_file *file, uint64 offset,

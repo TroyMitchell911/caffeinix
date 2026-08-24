@@ -76,6 +76,59 @@ out:
 	return result;
 }
 
+int mmap_process_vfork(process_t parent, process_t child)
+{
+	pagedir_t private_pagetable = 0;
+	int result = -1;
+
+	if (!parent || !child)
+		return -1;
+	sleeplock_acquire(&mmap_registry.lock);
+	sleeplock_acquire(&parent->mmap_lock);
+	if (vma_set_clone(&child->vmas, &parent->vmas) < 0)
+		goto out;
+	child->sz = parent->sz;
+	child->brk = parent->brk;
+	child->brk_start = parent->brk_start;
+	child->mmap_top = parent->mmap_top;
+	private_pagetable = child->pagetable;
+	child->pagetable = parent->pagetable;
+	result = 0;
+out:
+	sleeplock_release(&parent->mmap_lock);
+	sleeplock_release(&mmap_registry.lock);
+	if (!result)
+		process_freepagedir(private_pagetable, 0);
+	return result;
+}
+
+int mmap_process_vfork_detach(process_t parent, process_t child,
+			      uint64 *shared)
+{
+	int child_owns_shared;
+
+	if (!parent || !child || !shared)
+		PANIC("detach invalid vfork mmap");
+	sleeplock_acquire(&mmap_registry.lock);
+	sleeplock_acquire(&parent->mmap_lock);
+	sleeplock_acquire(&child->mmap_lock);
+	if (!parent->mmap_registered || child->mmap_registered ||
+	    parent->pagetable != shared)
+		PANIC("detach inconsistent vfork mmap");
+	child_owns_shared = child->pagetable == shared;
+	if (child_owns_shared) {
+		list_remove(&parent->mmap_tag);
+		parent->mmap_registered = 0;
+		parent->vfork_mmap_transferred = 1;
+	}
+	list_insert_after(&mmap_registry.processes, &child->mmap_tag);
+	child->mmap_registered = 1;
+	sleeplock_release(&child->mmap_lock);
+	sleeplock_release(&parent->mmap_lock);
+	sleeplock_release(&mmap_registry.lock);
+	return child_owns_shared;
+}
+
 static int mmap_area_matches_inode(const struct vm_area *area,
 				   const struct vfs_inode *inode)
 {

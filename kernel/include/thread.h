@@ -149,6 +149,7 @@ typedef struct thread {
 	uint32 futex_restart_expected;
 	uint32 futex_restart_bitset;
 	uint64 signal_sequence;
+	uint64 fatal_signal_sequence;
 	uint64 process_signal_target;
 	uint8 signal_restore_mask;
 	uint8 process_reaper;
@@ -169,6 +170,7 @@ typedef struct thread {
 	uint8 wait_interruptible;
 	void *wait_private;
 	uint32 wait_bitset;
+	process_t vfork_child;
 }*thread_t;
 
 extern struct thread thread[NTHREAD];

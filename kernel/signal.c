@@ -55,6 +55,20 @@ static int signal_default_cores(int signal)
 	       signal == LINUX_SIGXFSZ || signal == LINUX_SIGSYS;
 }
 
+static int signal_fatal_locked(process_t process, int signal)
+{
+	uint64 handler;
+
+	if (!spinlock_holding(&process->lock))
+		PANIC("fatal signal check unlocked");
+	handler = process->signal_actions[signal - 1].handler;
+	if (signal == LINUX_SIGKILL)
+		return 1;
+	return handler == LINUX_SIG_DFL && signal != LINUX_SIGCONT &&
+	       !signal_default_ignored(signal) &&
+	       !signal_default_stops(signal);
+}
+
 static void signal_pending_init(struct signal_pending *pending)
 {
 	memset(pending, 0, sizeof(*pending));
@@ -85,6 +99,7 @@ static void signal_thread_reset(thread_t thread)
 	thread->syscall_restart = 0;
 	futex_restart_cancel(thread);
 	thread->signal_sequence = 0;
+	thread->fatal_signal_sequence = 0;
 	thread->process_signal_target = 0;
 }
 
@@ -250,10 +265,16 @@ static void signal_target_clear_locked(process_t process, int signal)
 	}
 }
 
-static void signal_target_wake_locked(thread_t thread)
+static void signal_target_wake_locked(process_t process, thread_t thread,
+				      int signal)
 {
+	int fatal = signal_fatal_locked(process, signal);
+
 	__atomic_add_fetch(&thread->signal_sequence, 1, __ATOMIC_RELEASE);
-	wait_queue_interrupt_thread(thread);
+	if (fatal)
+		__atomic_add_fetch(&thread->fatal_signal_sequence, 1,
+				   __ATOMIC_RELEASE);
+	wait_queue_signal_thread(thread, fatal);
 	scheduler_kick(thread);
 }
 
@@ -287,7 +308,7 @@ static void signal_process_retarget_locked(process_t process, int signal,
 	if (!target)
 		return;
 	target->process_signal_target |= bit;
-	signal_target_wake_locked(target);
+	signal_target_wake_locked(process, target, signal);
 }
 
 void signal_thread_mask_changed_locked(process_t process, thread_t thread)
@@ -355,7 +376,7 @@ static void signal_wake_locked(process_t process, thread_t target,
 	if (!(SIGNAL_BIT(signal) & SIGNAL_UNMASKABLE) &&
 	    (target->signal_mask & SIGNAL_BIT(signal)))
 		return;
-	signal_target_wake_locked(target);
+	signal_target_wake_locked(process, target, signal);
 }
 
 static int signal_store_pending(struct signal_pending *pending, int signal,
@@ -445,6 +466,29 @@ int signal_pending_unblocked(thread_t thread)
 	           (process->signal_pending->bits &
 	            thread->process_signal_target)) & ~thread->signal_mask;
 	spinlock_release(&process->lock);
+	return !!pending;
+}
+
+int signal_fatal_pending(thread_t thread)
+{
+	process_t process;
+	uint64 pending;
+	int held, signal;
+
+	if (!thread || !(process = thread->home))
+		return 0;
+	held = spinlock_holding(&process->lock);
+	if (!held)
+		spinlock_acquire(&process->lock);
+	pending = (thread->signal_pending.bits |
+		   (process->signal_pending->bits &
+		    thread->process_signal_target)) & ~thread->signal_mask;
+	for (signal = 1; pending; signal++, pending >>= 1) {
+		if ((pending & 1) && signal_fatal_locked(process, signal))
+			break;
+	}
+	if (!held)
+		spinlock_release(&process->lock);
 	return !!pending;
 }
 
