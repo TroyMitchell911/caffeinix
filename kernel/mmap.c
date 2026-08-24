@@ -762,6 +762,27 @@ static int mmap_mark_shared_dirty(process_t process, uint64 start,
 	return 0;
 }
 
+static int mmap_shared_write_allowed(const struct vma_set *set,
+				     uint64 start, uint64 end)
+{
+	const struct vm_area *area;
+	list_t node;
+
+	for (node = set->areas.next; node != &set->areas;
+	     node = node->next) {
+		area = list_entry(node, struct vm_area, node);
+		if (area->end <= start)
+			continue;
+		if (area->start >= end)
+			break;
+		if (area->origin == VMA_FILE_BACKED &&
+		    (area->flags & 0xf) == LINUX_MAP_SHARED &&
+		    !(area->file->flags & VFS_OPEN_WRITE))
+			return 0;
+	}
+	return 1;
+}
+
 uint64 sys_linux_mprotect(void)
 {
 	process_t process = cur_proc();
@@ -786,6 +807,11 @@ uint64 sys_linux_mprotect(void)
 	if (!vma_range_mapped(&process->vmas, address, end)) {
 		sleeplock_release(&process->mmap_lock);
 		return -LINUX_ENOMEM;
+	}
+	if ((protection & LINUX_PROT_WRITE) &&
+	    !mmap_shared_write_allowed(&process->vmas, address, end)) {
+		sleeplock_release(&process->mmap_lock);
+		return -LINUX_EACCES;
 	}
 	if (vma_protect(&process->vmas, address, end, protection) < 0) {
 		sleeplock_release(&process->mmap_lock);
