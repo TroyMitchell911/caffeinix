@@ -53,6 +53,7 @@ int signal_send_thread(int thread_group, int tid, int signal,
 
 int signal_pending_unblocked(struct thread *thread);
 uint64 signal_mask_sanitize(uint64 mask);
+void signal_raise_current(int signal, int code);
 void signal_force_fault(int signal, int code, uint64 address);
 void signal_user_return(int from_syscall);
 

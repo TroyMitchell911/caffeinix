@@ -519,6 +519,23 @@ static int signal_take_unblocked_locked(
 	return signal;
 }
 
+void signal_raise_current(int signal, int code)
+{
+	process_t process = cur_proc();
+	thread_t thread = cur_thread();
+	struct signal_info information = {
+		.signal = signal,
+		.code = code,
+	};
+
+	if (!process || !thread)
+		return;
+	spinlock_acquire(&process->lock);
+	(void)signal_queue_thread_locked(process, thread, signal,
+	                                 &information);
+	spinlock_release(&process->lock);
+}
+
 void signal_force_fault(int signal, int code, uint64 address)
 {
 	process_t process = cur_proc();

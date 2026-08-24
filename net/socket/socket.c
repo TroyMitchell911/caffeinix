@@ -7,6 +7,7 @@
 #include <network_stack.h>
 #include <palloc.h>
 #include <process.h>
+#include <signal.h>
 #include <spinlock.h>
 #include <vfs.h>
 
@@ -287,6 +288,15 @@ static int socket_write_error(struct socket_file *socket)
 	return errno > 0 ? errno : EIO;
 }
 
+static int socket_report_write_error(struct socket_file *socket, int error,
+				     int flags)
+{
+	if (error == EPIPE && socket->type == LINUX_SOCK_STREAM &&
+	    !(flags & LINUX_MSG_NOSIGNAL))
+		signal_raise_current(LINUX_SIGPIPE, LINUX_SI_KERNEL);
+	return error;
+}
+
 static void socket_address_to_lwip(
 	const struct linux_sockaddr_in *linux_address,
 	struct sockaddr_in *lwip_address)
@@ -533,13 +543,15 @@ static int64 socket_file_write(struct vfs_file *file, int user_source,
 
 	(void)position;
 	if (socket_write_is_shutdown(socket))
-		return VFS_ERR_PIPE;
+		return socket_vfs_error(
+			socket_report_write_error(socket, EPIPE, 0));
 	if (socket_write_needs_peer(socket))
 		return VFS_ERR_DESTADDRREQ;
 	lwip_socket_thread_init();
 	status = socket_stream_prepare_write(socket);
 	if (status)
-		return socket_vfs_error(status);
+		return socket_vfs_error(
+			socket_report_write_error(socket, status, 0));
 	if (!count && socket->type != LINUX_SOCK_DGRAM)
 		return 0;
 	if (!count) {
@@ -547,8 +559,8 @@ static int64 socket_file_write(struct vfs_file *file, int user_source,
 
 		errno = 0;
 		result = lwip_send(socket->descriptor, &dummy, 0, 0);
-		return result < 0 ?
-			socket_vfs_error(socket_write_error(socket)) : result;
+		return result < 0 ? socket_vfs_error(socket_report_write_error(
+			socket, socket_write_error(socket), 0)) : result;
 	}
 	if (count > PGSIZE && socket->type != LINUX_SOCK_STREAM)
 		return VFS_ERR_MSGSIZE;
@@ -564,7 +576,8 @@ static int64 socket_file_write(struct vfs_file *file, int user_source,
 	errno = 0;
 	result = lwip_send(socket->descriptor, buffer, count, 0);
 	if (result < 0)
-		result = socket_vfs_error(socket_write_error(socket));
+		result = socket_vfs_error(socket_report_write_error(
+			socket, socket_write_error(socket), 0));
 	pfree(buffer);
 	return result;
 }
@@ -584,13 +597,15 @@ static int64 socket_file_writev(struct vfs_file *file, int user_source,
 	if (!total)
 		return 0;
 	if (socket_write_is_shutdown(socket))
-		return VFS_ERR_PIPE;
+		return socket_vfs_error(
+			socket_report_write_error(socket, EPIPE, 0));
 	if (socket_write_needs_peer(socket))
 		return VFS_ERR_DESTADDRREQ;
 	lwip_socket_thread_init();
 	result = socket_stream_prepare_write(socket);
 	if (result)
-		return socket_vfs_error(result);
+		return socket_vfs_error(
+			socket_report_write_error(socket, result, 0));
 	if (socket->type != LINUX_SOCK_STREAM && total > PGSIZE)
 		return VFS_ERR_MSGSIZE;
 	if (total > PGSIZE)
@@ -616,7 +631,8 @@ static int64 socket_file_writev(struct vfs_file *file, int user_source,
 	errno = 0;
 	result = lwip_send(socket->descriptor, buffer, total, 0);
 	if (result < 0)
-		result = socket_vfs_error(socket_write_error(socket));
+		result = socket_vfs_error(socket_report_write_error(
+			socket, socket_write_error(socket), 0));
 	if (buffer)
 		pfree(buffer);
 	return result;
@@ -1022,8 +1038,9 @@ int64 ksocket_send(int fd, const void *buffer, uint64 length, int flags,
 		return -LINUX_EOPNOTSUPP;
 	}
 	if (socket_write_is_shutdown(socket)) {
+		status = socket_report_write_error(socket, EPIPE, flags);
 		vfs_file_put(file);
-		return -LINUX_EPIPE;
+		return -status;
 	}
 	if (!address && socket_write_needs_peer(socket)) {
 		vfs_file_put(file);
@@ -1031,6 +1048,7 @@ int64 ksocket_send(int fd, const void *buffer, uint64 length, int flags,
 	}
 	status = socket_stream_prepare_write(socket);
 	if (status) {
+		status = socket_report_write_error(socket, status, flags);
 		vfs_file_put(file);
 		return -status;
 	}
@@ -1052,7 +1070,8 @@ int64 ksocket_send(int fd, const void *buffer, uint64 length, int flags,
 				   lwip_flags);
 	}
 	if (result < 0)
-		result = -socket_write_error(socket);
+		result = -socket_report_write_error(
+			socket, socket_write_error(socket), flags);
 	vfs_file_put(file);
 	return result;
 }
