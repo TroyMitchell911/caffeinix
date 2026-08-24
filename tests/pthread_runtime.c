@@ -5,9 +5,11 @@
 #include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <sys/mman.h>
 #include <sys/resource.h>
 #include <sys/syscall.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -17,6 +19,8 @@
 #define ITERATIONS 1000
 #define FD_RACE_ROUNDS 32
 #define COPY_PAGE_SIZE 4096UL
+#define BREAK_FORK_ROUNDS 128
+#define BREAK_GROWTH (4 * COPY_PAGE_SIZE)
 
 static pthread_mutex_t counter_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_barrier_t worker_barrier;
@@ -41,6 +45,11 @@ static int copy_fd;
 static volatile int nice_ready;
 static volatile int nice_done;
 static pid_t nice_tid;
+static volatile int break_go;
+static volatile int break_stop;
+static volatile int break_failure;
+static uintptr_t break_base;
+static uintptr_t break_target;
 
 static int fail(const char *reason, int error)
 {
@@ -128,6 +137,90 @@ static int test_shared_fd_table(void)
 				return fail("fd close", errno);
 		pthread_barrier_destroy(&fd_barrier);
 	}
+	return 0;
+}
+
+static void *break_worker(void *argument)
+{
+	long result;
+
+	(void)argument;
+	while (!__atomic_load_n(&break_go, __ATOMIC_ACQUIRE))
+		;
+	while (!__atomic_load_n(&break_stop, __ATOMIC_ACQUIRE)) {
+		result = syscall(SYS_brk, break_target);
+		if ((uintptr_t)result != break_target) {
+			__atomic_store_n(&break_failure, 1, __ATOMIC_RELEASE);
+			break;
+		}
+		*(volatile unsigned char *)(break_target - 1) = 0xa5;
+		result = syscall(SYS_brk, break_base);
+		if ((uintptr_t)result != break_base) {
+			__atomic_store_n(&break_failure, 2, __ATOMIC_RELEASE);
+			break;
+		}
+	}
+	return 0;
+}
+
+static int concurrent_break_fork_child(void)
+{
+	pthread_t thread;
+	volatile unsigned char value;
+	uintptr_t current;
+	pid_t child;
+	int error, round, status;
+
+	break_go = 0;
+	break_stop = 0;
+	break_failure = 0;
+	error = pthread_create(&thread, 0, break_worker, 0);
+	if (error)
+		return 10;
+	break_base = syscall(SYS_brk, 0);
+	break_target = break_base + BREAK_GROWTH;
+	if (break_target < break_base)
+		return 11;
+	__atomic_store_n(&break_go, 1, __ATOMIC_RELEASE);
+	for (round = 0; round < BREAK_FORK_ROUNDS; round++) {
+		if (__atomic_load_n(&break_failure, __ATOMIC_ACQUIRE))
+			return 12;
+		child = fork();
+		if (child < 0)
+			return 13;
+		if (!child) {
+			current = syscall(SYS_brk, 0);
+			if (current > break_base) {
+				value = *(volatile unsigned char *)(current - 1);
+				(void)value;
+			}
+			_exit(EXIT_SUCCESS);
+		}
+		if (waitpid(child, &status, 0) != child ||
+		    !WIFEXITED(status) || WEXITSTATUS(status) != EXIT_SUCCESS)
+			return 14;
+	}
+	__atomic_store_n(&break_stop, 1, __ATOMIC_RELEASE);
+	error = pthread_join(thread, 0);
+	if ((uintptr_t)syscall(SYS_brk, break_base) != break_base)
+		return 15;
+	if (error || break_failure)
+		return 16;
+	return 0;
+}
+
+static int test_concurrent_break_fork(void)
+{
+	pid_t child = fork();
+	int status;
+
+	if (child < 0)
+		return fail("break helper fork", errno);
+	if (!child)
+		_exit(concurrent_break_fork_child());
+	if (waitpid(child, &status, 0) != child || !WIFEXITED(status) ||
+	    WEXITSTATUS(status) != EXIT_SUCCESS)
+		return fail("break fork snapshot", status);
 	return 0;
 }
 
@@ -335,6 +428,8 @@ int main(void)
 	if (!detached_done)
 		return fail("detached timeout", 0);
 	if (test_shared_fd_table() || test_thread_nice())
+		return 1;
+	if (test_concurrent_break_fork())
 		return 1;
 	if (test_copy_unmap_race())
 		return 1;
