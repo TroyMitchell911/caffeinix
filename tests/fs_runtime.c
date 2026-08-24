@@ -9,6 +9,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
+#include <sys/syscall.h>
 #include <sys/uio.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -64,6 +65,65 @@ static int directory_has(const char *path, const char *name)
 	if (errno || closedir(directory))
 		return -1;
 	return found;
+}
+
+struct test_linux_dirent64 {
+	uint64_t ino;
+	int64_t offset;
+	uint16_t reclen;
+	uint8_t type;
+	char name[];
+} __attribute__((packed));
+
+static int dirent_buffer_has(const unsigned char *buffer, ssize_t length,
+			     const char *name)
+{
+	const struct test_linux_dirent64 *entry;
+	ssize_t offset = 0;
+
+	while (offset < length) {
+		entry = (const void *)(buffer + offset);
+		if (length - offset < 24 || entry->reclen < 24 ||
+		    entry->reclen > length - offset ||
+		    !memchr(entry->name, 0, entry->reclen - 19))
+			return -1;
+		if (!strcmp(entry->name, name))
+			return 1;
+		offset += entry->reclen;
+	}
+	return offset == length ? 0 : -1;
+}
+
+static int test_getdents_boundary(const char *parent)
+{
+	static const char name[] = "entry-with-a-name-longer-than-four";
+	unsigned char small[72], large[512];
+	char directory[128], path[256];
+	ssize_t length;
+	int fd = -1, result = -1;
+
+	snprintf(directory, sizeof(directory), "%s/getdents-boundary", parent);
+	snprintf(path, sizeof(path), "%s/%s", directory, name);
+	unlink(path);
+	rmdir(directory);
+	if (mkdir(directory, 0700) || make_file(path, "x"))
+		goto out;
+	fd = open(directory, O_RDONLY | O_DIRECTORY);
+	if (fd < 0)
+		goto out;
+	length = syscall(SYS_getdents64, fd, small, sizeof(small));
+	if (length != 48 || dirent_buffer_has(small, length, name) != 0)
+		goto out;
+	length = syscall(SYS_getdents64, fd, large, sizeof(large));
+	if (length <= 0 || dirent_buffer_has(large, length, name) != 1)
+		goto out;
+	result = 0;
+out:
+	if (fd >= 0 && close(fd))
+		result = -1;
+	if (unlink(path) || rmdir(directory))
+		result = -1;
+	return result;
 }
 
 static int append_writer(const char *path, const char *record)
@@ -453,14 +513,20 @@ int main(void)
 	result = test_tree("/ext-runtime");
 	if (result)
 		return fail(result);
+	if (test_getdents_boundary("/ext-runtime"))
+		return fail(233);
 	pass("EXT4_OK\n");
 	result = test_tree("/tmp/tmp-runtime");
 	if (result)
 		return fail(result + 100);
+	if (test_getdents_boundary("/tmp/tmp-runtime"))
+		return fail(234);
 	pass("TMPFS_OK\n");
 	result = test_fat(&fat_mounted);
 	if (result)
 		return fail(result);
+	if (fat_mounted && test_getdents_boundary("/mnt/fat/runtime"))
+		return fail(235);
 	pass(fat_mounted ? "FAT_OK\n" : "FAT_SKIP\n");
 	write(1, "FS_RUNTIME_OK\n", 14);
 	return 0;
