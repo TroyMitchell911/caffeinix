@@ -733,7 +733,8 @@ static void test_shared_file_mapping(void)
 {
 	unsigned char buffer[PAGE_SIZE];
 	unsigned char value, original;
-	unsigned char *first, *private, *readonly_private, *second;
+	unsigned char *first, *private, *readonly_private, *readonly_shared;
+	unsigned char *second;
 	struct iovec iovecs[2];
 	int barrier, fd, readonly_fd, status;
 	pid_t child;
@@ -766,6 +767,15 @@ static void test_shared_file_mapping(void)
 	CHECK(mmap(0, PAGE_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED,
 		   readonly_fd, 0) == MAP_FAILED && errno == EACCES,
 	      "shared writable access");
+	readonly_shared = mmap(0, PAGE_SIZE, PROT_READ, MAP_SHARED,
+			       readonly_fd, 0);
+	CHECK(readonly_shared != MAP_FAILED, "shared readonly fd mmap");
+	errno = 0;
+	CHECK(mprotect(readonly_shared, PAGE_SIZE,
+		       PROT_READ | PROT_WRITE) < 0 && errno == EACCES,
+	      "shared readonly fd mprotect");
+	CHECK(munmap(readonly_shared, PAGE_SIZE) == 0,
+	      "shared readonly fd munmap");
 	readonly_private = mmap(0, PAGE_SIZE, PROT_READ | PROT_WRITE,
 				MAP_PRIVATE, readonly_fd, 0);
 	CHECK(readonly_private != MAP_FAILED, "private readonly fd mmap");
