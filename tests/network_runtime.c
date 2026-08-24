@@ -3,6 +3,7 @@
 #include <fcntl.h>
 #include <netinet/tcp.h>
 #include <poll.h>
+#include <signal.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/ioctl.h>
@@ -42,6 +43,13 @@ static unsigned char bulk_send[TCP_BULK_SIZE];
 static unsigned char bulk_receive[TCP_BULK_SIZE];
 static unsigned char large_receive[LARGE_RECEIVE_SIZE];
 static unsigned char udp_oversize[UDP_OVERSIZE_SIZE];
+static volatile sig_atomic_t sigpipe_seen;
+
+static void sigpipe_handler(int signal)
+{
+	(void)signal;
+	sigpipe_seen++;
+}
 
 static unsigned short internet_checksum(const void *buffer, size_t length)
 {
@@ -473,6 +481,56 @@ static int protocol_test(void)
 	if (socketpair(AF_UNIX, SOCK_STREAM, 0, pair) != -1 ||
 	    errno != EAFNOSUPPORT)
 		return fail("unsupported socketpair family");
+	return 0;
+}
+
+static int sigpipe_test(void)
+{
+	struct sigaction action;
+	struct iovec iovec = {
+		.iov_base = (void *)"x",
+		.iov_len = 1,
+	};
+	struct msghdr message = {
+		.msg_iov = &iovec,
+		.msg_iovlen = 1,
+	};
+	int fd;
+
+	memset(&action, 0, sizeof(action));
+	action.sa_handler = sigpipe_handler;
+	sigemptyset(&action.sa_mask);
+	if (sigaction(SIGPIPE, &action, NULL))
+		return fail("SIGPIPE action");
+	fd = socket(AF_INET, SOCK_STREAM, 0);
+	if (fd < 0)
+		return fail("SIGPIPE socket");
+	sigpipe_seen = 0;
+	errno = 0;
+	if (send(fd, "x", 1, 0) != -1 || errno != EPIPE ||
+	    sigpipe_seen != 1)
+		return fail("send SIGPIPE");
+	sigpipe_seen = 0;
+	errno = 0;
+	if (send(fd, "x", 1, MSG_NOSIGNAL) != -1 || errno != EPIPE ||
+	    sigpipe_seen)
+		return fail("MSG_NOSIGNAL");
+	sigpipe_seen = 0;
+	errno = 0;
+	if (write(fd, "x", 1) != -1 || errno != EPIPE || sigpipe_seen != 1)
+		return fail("write SIGPIPE");
+	sigpipe_seen = 0;
+	errno = 0;
+	if (writev(fd, &iovec, 1) != -1 || errno != EPIPE ||
+	    sigpipe_seen != 1)
+		return fail("writev SIGPIPE");
+	sigpipe_seen = 0;
+	errno = 0;
+	if (sendmsg(fd, &message, 0) != -1 || errno != EPIPE ||
+	    sigpipe_seen != 1)
+		return fail("sendmsg SIGPIPE");
+	if (close(fd))
+		return fail("SIGPIPE close");
 	return 0;
 }
 
@@ -993,7 +1051,7 @@ int main(int argc, char **argv)
 
 	if (clock_gettime(CLOCK_MONOTONIC, &time) < 0 || time.tv_sec < 0)
 		return fail("clock_gettime");
-	if (protocol_test() || broadcast_permission_test() ||
+	if (sigpipe_test() || protocol_test() || broadcast_permission_test() ||
 	    loopback_test() || inherited_poll_test())
 		return 1;
 	if (argc == 2 && !strcmp(argv[1], "loopback")) {
