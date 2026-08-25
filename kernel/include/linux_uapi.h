@@ -36,9 +36,20 @@
 #define LINUX_SYS_exit               93
 #define LINUX_SYS_exit_group         94
 #define LINUX_SYS_set_tid_address    96
+#define LINUX_SYS_futex              98
+#define LINUX_SYS_set_robust_list    99
+#define LINUX_SYS_get_robust_list   100
 #define LINUX_SYS_clock_gettime     113
+#define LINUX_SYS_kill              129
+#define LINUX_SYS_tkill             130
+#define LINUX_SYS_tgkill            131
+#define LINUX_SYS_sigaltstack       132
+#define LINUX_SYS_rt_sigsuspend     133
 #define LINUX_SYS_rt_sigaction      134
 #define LINUX_SYS_rt_sigprocmask    135
+#define LINUX_SYS_rt_sigpending     136
+#define LINUX_SYS_rt_sigtimedwait   137
+#define LINUX_SYS_rt_sigreturn      139
 #define LINUX_SYS_setpriority       140
 #define LINUX_SYS_getpriority       141
 #define LINUX_SYS_umask             166
@@ -71,9 +82,17 @@
 #define LINUX_SYS_execve            221
 #define LINUX_SYS_mmap              222
 #define LINUX_SYS_mprotect          226
+#define LINUX_SYS_msync             227
 #define LINUX_SYS_accept4           242
+#define LINUX_SYS_riscv_flush_icache 259
 #define LINUX_SYS_wait4             260
 #define LINUX_SYS_renameat2         276
+#define LINUX_SYS_getrandom         278
+#define LINUX_SYS_membarrier        283
+
+#define LINUX_SYS_RISCV_FLUSH_ICACHE_LOCAL 1UL
+#define LINUX_SYS_RISCV_FLUSH_ICACHE_ALL \
+	LINUX_SYS_RISCV_FLUSH_ICACHE_LOCAL
 
 #define LINUX_EPERM                   1
 #define LINUX_ENOENT                  2
@@ -281,6 +300,18 @@ struct linux_linger {
 #define LINUX_MAP_PRIVATE            0x2
 #define LINUX_MAP_FIXED             0x10
 #define LINUX_MAP_ANONYMOUS         0x20
+#define LINUX_MAP_NORESERVE       0x4000
+#define LINUX_MAP_POPULATE        0x8000
+#define LINUX_MAP_STACK          0x20000
+#define LINUX_MAP_FIXED_NOREPLACE 0x100000
+
+#define LINUX_MS_ASYNC                0x1
+#define LINUX_MS_INVALIDATE           0x2
+#define LINUX_MS_SYNC                 0x4
+
+#define LINUX_GRND_NONBLOCK            0x1
+#define LINUX_GRND_RANDOM              0x2
+#define LINUX_GRND_INSECURE            0x4
 
 #define LINUX_PR_GET_NAME             16
 
@@ -307,16 +338,107 @@ struct linux_linger {
 #define LINUX_SIG_BLOCK                0
 #define LINUX_SIG_UNBLOCK              1
 #define LINUX_SIG_SETMASK              2
+#define LINUX_SIGHUP                    1
+#define LINUX_SIGINT                    2
+#define LINUX_SIGQUIT                   3
+#define LINUX_SIGILL                    4
+#define LINUX_SIGTRAP                   5
+#define LINUX_SIGABRT                   6
+#define LINUX_SIGBUS                    7
+#define LINUX_SIGFPE                    8
 #define LINUX_SIGKILL                  9
+#define LINUX_SIGUSR1                  10
+#define LINUX_SIGSEGV                  11
+#define LINUX_SIGUSR2                  12
+#define LINUX_SIGPIPE                  13
+#define LINUX_SIGALRM                  14
+#define LINUX_SIGTERM                  15
+#define LINUX_SIGSTKFLT                16
 #define LINUX_SIGCHLD                 17
+#define LINUX_SIGCONT                 18
 #define LINUX_SIGSTOP                 19
+#define LINUX_SIGTSTP                 20
+#define LINUX_SIGTTIN                 21
+#define LINUX_SIGTTOU                 22
+#define LINUX_SIGURG                  23
+#define LINUX_SIGXCPU                 24
+#define LINUX_SIGXFSZ                 25
+#define LINUX_SIGVTALRM               26
+#define LINUX_SIGPROF                 27
+#define LINUX_SIGWINCH                28
+#define LINUX_SIGIO                   29
+#define LINUX_SIGPWR                  30
+#define LINUX_SIGSYS                  31
+#define LINUX_SIGRTMIN                32
+#define LINUX_SIGRTMAX                64
 #define LINUX_SIGSET_SIZE              8
 
+#define LINUX_SIG_DFL                   0
+#define LINUX_SIG_IGN                   1
+
+#define LINUX_SA_NOCLDSTOP     0x00000001U
+#define LINUX_SA_NOCLDWAIT     0x00000002U
+#define LINUX_SA_SIGINFO       0x00000004U
+#define LINUX_SA_ONSTACK       0x08000000U
+#define LINUX_SA_RESTART       0x10000000U
+#define LINUX_SA_NODEFER       0x40000000U
+#define LINUX_SA_RESETHAND     0x80000000U
+
+#define LINUX_SS_ONSTACK                1
+#define LINUX_SS_DISABLE                2
+#define LINUX_SS_AUTODISARM    0x80000000U
+
+#define LINUX_SI_USER                    0
+#define LINUX_SI_KERNEL               128
+#define LINUX_SI_TKILL                 -6
+
+#define LINUX_ILL_ILLOPC                 1
+#define LINUX_TRAP_BRKPT                 1
+#define LINUX_BUS_ADRALN                 1
+#define LINUX_BUS_ADRERR                 2
+#define LINUX_SEGV_MAPERR                1
+#define LINUX_SEGV_ACCERR                2
+
+#define LINUX_CLD_EXITED                 1
+#define LINUX_CLD_KILLED                 2
+#define LINUX_CLD_DUMPED                 3
+#define LINUX_CLD_STOPPED                5
+#define LINUX_CLD_CONTINUED              6
+
 #define LINUX_CLONE_VM             0x100
+#define LINUX_CLONE_FS             0x200
+#define LINUX_CLONE_FILES          0x400
+#define LINUX_CLONE_SIGHAND        0x800
 #define LINUX_CLONE_VFORK         0x4000
+#define LINUX_CLONE_THREAD       0x10000
+#define LINUX_CLONE_SYSVSEM      0x40000
+#define LINUX_CLONE_SETTLS       0x80000
+#define LINUX_CLONE_PARENT_SETTID 0x100000
+#define LINUX_CLONE_CHILD_CLEARTID 0x200000
+#define LINUX_CLONE_DETACHED     0x400000
+#define LINUX_CLONE_CHILD_SETTID 0x1000000
 #define LINUX_CLONE_SIGNAL_MASK     0xff
 
+#define LINUX_FUTEX_WAIT                 0
+#define LINUX_FUTEX_WAKE                 1
+#define LINUX_FUTEX_REQUEUE              3
+#define LINUX_FUTEX_CMP_REQUEUE          4
+#define LINUX_FUTEX_WAIT_BITSET          9
+#define LINUX_FUTEX_WAKE_BITSET         10
+#define LINUX_FUTEX_PRIVATE_FLAG       128
+#define LINUX_FUTEX_CLOCK_REALTIME     256
+#define LINUX_FUTEX_CMD_MASK           127
+#define LINUX_FUTEX_BITSET_MATCH_ANY 0xffffffffU
+#define LINUX_FUTEX_WAITERS          0x80000000U
+#define LINUX_FUTEX_OWNER_DIED       0x40000000U
+
+#define LINUX_MEMBARRIER_CMD_QUERY                         0
+#define LINUX_MEMBARRIER_CMD_PRIVATE_EXPEDITED             8
+#define LINUX_MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED   16
+
 #define LINUX_WNOHANG                   1
+#define LINUX_WUNTRACED                 2
+#define LINUX_WCONTINUED                8
 
 #define LINUX_CLOCK_REALTIME             0
 #define LINUX_CLOCK_MONOTONIC            1
@@ -366,6 +488,113 @@ struct linux_sigaction {
 	uint64 mask;
 };
 
+struct linux_sigaltstack {
+	uint64 sp;
+	int32 flags;
+	uint32 padding;
+	uint64 size;
+};
+
+struct linux_user_regs {
+	uint64 pc;
+	uint64 ra;
+	uint64 sp;
+	uint64 gp;
+	uint64 tp;
+	uint64 t0;
+	uint64 t1;
+	uint64 t2;
+	uint64 s0;
+	uint64 s1;
+	uint64 a0;
+	uint64 a1;
+	uint64 a2;
+	uint64 a3;
+	uint64 a4;
+	uint64 a5;
+	uint64 a6;
+	uint64 a7;
+	uint64 s2;
+	uint64 s3;
+	uint64 s4;
+	uint64 s5;
+	uint64 s6;
+	uint64 s7;
+	uint64 s8;
+	uint64 s9;
+	uint64 s10;
+	uint64 s11;
+	uint64 t3;
+	uint64 t4;
+	uint64 t5;
+	uint64 t6;
+};
+
+struct linux_riscv_d_ext_state {
+	uint64 f[32];
+	uint32 fcsr;
+};
+
+struct linux_riscv_ctx_header {
+	uint32 magic;
+	uint32 size;
+};
+
+struct linux_riscv_extra_ext_header {
+	uint32 padding[129] __attribute__((aligned(16)));
+	uint32 reserved;
+	struct linux_riscv_ctx_header header;
+};
+
+union linux_riscv_fp_state {
+	struct linux_riscv_d_ext_state d;
+	struct linux_riscv_extra_ext_header ext;
+} __attribute__((aligned(16)));
+
+struct linux_sigcontext {
+	struct linux_user_regs regs;
+	union linux_riscv_fp_state fpregs;
+} __attribute__((aligned(16)));
+
+struct linux_ucontext {
+	uint64 flags;
+	uint64 link;
+	struct linux_sigaltstack stack;
+	uint64 signal_mask;
+	uint8 unused[120];
+	struct linux_sigcontext mcontext;
+} __attribute__((aligned(16)));
+
+struct linux_siginfo {
+	int32 signal;
+	int32 error;
+	int32 code;
+	int32 padding;
+	union {
+		struct {
+			int32 pid;
+			uint32 uid;
+		} kill;
+		struct {
+			int32 pid;
+			uint32 uid;
+			int32 status;
+			uint32 padding;
+			int64 user_time;
+			int64 system_time;
+		} child;
+		struct {
+			uint64 address;
+		} fault;
+		uint8 bytes[112];
+	} fields;
+};
+
+struct linux_rt_sigframe {
+	struct linux_siginfo info;
+	struct linux_ucontext context;
+};
+
 struct linux_termios {
 	uint32 iflag;
 	uint32 oflag;
@@ -400,6 +629,22 @@ _Static_assert(__builtin_offsetof(struct linux_stat, size) == 48,
 	       "Linux RISC-V stat offsets changed");
 _Static_assert(sizeof(struct linux_sigaction) == 24,
 	       "Linux RISC-V sigaction layout changed");
+_Static_assert(sizeof(struct linux_sigaltstack) == 24,
+	       "Linux RISC-V sigaltstack layout changed");
+_Static_assert(sizeof(struct linux_user_regs) == 256,
+	       "Linux RISC-V register layout changed");
+_Static_assert(sizeof(union linux_riscv_fp_state) == 528,
+	       "Linux RISC-V FP state layout changed");
+_Static_assert(sizeof(struct linux_sigcontext) == 784,
+	       "Linux RISC-V sigcontext layout changed");
+_Static_assert(__builtin_offsetof(struct linux_ucontext, mcontext) == 176,
+	       "Linux RISC-V ucontext offsets changed");
+_Static_assert(sizeof(struct linux_ucontext) == 960,
+	       "Linux RISC-V ucontext layout changed");
+_Static_assert(sizeof(struct linux_siginfo) == 128,
+	       "Linux RISC-V siginfo layout changed");
+_Static_assert(sizeof(struct linux_rt_sigframe) == 1088,
+	       "Linux RISC-V signal frame layout changed");
 _Static_assert(sizeof(struct linux_termios) == 36,
 	       "Linux RISC-V termios layout changed");
 _Static_assert(sizeof(struct linux_winsize) == 8,

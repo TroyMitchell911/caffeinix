@@ -1,5 +1,6 @@
 #include <debug.h>
 #include <ktime.h>
+#include <process.h>
 #include <scheduler.h>
 #include <thread.h>
 #include <wait.h>
@@ -40,13 +41,25 @@ static void timeout_insert_locked(thread_t thread)
 
 static int wait_queue_sleep_deadline(wait_queue_t queue,
 				     spinlock_t condition_lock,
-				     uint64 deadline)
+				     uint64 deadline, int interruptible)
 {
 	thread_t current = cur_thread();
-	int result;
+	uint64 signal_sequence = 0;
+	int exit_status, result;
 
 	if (!current || !spinlock_holding(condition_lock))
 		PANIC("wait without condition lock");
+	if (process_thread_exit_requested(current, &exit_status)) {
+		spinlock_release(condition_lock);
+		process_thread_exit(exit_status, 0);
+		PANIC("terminated wait returned");
+	}
+	if (interruptible) {
+		signal_sequence = __atomic_load_n(&current->signal_sequence,
+		                                  __ATOMIC_ACQUIRE);
+		if (signal_pending_unblocked(current))
+			return WAIT_QUEUE_INTERRUPTED;
+	}
 	spinlock_acquire(&timeout_queue.lock);
 	spinlock_acquire(&queue->lock);
 	spinlock_acquire(&current->lock);
@@ -57,9 +70,44 @@ static int wait_queue_sleep_deadline(wait_queue_t queue,
 	current->on_waitqueue = 1;
 	current->wait_deadline = deadline;
 	current->wait_result = 0;
+	current->wait_interruptible = !!interruptible;
 	list_insert_before(&queue->waiters, &current->wait_node);
 	if (deadline)
 		timeout_insert_locked(current);
+	if (process_thread_exit_requested(current, &exit_status)) {
+		list_remove(&current->wait_node);
+		current->on_waitqueue = 0;
+		current->waiting_on = 0;
+		if (current->on_timeout_queue) {
+			list_remove(&current->timeout_node);
+			current->on_timeout_queue = 0;
+		}
+		current->wait_result = WAIT_QUEUE_TERMINATED;
+		current->wait_interruptible = 0;
+		spinlock_release(&current->lock);
+		spinlock_release(&queue->lock);
+		spinlock_release(&timeout_queue.lock);
+		spinlock_release(condition_lock);
+		process_thread_exit(exit_status, 0);
+		PANIC("terminated wait returned");
+	}
+	if (interruptible &&
+	    signal_sequence != __atomic_load_n(&current->signal_sequence,
+	                                      __ATOMIC_ACQUIRE)) {
+		list_remove(&current->wait_node);
+		current->on_waitqueue = 0;
+		current->waiting_on = 0;
+		if (current->on_timeout_queue) {
+			list_remove(&current->timeout_node);
+			current->on_timeout_queue = 0;
+		}
+		current->wait_result = WAIT_QUEUE_INTERRUPTED;
+		current->wait_interruptible = 0;
+		spinlock_release(&current->lock);
+		spinlock_release(&queue->lock);
+		spinlock_release(&timeout_queue.lock);
+		return WAIT_QUEUE_INTERRUPTED;
+	}
 	scheduler_block_current();
 	spinlock_release(condition_lock);
 	spinlock_release(&queue->lock);
@@ -71,14 +119,22 @@ static int wait_queue_sleep_deadline(wait_queue_t queue,
 	    current->on_timeout_queue)
 		PANIC("scheduled wait entry");
 	result = current->wait_result;
+	current->wait_interruptible = 0;
 	spinlock_release(&current->lock);
 	spinlock_acquire(condition_lock);
+	if (result == WAIT_QUEUE_TERMINATED) {
+		if (!process_thread_exit_requested(current, &exit_status))
+			PANIC("terminated wait without request");
+		spinlock_release(condition_lock);
+		process_thread_exit(exit_status, 0);
+		PANIC("terminated wait returned");
+	}
 	return result;
 }
 
 void wait_queue_sleep(wait_queue_t queue, spinlock_t condition_lock)
 {
-	(void)wait_queue_sleep_deadline(queue, condition_lock, 0);
+	(void)wait_queue_sleep_deadline(queue, condition_lock, 0, 0);
 }
 
 int wait_queue_sleep_timeout(wait_queue_t queue,
@@ -93,7 +149,38 @@ int wait_queue_sleep_timeout(wait_queue_t queue,
 	deadline = now + delta;
 	if (deadline < now)
 		deadline = ~(uint64)0;
-	return wait_queue_sleep_deadline(queue, condition_lock, deadline);
+	return wait_queue_sleep_deadline(queue, condition_lock, deadline, 0);
+}
+
+int wait_queue_sleep_interruptible(wait_queue_t queue,
+				   spinlock_t condition_lock)
+{
+	return wait_queue_sleep_deadline(queue, condition_lock, 0, 1);
+}
+
+int wait_queue_sleep_interruptible_timeout(wait_queue_t queue,
+					   spinlock_t condition_lock,
+					   uint64 timeout_ms)
+{
+	uint64 now, delta, deadline;
+
+	if (!timeout_ms)
+		return WAIT_QUEUE_TIMEOUT;
+	now = ktime_get_ticks();
+	delta = ktime_ms_to_ticks(timeout_ms);
+	deadline = now + delta;
+	if (deadline < now)
+		deadline = ~(uint64)0;
+	return wait_queue_sleep_deadline(queue, condition_lock, deadline, 1);
+}
+
+int wait_queue_sleep_interruptible_until(wait_queue_t queue,
+					 spinlock_t condition_lock,
+					 uint64 deadline)
+{
+	if (deadline <= ktime_get_ticks())
+		return WAIT_QUEUE_TIMEOUT;
+	return wait_queue_sleep_deadline(queue, condition_lock, deadline, 1);
 }
 
 static void wait_queue_wake_locked(wait_queue_t queue, thread_t thread,
@@ -111,6 +198,7 @@ static void wait_queue_wake_locked(wait_queue_t queue, thread_t thread,
 		thread->on_timeout_queue = 0;
 	}
 	thread->wait_result = result;
+	thread->wait_interruptible = 0;
 	scheduler_make_runnable(thread);
 	spinlock_release(&thread->lock);
 }
@@ -153,6 +241,63 @@ int wait_queue_wake_all(wait_queue_t queue)
 	return count;
 }
 
+int wait_queue_wake_mask(wait_queue_t queue, int count, uint32 mask)
+{
+	thread_t thread;
+	list_t node, next;
+	int woken = 0;
+
+	if (count <= 0 || !mask)
+		return 0;
+	spinlock_acquire(&timeout_queue.lock);
+	spinlock_acquire(&queue->lock);
+	for (node = queue->waiters.next;
+	     node != &queue->waiters && woken < count; node = next) {
+		next = node->next;
+		thread = list_entry(node, struct thread, wait_node);
+		if (!(thread->wait_bitset & mask))
+			continue;
+		wait_queue_wake_locked(queue, thread, 0);
+		woken++;
+	}
+	spinlock_release(&queue->lock);
+	spinlock_release(&timeout_queue.lock);
+	return woken;
+}
+
+int wait_queue_requeue(wait_queue_t source, wait_queue_t destination,
+		       int count, void *wait_private)
+{
+	thread_t thread;
+	list_t node;
+	int moved = 0;
+
+	if (source == destination || count <= 0)
+		return 0;
+	spinlock_acquire(&timeout_queue.lock);
+	spinlock_acquire(&source->lock);
+	spinlock_acquire(&destination->lock);
+	while (moved < count &&
+	       (node = source->waiters.next) != &source->waiters) {
+		thread = list_entry(node, struct thread, wait_node);
+		spinlock_acquire(&thread->lock);
+		if (thread->state != THREAD_SLEEPING ||
+		    !thread->on_waitqueue || thread->waiting_on != source)
+			PANIC("invalid requeue entry");
+		list_remove(&thread->wait_node);
+		list_insert_before(&destination->waiters,
+		                   &thread->wait_node);
+		thread->waiting_on = destination;
+		thread->wait_private = wait_private;
+		spinlock_release(&thread->lock);
+		moved++;
+	}
+	spinlock_release(&destination->lock);
+	spinlock_release(&source->lock);
+	spinlock_release(&timeout_queue.lock);
+	return moved;
+}
+
 int wait_queue_wake_thread(thread_t thread)
 {
 	wait_queue_t queue;
@@ -180,8 +325,67 @@ int wait_queue_wake_thread(thread_t thread)
 		thread->on_timeout_queue = 0;
 	}
 	thread->wait_result = 0;
+	thread->wait_interruptible = 0;
 	scheduler_make_runnable(thread);
 	spinlock_release(&thread->lock);
+	spinlock_release(&queue->lock);
+	spinlock_release(&timeout_queue.lock);
+	return 1;
+}
+
+int wait_queue_interrupt_thread(thread_t thread)
+{
+	wait_queue_t queue;
+
+	spinlock_acquire(&timeout_queue.lock);
+	queue = thread->waiting_on;
+	if (!queue || !thread->wait_interruptible) {
+		spinlock_release(&timeout_queue.lock);
+		return 0;
+	}
+	spinlock_acquire(&queue->lock);
+	spinlock_acquire(&thread->lock);
+	if (thread->state != THREAD_SLEEPING || !thread->on_waitqueue ||
+	    thread->waiting_on != queue || !thread->wait_interruptible) {
+		spinlock_release(&thread->lock);
+		spinlock_release(&queue->lock);
+		spinlock_release(&timeout_queue.lock);
+		return 0;
+	}
+	list_remove(&thread->wait_node);
+	thread->on_waitqueue = 0;
+	thread->waiting_on = 0;
+	if (thread->on_timeout_queue) {
+		list_remove(&thread->timeout_node);
+		thread->on_timeout_queue = 0;
+	}
+	thread->wait_result = WAIT_QUEUE_INTERRUPTED;
+	thread->wait_interruptible = 0;
+	scheduler_make_runnable(thread);
+	spinlock_release(&thread->lock);
+	spinlock_release(&queue->lock);
+	spinlock_release(&timeout_queue.lock);
+	return 1;
+}
+
+int wait_queue_terminate_thread(thread_t thread)
+{
+	wait_queue_t queue;
+
+	spinlock_acquire(&timeout_queue.lock);
+	queue = thread->waiting_on;
+	if (!queue) {
+		spinlock_release(&timeout_queue.lock);
+		return 0;
+	}
+	spinlock_acquire(&queue->lock);
+	if (thread->state != THREAD_SLEEPING || !thread->on_waitqueue ||
+	    thread->waiting_on != queue) {
+		spinlock_release(&queue->lock);
+		spinlock_release(&timeout_queue.lock);
+		return 0;
+	}
+	wait_queue_wake_locked(queue, thread, WAIT_QUEUE_TERMINATED);
 	spinlock_release(&queue->lock);
 	spinlock_release(&timeout_queue.lock);
 	return 1;

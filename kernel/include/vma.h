@@ -6,6 +6,11 @@
 
 struct vfs_file;
 
+struct vma_backing {
+	void (*get)(struct vma_backing *backing);
+	void (*put)(struct vma_backing *backing);
+};
+
 enum vma_origin {
 	VMA_ANONYMOUS,
 	VMA_FILE_BACKED,
@@ -23,11 +28,13 @@ struct vm_area {
 	uint64 start;
 	uint64 end;
 	uint64 offset;
+	uint64 file_length;
 	uint32 protection;
 	uint32 flags;
 	enum vma_origin origin;
 	enum vma_usage usage;
 	struct vfs_file *file;
+	struct vma_backing *backing;
 };
 
 struct vma_set {
@@ -40,6 +47,7 @@ struct vma_set {
  * - intervals are non-empty, page-aligned, ordered, and non-overlapping;
  * - adjacent intervals with identical attributes are merged;
  * - file-backed intervals own a file reference and a page-aligned offset;
+ * - shared anonymous intervals own a backing reference and offset;
  * - a live process serializes access with its mmap_lock; temporary exec
  *   sets and unpublished processes are owned exclusively by their caller.
  */
@@ -52,8 +60,15 @@ int vma_set_clone(struct vma_set *destination,
 int vma_insert(struct vma_set *set, uint64 start, uint64 end,
 	       uint32 protection, uint32 flags, enum vma_origin origin,
 	       enum vma_usage usage, struct vfs_file *file, uint64 offset);
+int vma_insert_backed(struct vma_set *set, uint64 start, uint64 end,
+		      uint32 protection, uint32 flags,
+		      enum vma_usage usage, struct vma_backing *backing,
+		      uint64 offset);
 int vma_insert_elf(struct vma_set *set, uint64 start, uint64 end,
 		   uint32 protection, struct vfs_file *file, uint64 offset);
+int vma_insert_elf_file(struct vma_set *set, uint64 start, uint64 end,
+			 uint32 protection, struct vfs_file *file,
+			 uint64 offset, uint64 file_length);
 const struct vm_area *vma_find(const struct vma_set *set, uint64 address);
 int vma_range_free(const struct vma_set *set, uint64 start, uint64 end);
 int vma_range_mapped(const struct vma_set *set, uint64 start, uint64 end);

@@ -75,4 +75,5 @@ jobs:
           name: qemu-runtime-logs
           path: |
             output/tests/*.log
+            output/tests/memory-benchmark.json
             output/tests/scheduler-benchmark.json

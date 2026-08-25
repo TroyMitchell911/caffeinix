@@ -17,6 +17,10 @@
 #include <process.h>
 #include <printf.h>
 #include <cpu.h>
+#include <mmap.h>
+#include <linux_uapi.h>
+#include <scheduler.h>
+#include <vma.h>
 
 /* Defination in kernel.ld */
 extern char etext[];
@@ -87,9 +91,43 @@ static uint64 user_va2pa(pagedir_t pgdir, uint64 va, int permissions)
 	if ((*pte & PTE_U) == 0 ||
 	    (*pte & permissions) != (uint64)permissions)
 		return 0;
+	if (permissions & PTE_W)
+		__atomic_fetch_or(pte, PTE_A | PTE_D, __ATOMIC_RELAXED);
 	leaf_size = sv39_level_size(level);
 	return PTE2PA(*pte) +
 	       (va & (leaf_size - 1) & ~(PGSIZE - 1));
+}
+
+static uint64 user_copy_va2pa_pinned(pagedir_t pgdir, uint64 va,
+				     int permissions, int fault,
+				     void **pinned_page)
+{
+	process_t process;
+	void *page;
+	uint64 physical, validated;
+	enum mmap_fault_access access;
+
+	*pinned_page = 0;
+	process = cur_proc();
+	access = permissions & PTE_W ? MMAP_FAULT_WRITE : MMAP_FAULT_READ;
+	for (;;) {
+		physical = user_va2pa(pgdir, va, permissions);
+		if (!physical) {
+			if (!fault || !process || process->pagetable != pgdir ||
+			    mmap_handle_fault(process, va, access) != MMAP_FAULT_OK)
+				return 0;
+			continue;
+		}
+		page = (void *)PGROUNDDOWN(physical);
+		if (palloc_get(page) < 0)
+			continue;
+		validated = user_va2pa(pgdir, va, permissions);
+		if (validated == physical) {
+			*pinned_page = page;
+			return physical;
+		}
+		pfree(page);
+	}
 }
 
 uint64 va2pa(pagedir_t pgdir, uint64 va)
@@ -307,7 +345,7 @@ void vm_unmap_range(pagedir_t pgdir, uint64 va, uint64 size)
 		*pte = 0;
 		pfree((void *)pa);
 	}
-	sfence_vma();
+	cpu_tlb_flush_all();
 }
 
 /* Free page-table from oldsz to newsz */
@@ -411,7 +449,7 @@ uint64 vm_user_pa(pagedir_t pgdir, uint64 va)
 }
 
 int vm_protect_user_range(pagedir_t pgdir, uint64 start, uint64 end,
-			  int permissions)
+			  int permissions, const struct vma_set *vmas)
 {
 	uint64 addr;
 	pte_t *pte;
@@ -422,17 +460,75 @@ int vm_protect_user_range(pagedir_t pgdir, uint64 start, uint64 end,
 		return -1;
 	for (addr = start; addr < end; addr += PGSIZE) {
 		pte = PTE(pgdir, addr, 0);
-		if (!pte || !(*pte & PTE_V) || !(*pte & PTE_SW_USER) ||
+		if (!pte || !(*pte & PTE_V))
+			continue;
+		if (!(*pte & PTE_SW_USER) ||
 		    !(*pte & (PTE_R | PTE_W | PTE_X)))
 			return -1;
 	}
 	for (addr = start; addr < end; addr += PGSIZE) {
+		const struct vm_area *area;
+		int page_permissions = permissions;
+		pte_t software;
+
 		pte = PTE(pgdir, addr, 0);
+		if (!pte || !(*pte & PTE_V))
+			continue;
+		area = vma_find(vmas, addr);
+		if (!area)
+			return -1;
+		software = *pte & PTE_SW_COW;
+		if (permissions & PTE_W) {
+			if ((area->flags & 0xf) == LINUX_MAP_PRIVATE &&
+			    palloc_refcount((void *)PTE2PA(*pte)) > 1) {
+				page_permissions &= ~PTE_W;
+				software = PTE_SW_COW;
+			} else {
+				software = 0;
+			}
+		} else if ((area->flags & 0xf) != LINUX_MAP_PRIVATE) {
+			software = 0;
+		}
 		*pte = PA2PTE(PTE2PA(*pte)) | PTE_V | PTE_SW_USER |
-		       (*pte & (PTE_A | PTE_D)) | permissions;
+		       software | (*pte & (PTE_A | PTE_D)) |
+		       page_permissions;
 	}
-	sfence_vma();
+	cpu_tlb_flush_all();
 	return 0;
+}
+
+int vm_resolve_cow(pagedir_t pgdir, uint64 va)
+{
+	uint32 references;
+	uint64 old_pa;
+	void *page;
+	pte_t old, *pte;
+
+	pte = PTE(pgdir, PGROUNDDOWN(va), 0);
+	if (!pte || !(*pte & PTE_V) || !(*pte & PTE_SW_USER))
+		return 0;
+	/* Another thread may have resolved this write fault first. */
+	if (!(*pte & PTE_SW_COW))
+		return *pte & PTE_W ? 1 : 0;
+	old = *pte;
+	old_pa = PTE2PA(old);
+	references = palloc_refcount((void *)old_pa);
+	if (!references)
+		return -1;
+	if (references == 1) {
+		*pte = (old | PTE_W) & ~PTE_SW_COW;
+		cpu_tlb_flush_all();
+		return 1;
+	}
+	page = alloc_pages(0, 0);
+	if (!page)
+		return -1;
+	memmove(page, (void *)old_pa, PGSIZE);
+	*pte = PA2PTE(page) | (old & 0x3ff) | PTE_W;
+	*pte &= ~PTE_SW_COW;
+	pfree((void *)old_pa);
+	cpu_tlb_flush_all();
+	return 1;
 }
 
 void vm_clear(pagedir_t pgdir, uint64 va)
@@ -446,10 +542,12 @@ void vm_clear(pagedir_t pgdir, uint64 va)
 }
 
 static int vm_copy_walk(pagedir_t old, pagedir_t new, int level,
-			uint64 base)
+			uint64 base, const struct vma_set *vmas,
+			int *parent_changed)
 {
-	uint64 mem, pa, va;
-	pte_t pte;
+	const struct vm_area *area;
+	uint64 pa, va;
+	pte_t child_pte, pte;
 	int i;
 
 	for (i = 0; i < PGSIZE / sizeof(pte_t); i++) {
@@ -457,34 +555,51 @@ static int vm_copy_walk(pagedir_t old, pagedir_t new, int level,
 		if (!(pte & PTE_V))
 			continue;
 		va = base | ((uint64)i << (PGSHIFT + 9 * level));
+		if (va == USER_SIGRETURN)
+			continue;
 		if (!(pte & (PTE_R | PTE_W | PTE_X))) {
 			if (level == 0 ||
 			    vm_copy_walk((pagedir_t)PTE2PA(pte), new,
-			                 level - 1, va) < 0)
+			                 level - 1, va, vmas,
+			                 parent_changed) < 0)
 				return -1;
 			continue;
 		}
 		if (!(pte & (PTE_U | PTE_SW_USER)))
 			continue;
-		pa = PTE2PA(pte);
-		mem = (uint64)palloc();
-		if (!mem)
+		area = vma_find(vmas, va);
+		if (!area)
 			return -1;
-		memmove((char *)mem, (char *)pa, PGSIZE);
-		if (vm_map(new, va, mem, PGSIZE, pte & 0x3ff) < 0) {
-			pfree((void *)mem);
+		pa = PTE2PA(pte);
+		if (palloc_get((void *)pa) < 0)
+			return -1;
+		child_pte = pte;
+		if ((area->flags & 0xf) == LINUX_MAP_PRIVATE &&
+		    (pte & PTE_W)) {
+			child_pte = (pte & ~PTE_W) | PTE_SW_COW;
+			old[i] = child_pte;
+			*parent_changed = 1;
+		}
+		if (vm_map(new, va, pa, PGSIZE, child_pte & 0x3ff) < 0) {
+			pfree((void *)pa);
 			return -1;
 		}
 	}
 	return 0;
 }
 
-int vm_copy(pagedir_t old, pagedir_t new)
+int vm_copy(pagedir_t old, pagedir_t new, const struct vma_set *vmas)
 {
-	if (vm_copy_walk(old, new, 2, 0) < 0) {
+	int parent_changed = 0;
+
+	if (vm_copy_walk(old, new, 2, 0, vmas, &parent_changed) < 0) {
 		vm_free_user(new);
+		if (parent_changed)
+			cpu_tlb_flush_all();
 		return -1;
 	}
+	if (parent_changed)
+		cpu_tlb_flush_all();
 	return 0;
 }
 
@@ -515,19 +630,23 @@ void vm_free_user(pagedir_t pgdir)
 	vm_free_user_walk(pgdir, 2);
 }
 
-int copyout(pagedir_t pgdir, uint64 dstva, char* src, uint64 len)
+static int copyout_internal(pagedir_t pgdir, uint64 dstva, char *src,
+			    uint64 len, int fault)
 {
+	void *pinned_page;
         uint64 n, va0, pa0;
 
         while(len > 0){
                 va0 = PGROUNDDOWN(dstva);
-                pa0 = user_va2pa(pgdir, va0, PTE_W);
+		pa0 = user_copy_va2pa_pinned(pgdir, va0, PTE_W, fault,
+					     &pinned_page);
                 if(pa0 == 0)
                         return -1;
                 n = PGSIZE - (dstva - va0);
                 if(n > len)
                         n = len;
                 memmove((void *)(pa0 + (dstva - va0)), src, n);
+		pfree(pinned_page);
 
                 len -= n;
                 src += n;
@@ -536,19 +655,32 @@ int copyout(pagedir_t pgdir, uint64 dstva, char* src, uint64 len)
         return 0;
 }
 
+int copyout(pagedir_t pgdir, uint64 dstva, char *src, uint64 len)
+{
+	return copyout_internal(pgdir, dstva, src, len, 1);
+}
+
+int copyout_nofault(pagedir_t pgdir, uint64 dstva, char *src, uint64 len)
+{
+	return copyout_internal(pgdir, dstva, src, len, 0);
+}
+
 int copyin(pagedir_t pgdir, char* dst, uint64 srcva, uint64 len)
 {
+	void *pinned_page;
          uint64 n, va0, pa0;
 
         while(len > 0){
                 va0 = PGROUNDDOWN(srcva);
-                pa0 = user_va2pa(pgdir, va0, PTE_R);
+		pa0 = user_copy_va2pa_pinned(pgdir, va0, PTE_R, 1,
+					     &pinned_page);
                 if(pa0 == 0)
                         return -1;
                 n = PGSIZE - (srcva - va0);
                 if(n > len)
                         n = len;
                 memmove(dst, (void *)(pa0 + (srcva - va0)),n);
+		pfree(pinned_page);
 
                 len -= n;
                 dst += n;
@@ -559,12 +691,14 @@ int copyin(pagedir_t pgdir, char* dst, uint64 srcva, uint64 len)
 
 int copyinstr(pagedir_t pgdir, char *dst, uint64 srcva, uint64 max)
 {
+	void *pinned_page;
         uint64 n, va0, pa0;
         int got_null = 0;
 
         while(got_null == 0 && max > 0) {
                 va0 = PGROUNDDOWN(srcva);
-                pa0 = user_va2pa(pgdir, va0, PTE_R);
+		pa0 = user_copy_va2pa_pinned(pgdir, va0, PTE_R, 1,
+					     &pinned_page);
                 if(pa0 == 0)
                         return -1;
                 n = PGSIZE - (srcva - va0);
@@ -585,6 +719,7 @@ int copyinstr(pagedir_t pgdir, char *dst, uint64 srcva, uint64 max)
                         p++;
                         dst++;
                 }
+		pfree(pinned_page);
 
                 srcva = va0 + PGSIZE;
         }

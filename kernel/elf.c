@@ -72,6 +72,8 @@ static int elf_load_layout_add(struct elf_image_layout *layout,
 
 	if (!program_region_valid(program) ||
 	    (program->flags & ~ELF_PROG_FLAG_MASK) ||
+	    (program->flags & ELF_PROG_FLAG_WRITE &&
+	     program->flags & ELF_PROG_FLAG_EXEC) ||
 	    (program->vaddr & (PGSIZE - 1)) !=
 	    (program->off & (PGSIZE - 1)) ||
 	    add_overflow(program->vaddr, program->memsz, &segment_end) ||

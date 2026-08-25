@@ -3,6 +3,7 @@
 #include <mystring.h>
 #include <printk.h>
 #include <scheduler.h>
+#include <signal.h>
 #include <syscall.h>
 #include <vm.h>
 
@@ -61,6 +62,9 @@ extern uint64 sys_linux_dup3(void);
 extern uint64 sys_linux_execve(void);
 extern uint64 sys_linux_exit(void);
 extern uint64 sys_linux_exit_group(void);
+extern uint64 sys_linux_futex(void);
+extern uint64 sys_linux_set_robust_list(void);
+extern uint64 sys_linux_get_robust_list(void);
 extern uint64 sys_linux_faccessat(void);
 extern uint64 sys_linux_fcntl(void);
 extern uint64 sys_linux_fstat(void);
@@ -81,6 +85,8 @@ extern uint64 sys_linux_lseek(void);
 extern uint64 sys_linux_mkdirat(void);
 extern uint64 sys_linux_mmap(void);
 extern uint64 sys_linux_mprotect(void);
+extern uint64 sys_linux_msync(void);
+extern uint64 sys_linux_membarrier(void);
 extern uint64 sys_linux_munmap(void);
 extern uint64 sys_linux_newfstatat(void);
 extern uint64 sys_linux_openat(void);
@@ -92,10 +98,19 @@ extern uint64 sys_linux_renameat2(void);
 extern uint64 sys_linux_set_tid_address(void);
 extern uint64 sys_linux_clone(void);
 extern uint64 sys_linux_clock_gettime(void);
+extern uint64 sys_linux_kill(void);
+extern uint64 sys_linux_tkill(void);
+extern uint64 sys_linux_tgkill(void);
+extern uint64 sys_linux_sigaltstack(void);
+extern uint64 sys_linux_rt_sigsuspend(void);
 extern uint64 sys_linux_rt_sigaction(void);
 extern uint64 sys_linux_rt_sigprocmask(void);
+extern uint64 sys_linux_rt_sigpending(void);
+extern uint64 sys_linux_rt_sigtimedwait(void);
+extern uint64 sys_linux_rt_sigreturn(void);
 extern uint64 sys_linux_setpriority(void);
 extern uint64 sys_linux_getpriority(void);
+extern uint64 sys_linux_getrandom(void);
 extern uint64 sys_linux_symlinkat(void);
 extern uint64 sys_linux_sync(void);
 extern uint64 sys_linux_umask(void);
@@ -121,11 +136,12 @@ extern uint64 sys_linux_shutdown(void);
 extern uint64 sys_linux_sendmsg(void);
 extern uint64 sys_linux_recvmsg(void);
 extern uint64 sys_linux_accept4(void);
+extern uint64 sys_linux_riscv_flush_icache(void);
 extern uint64 sys_linux_ftruncate(void);
 
 typedef uint64 (*syscall_t)(void);
 
-static syscall_t linux_syscalls[LINUX_SYS_renameat2 + 1] = {
+static syscall_t linux_syscalls[LINUX_SYS_membarrier + 1] = {
 	[LINUX_SYS_getcwd] = sys_linux_getcwd,
 	[LINUX_SYS_dup] = sys_linux_dup,
 	[LINUX_SYS_dup3] = sys_linux_dup3,
@@ -156,10 +172,21 @@ static syscall_t linux_syscalls[LINUX_SYS_renameat2 + 1] = {
 	[LINUX_SYS_utimensat] = sys_linux_utimensat,
 	[LINUX_SYS_exit] = sys_linux_exit,
 	[LINUX_SYS_exit_group] = sys_linux_exit_group,
+	[LINUX_SYS_futex] = sys_linux_futex,
+	[LINUX_SYS_set_robust_list] = sys_linux_set_robust_list,
+	[LINUX_SYS_get_robust_list] = sys_linux_get_robust_list,
 	[LINUX_SYS_set_tid_address] = sys_linux_set_tid_address,
 	[LINUX_SYS_clock_gettime] = sys_linux_clock_gettime,
+	[LINUX_SYS_kill] = sys_linux_kill,
+	[LINUX_SYS_tkill] = sys_linux_tkill,
+	[LINUX_SYS_tgkill] = sys_linux_tgkill,
+	[LINUX_SYS_sigaltstack] = sys_linux_sigaltstack,
+	[LINUX_SYS_rt_sigsuspend] = sys_linux_rt_sigsuspend,
 	[LINUX_SYS_rt_sigaction] = sys_linux_rt_sigaction,
 	[LINUX_SYS_rt_sigprocmask] = sys_linux_rt_sigprocmask,
+	[LINUX_SYS_rt_sigpending] = sys_linux_rt_sigpending,
+	[LINUX_SYS_rt_sigtimedwait] = sys_linux_rt_sigtimedwait,
+	[LINUX_SYS_rt_sigreturn] = sys_linux_rt_sigreturn,
 	[LINUX_SYS_setpriority] = sys_linux_setpriority,
 	[LINUX_SYS_getpriority] = sys_linux_getpriority,
 	[LINUX_SYS_umask] = sys_linux_umask,
@@ -192,20 +219,30 @@ static syscall_t linux_syscalls[LINUX_SYS_renameat2 + 1] = {
 	[LINUX_SYS_execve] = sys_linux_execve,
 	[LINUX_SYS_mmap] = sys_linux_mmap,
 	[LINUX_SYS_mprotect] = sys_linux_mprotect,
+	[LINUX_SYS_msync] = sys_linux_msync,
 	[LINUX_SYS_accept4] = sys_linux_accept4,
+	[LINUX_SYS_riscv_flush_icache] = sys_linux_riscv_flush_icache,
 	[LINUX_SYS_wait4] = sys_linux_wait4,
 	[LINUX_SYS_renameat2] = sys_linux_renameat2,
+	[LINUX_SYS_getrandom] = sys_linux_getrandom,
+	[LINUX_SYS_membarrier] = sys_linux_membarrier,
 };
 
 void syscall(void)
 {
+	uint64 result;
 	uint64 nr;
 	process_t p = cur_proc();
 	thread_t current = cur_thread();
 
 	nr = current->trapframe->a7;
+	current->syscall_restart = 0;
 	if (nr < NELEM(linux_syscalls) && linux_syscalls[nr]) {
-		current->trapframe->a0 = linux_syscalls[nr]();
+		result = linux_syscalls[nr]();
+		if (nr != LINUX_SYS_rt_sigreturn &&
+		    (int64)result == -SIGNAL_RESTART_SYS)
+			current->syscall_restart = 1;
+		current->trapframe->a0 = result;
 		return;
 	}
 

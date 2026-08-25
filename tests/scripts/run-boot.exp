@@ -29,6 +29,10 @@ foreach variable {
 		exit 1
 	}
 }
+if {![info exists env(QEMU_RNG_BACKEND)]} {
+	puts stderr "missing environment variable: QEMU_RNG_BACKEND"
+	exit 1
+}
 
 set timeout 60
 if {[info exists env(QEMU_TIMEOUT)] && $env(QEMU_TIMEOUT) ne ""} {
@@ -38,6 +42,11 @@ set pressure_iterations 1
 if {[info exists env(DYNAMIC_PRESSURE_ITERATIONS)] &&
     $env(DYNAMIC_PRESSURE_ITERATIONS) ne ""} {
 	set pressure_iterations $env(DYNAMIC_PRESSURE_ITERATIONS)
+}
+set reclaim_test 0
+if {[info exists env(VM_RECLAIM_TEST)] &&
+    $env(VM_RECLAIM_TEST) ne ""} {
+	set reclaim_test $env(VM_RECLAIM_TEST)
 }
 
 log_file -noappend $env(QEMU_LOG)
@@ -55,6 +64,7 @@ set command [list \
 	ROOT_BUS=virtio-mmio-bus.0 \
 	NET_BACKEND= \
 	NET_OPTIONS= \
+	RNG_BACKEND=$env(QEMU_RNG_BACKEND) \
 	QEMU_SNAPSHOT=1 \
 	QEMU_EXTRA_OPTS= \
 	QEMU_PREBUILT=1 \
@@ -83,6 +93,153 @@ expect {
 	-re {\[PANIC\]} { abort_test "kernel panic after dynamic musl hello" }
 	timeout { abort_test "shell prompt timeout" }
 	eof { abort_test "QEMU exited after dynamic musl hello" }
+}
+
+send -- "/bin/random-runtime\r"
+expect {
+	-re {\r?\nRANDOM_RUNTIME_OK} {}
+	-re {RANDOM_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "userspace random test reported failure"
+	}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic in userspace random test"
+	}
+	timeout { abort_test "userspace random test timeout" }
+	eof { abort_test "QEMU exited during userspace random test" }
+}
+expect {
+	-re {\r?\n# $} {}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic after userspace random test"
+	}
+	timeout { abort_test "shell prompt timeout" }
+	eof { abort_test "QEMU exited after userspace random test" }
+}
+
+send -- "/bin/aslr-runtime\r"
+expect {
+	-re {\r?\nASLR_RUNTIME_OK} {}
+	-re {ASLR_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "address randomization test reported failure"
+	}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic in address randomization test"
+	}
+	timeout { abort_test "address randomization test timeout" }
+	eof { abort_test "QEMU exited during address randomization test" }
+}
+expect {
+	-re {\r?\n# $} {}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic after address randomization test"
+	}
+	timeout { abort_test "shell prompt timeout" }
+	eof { abort_test "QEMU exited after address randomization test" }
+}
+
+send -- "/bin/thread-runtime\r"
+expect {
+	-re {\r?\nTHREAD_CLONE_OK} {}
+	-re {THREAD_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "user thread clone test reported failure"
+	}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic in user thread clone test"
+	}
+	timeout { abort_with_dump "user thread clone test timeout" }
+	eof { abort_test "QEMU exited during user thread clone test" }
+}
+expect {
+	-re {\r?\n# $} {}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic after user thread clone test"
+	}
+	timeout { abort_test "shell prompt timeout" }
+	eof { abort_test "QEMU exited after user thread clone test" }
+}
+
+send -- "/bin/pthread-runtime\r"
+expect {
+	-re {\r?\nPTHREAD_RUNTIME_OK} {}
+	-re {PTHREAD_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "musl pthread test reported failure"
+	}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic in musl pthread test"
+	}
+	timeout { abort_with_dump "musl pthread test timeout" }
+	eof { abort_test "QEMU exited during musl pthread test" }
+}
+expect {
+	-re {\r?\n# $} {}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic after musl pthread test"
+	}
+	timeout { abort_test "shell prompt timeout" }
+	eof { abort_test "QEMU exited after musl pthread test" }
+}
+
+send -- "/bin/futex-runtime\r"
+expect {
+	-re {\r?\nFUTEX_RUNTIME_OK} {}
+	-re {FUTEX_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "Linux futex test reported failure"
+	}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic in Linux futex test"
+	}
+	timeout { abort_with_dump "Linux futex test timeout" }
+	eof { abort_test "QEMU exited during Linux futex test" }
+}
+expect {
+	-re {\r?\n# $} {}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic after Linux futex test"
+	}
+	timeout { abort_test "shell prompt timeout" }
+	eof { abort_test "QEMU exited after Linux futex test" }
+}
+
+send -- "/bin/membarrier-runtime\r"
+expect {
+	-re {\r?\nMEMBARRIER_RUNTIME_OK} {}
+	-re {MEMBARRIER_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "Linux membarrier test reported failure"
+	}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic in Linux membarrier test"
+	}
+	timeout { abort_with_dump "Linux membarrier test timeout" }
+	eof { abort_test "QEMU exited during Linux membarrier test" }
+}
+expect {
+	-re {\r?\n# $} {}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic after Linux membarrier test"
+	}
+	timeout { abort_test "shell prompt timeout" }
+	eof { abort_test "QEMU exited after Linux membarrier test" }
+}
+
+send -- "/bin/signal-runtime\r"
+expect {
+	-re {\r?\nSIGNAL_RUNTIME_OK} {}
+	-re {SIGNAL_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "Linux signal test reported failure"
+	}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic in Linux signal test"
+	}
+	timeout { abort_with_dump "Linux signal test timeout" }
+	eof { abort_test "QEMU exited during Linux signal test" }
+}
+expect {
+	-re {\r?\n# $} {}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic after Linux signal test"
+	}
+	timeout { abort_test "shell prompt timeout" }
+	eof { abort_test "QEMU exited after Linux signal test" }
 }
 
 send -- "/bin/dynamic-runtime pressure $pressure_iterations\r"
@@ -142,6 +299,29 @@ expect {
 	}
 	timeout { abort_test "shell prompt timeout" }
 	eof { abort_test "QEMU exited after network loopback test" }
+}
+
+if {$reclaim_test == 1} {
+	send -- "/bin/vm-runtime reclaim\r"
+	expect {
+		-re {\r?\nVM_RECLAIM_OK} {}
+		-re {VM_RUNTIME_FAIL[^\r\n]*} {
+			abort_test "clean-page reclaim test reported failure"
+		}
+		-re {\[PANIC\]} {
+			abort_test "kernel panic in clean-page reclaim test"
+		}
+		timeout { abort_with_dump "clean-page reclaim test timeout" }
+		eof { abort_test "QEMU exited during clean-page reclaim test" }
+	}
+	expect {
+		-re {\r?\n# $} {}
+		-re {\[PANIC\]} {
+			abort_test "kernel panic after clean-page reclaim test"
+		}
+		timeout { abort_test "shell prompt timeout" }
+		eof { abort_test "QEMU exited after clean-page reclaim test" }
+	}
 }
 
 if {$env(QEMU_CPUS) == 1} {

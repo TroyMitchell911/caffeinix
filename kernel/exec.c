@@ -4,6 +4,7 @@
 #include <mem_layout.h>
 #include <mystring.h>
 #include <palloc.h>
+#include <random.h>
 #include <scheduler.h>
 #include <vfs.h>
 #include <vm.h>
@@ -25,20 +26,45 @@ struct linux_exec_layout {
 	uint16 phnum;
 };
 
-static int flags2perm(int flags)
-{
-	int perm;
+struct exec_aslr_layout {
+	uint64 pie_hint;
+	uint64 interpreter_hint;
+	uint64 stack_top;
+	uint64 mmap_top;
+	uint64 brk_gap;
+};
 
-	if (!flags)
-		return PTE_R;
-	perm = PTE_U;
-	if (flags & (ELF_PROG_FLAG_READ | ELF_PROG_FLAG_WRITE))
-		perm |= PTE_R;
-	if (flags & ELF_PROG_FLAG_EXEC)
-		perm |= PTE_X;
-	if (flags & ELF_PROG_FLAG_WRITE)
-		perm |= PTE_W;
-	return perm;
+static int random_page_offset(uint64 size, uint64 *offset)
+{
+	uint64 pages, value;
+
+	if (!offset || size < PGSIZE || size % PGSIZE ||
+	    get_random_u64(&value) < 0)
+		return -1;
+	pages = size / PGSIZE;
+	*offset = value % pages * PGSIZE;
+	return 0;
+}
+
+static int exec_aslr_layout_init(struct exec_aslr_layout *layout)
+{
+	uint64 brk_offset, interpreter_offset, mmap_offset;
+	uint64 pie_offset, stack_offset;
+
+	if (!layout ||
+	    random_page_offset(USER_PIE_RND_SIZE, &pie_offset) < 0 ||
+	    random_page_offset(USER_INTERP_RND_SIZE,
+			       &interpreter_offset) < 0 ||
+	    random_page_offset(USER_STACK_RND_SIZE, &stack_offset) < 0 ||
+	    random_page_offset(USER_MMAP_RND_SIZE, &mmap_offset) < 0 ||
+	    random_page_offset(USER_BRK_RND_SIZE, &brk_offset) < 0)
+		return -1;
+	layout->pie_hint = USER_PIE_BASE + pie_offset;
+	layout->interpreter_hint = USER_INTERP_BASE + interpreter_offset;
+	layout->stack_top = USER_STACK_TOP - stack_offset;
+	layout->mmap_top = USER_MMAP_TOP - mmap_offset;
+	layout->brk_gap = brk_offset;
+	return 0;
 }
 
 static int flags2prot(int flags)
@@ -54,28 +80,17 @@ static int flags2prot(int flags)
 	return protection;
 }
 
-static int loadseg(pagedir_t pgdir, uint64 va, file_t file,
-		   uint64 offset, uint64 size)
+static int protection2perm(uint32 protection)
 {
-	uint64 page_offset, pa, n;
+	int permissions = PTE_U;
 
-	while (size) {
-		pa = vm_user_pa(pgdir, va);
-		if (!pa)
-			return -1;
-
-		page_offset = va & (PGSIZE - 1);
-		n = PGSIZE - page_offset;
-		if (n > size)
-			n = size;
-		if (vfs_file_pread(file, 0, pa, n, offset) != n)
-			return -1;
-
-		va += n;
-		offset += n;
-		size -= n;
-	}
-	return 0;
+	if (protection & (LINUX_PROT_READ | LINUX_PROT_WRITE))
+		permissions |= PTE_R;
+	if (protection & LINUX_PROT_WRITE)
+		permissions |= PTE_W;
+	if (protection & LINUX_PROT_EXEC)
+		permissions |= PTE_X;
+	return permissions;
 }
 
 static void elf_image_close(struct elf_image *image)
@@ -182,8 +197,9 @@ static int elf_image_place(struct elf_image *image, struct vma_set *vmas,
 static int elf_image_map(struct elf_image *image, pagedir_t pgdir,
 			 struct vma_set *vmas)
 {
+	const struct vm_area *area;
 	const struct proghdr *program;
-	uint64 address, map_end, map_start;
+	uint64 file_length, map_end, map_start;
 	int i;
 
 	for (i = 0; i < image->header.phnum; i++) {
@@ -191,22 +207,61 @@ static int elf_image_map(struct elf_image *image, pagedir_t pgdir,
 		if (program->type != ELF_PROG_LOAD || !program->memsz)
 			continue;
 		if (elf_relocate_address(image->runtime.load_bias,
-					 program->vaddr, &address) < 0 ||
-		    elf_relocate_address(image->runtime.load_bias,
 					 PGROUNDDOWN(program->vaddr),
 					 &map_start) < 0 ||
 		    elf_relocate_address(image->runtime.load_bias,
 					 PGROUNDUP(program->vaddr +
 						   program->memsz),
 					 &map_end) < 0 ||
-		    vm_alloc_load_range(pgdir, map_start, map_end,
-					flags2perm(program->flags)) < 0 ||
-		    vma_insert_elf(vmas, map_start, map_end,
-				    flags2prot(program->flags), image->file,
-				    PGROUNDDOWN(program->off)) < 0 ||
-		    loadseg(pgdir, address, image->file, program->off,
-			    program->filesz) < 0)
+		    program->vaddr - PGROUNDDOWN(program->vaddr) >
+			(uint64)-1 - program->filesz)
 			return -1;
+		file_length = program->vaddr - PGROUNDDOWN(program->vaddr) +
+			      program->filesz;
+		area = vma_find(vmas, map_start);
+		if (vma_insert_elf_file(vmas, map_start, map_end,
+					 flags2prot(program->flags), image->file,
+					 PGROUNDDOWN(program->off),
+					 file_length) < 0)
+			return -1;
+		if (area) {
+			uint64 page, pa, copy_end, copy_start, file_start;
+			int j;
+
+			area = vma_find(vmas, map_start);
+			if (!area || area->end < map_start + PGSIZE ||
+			    vm_alloc_load_range(pgdir, map_start,
+						map_start + PGSIZE,
+						protection2perm(
+							area->protection)) < 0)
+				return -1;
+			pa = vm_user_pa(pgdir, map_start);
+			if (!pa)
+				return -1;
+			for (j = 0; j < image->header.phnum; j++) {
+				const struct proghdr *load = &image->programs[j];
+
+				if (load->type != ELF_PROG_LOAD || !load->filesz ||
+				    elf_relocate_address(image->runtime.load_bias,
+							 load->vaddr,
+							 &file_start) < 0)
+					continue;
+				copy_start = file_start > map_start ?
+					file_start : map_start;
+				copy_end = file_start + load->filesz;
+				if (copy_end > map_start + PGSIZE)
+					copy_end = map_start + PGSIZE;
+				if (copy_start >= copy_end)
+					continue;
+				page = load->off + copy_start - file_start;
+				if (vfs_file_pread(image->file, 0,
+						   pa + copy_start - map_start,
+						   copy_end - copy_start,
+						   page) !=
+				    (int64)(copy_end - copy_start))
+					return -1;
+			}
+		}
 	}
 	return 0;
 }
@@ -219,7 +274,7 @@ static int build_linux_stack(pagedir_t pgdir, uint64 stack_top,
 	uint64 argv_address[MAXARG];
 	uint64 envp_address[MAXARG];
 	uint64 words[4 * MAXARG + 32];
-	uint64 random[2];
+	uint8 random[16];
 	uint64 sp = stack_top;
 	uint64 length;
 	int argc, envc, nwords = 0;
@@ -245,12 +300,15 @@ static int build_linux_stack(pagedir_t pgdir, uint64 stack_top,
 		envp_address[envc] = sp;
 	}
 
-	random[0] = 0x4341464645494e49ULL;
-	random[1] = 0x582d4d55534c2d58ULL;
+	if (get_random_bytes(random, sizeof(random)) < 0)
+		return -1;
 	sp -= sizeof(random);
 	if (sp < stack_base ||
-	    copyout(pgdir, sp, (char *)random, sizeof(random)) < 0)
+	    copyout(pgdir, sp, (char *)random, sizeof(random)) < 0) {
+		memset(random, 0, sizeof(random));
 		return -1;
+	}
+	memset(random, 0, sizeof(random));
 	length = sp;
 
 	words[nwords++] = argc;
@@ -293,27 +351,32 @@ static int build_linux_stack(pagedir_t pgdir, uint64 stack_top,
 int exec_linux(char *path, char **argv, char **envp)
 {
 	struct elf_image executable = {0}, interpreter = {0};
+	struct exec_aslr_layout aslr;
 	struct linux_exec_layout exec;
 	struct vma_set new_vmas, old_vmas;
 	char interpreter_path[MAXPATH];
 	pagedir_t oldpgdir, pgdir = 0;
 	process_t process = cur_proc();
-	uint64 entry, oldsz, sp, sz = 0;
+	thread_t current = cur_thread();
+	uint64 brk_start, entry, oldsz, sp, stack_base, sz = 0;
 	char *name, *path_p;
 	int argc, stack_permissions = PTE_W;
 	uint32 stack_protection = LINUX_PROT_READ | LINUX_PROT_WRITE;
 
+	if (process_exec_begin(process, current) < 0)
+		return -1;
 	vma_set_init(&new_vmas);
 	vma_set_init(&old_vmas);
-	if (elf_image_open(path, &executable) < 0)
+	if (exec_aslr_layout_init(&aslr) < 0 ||
+	    elf_image_open(path, &executable) < 0)
 		goto fail;
 	if (executable.layout.has_interp &&
 	    elf_image_interpreter(&executable, interpreter_path) < 0)
 		goto fail;
 
-	pgdir = process_pagedir(process);
+	pgdir = process_pagedir(process, current);
 	if (!pgdir ||
-	    elf_image_place(&executable, &new_vmas, USER_PIE_BASE) < 0 ||
+	    elf_image_place(&executable, &new_vmas, aslr.pie_hint) < 0 ||
 	    elf_image_map(&executable, pgdir, &new_vmas) < 0)
 		goto fail;
 	sz = executable.runtime.map_end;
@@ -324,7 +387,7 @@ int exec_linux(char *path, char **argv, char **envp)
 		if (elf_image_open(interpreter_path, &interpreter) < 0 ||
 		    interpreter.layout.has_interp ||
 		    elf_image_place(&interpreter, &new_vmas,
-				    USER_INTERP_BASE) < 0 ||
+				    aslr.interpreter_hint) < 0 ||
 		    elf_image_map(&interpreter, pgdir, &new_vmas) < 0)
 			goto fail;
 		entry = interpreter.runtime.entry;
@@ -340,17 +403,26 @@ int exec_linux(char *path, char **argv, char **envp)
 	elf_image_close(&interpreter);
 	elf_image_close(&executable);
 
-	if (vm_alloc_range(pgdir, USER_STACK_BASE, USER_STACK_TOP,
+	stack_base = aslr.stack_top - USER_STACK_SIZE;
+	if (vm_alloc_range(pgdir, stack_base, aslr.stack_top,
 			   stack_permissions) < 0 ||
-	    vma_insert(&new_vmas, USER_STACK_BASE, USER_STACK_TOP,
+	    vma_insert(&new_vmas, stack_base, aslr.stack_top,
 		       stack_protection,
 		       LINUX_MAP_PRIVATE, VMA_ANONYMOUS, VMA_STACK,
 		       0, 0) < 0)
 		goto fail;
-	sp = USER_STACK_TOP;
-	argc = build_linux_stack(pgdir, USER_STACK_TOP, USER_STACK_BASE,
+	sp = aslr.stack_top;
+	argc = build_linux_stack(pgdir, aslr.stack_top, stack_base,
 				 argv, envp, &exec, &sp);
 	if (argc < 0)
+		goto fail;
+	if (sz > (uint64)-1 - aslr.brk_gap)
+		goto fail;
+	brk_start = PGROUNDUP(sz) + aslr.brk_gap;
+	if (brk_start < sz || brk_start >= aslr.mmap_top ||
+	    !vma_range_free(&new_vmas, PGROUNDUP(sz), brk_start + PGSIZE))
+		goto fail;
+	if (process_exec_quiesce(process, current) < 0)
 		goto fail;
 
 	sleeplock_acquire(&process->mmap_lock);
@@ -359,23 +431,27 @@ int exec_linux(char *path, char **argv, char **envp)
 	vma_set_move(&old_vmas, &process->vmas);
 	vma_set_move(&process->vmas, &new_vmas);
 	process->pagetable = pgdir;
-	process->sz = sz;
-	process->brk = sz;
-	process->brk_start = sz;
+	process->sz = brk_start;
+	process->brk = brk_start;
+	process->brk_start = brk_start;
+	process->mmap_top = aslr.mmap_top;
 	sleeplock_release(&process->mmap_lock);
-	cur_thread()->trapframe->a0 = argc;
-	cur_thread()->trapframe->a1 = sp + sizeof(uint64);
-	cur_thread()->trapframe->sp = sp;
-	cur_thread()->trapframe->epc = entry;
-	memset(cur_thread()->trapframe->f, 0,
-	       sizeof(cur_thread()->trapframe->f));
-	cur_thread()->trapframe->fcsr = 0;
+	current->trapframe->a0 = argc;
+	current->trapframe->a1 = sp + sizeof(uint64);
+	current->trapframe->sp = sp;
+	current->trapframe->epc = entry;
+	memset(current->trapframe->f, 0, sizeof(current->trapframe->f));
+	current->trapframe->fcsr = 0;
+	__atomic_store_n(&process->membarrier_private_expedited, 0,
+	                 __ATOMIC_RELEASE);
+	signal_process_exec(process, current);
 
 	for (name = path_p = path; *path_p; path_p++) {
 		if (*path_p == '/')
 			name = path_p + 1;
 	}
 	safe_strncpy(process->name, name, MAXNAME);
+	process_exec_end(process);
 	process_freepagedir(oldpgdir, oldsz);
 	vma_set_destroy(&old_vmas);
 	return argc;
@@ -386,5 +462,6 @@ fail:
 	if (pgdir)
 		process_freepagedir(pgdir, sz);
 	vma_set_destroy(&new_vmas);
+	process_exec_end(process);
 	return -1;
 }

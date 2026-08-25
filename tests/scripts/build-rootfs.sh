@@ -325,8 +325,9 @@ mapfile -t elf_load_addresses < <(
 	"${cross_compile}readelf" -lW "$staging/bin/elf-shared-page" |
 		awk '$1 == "LOAD" { print $3 }'
 )
-if [ "${#elf_load_addresses[@]}" -ne 2 ] ||
-	(( elf_load_addresses[0] / 4096 != elf_load_addresses[1] / 4096 )); then
+if [ "${#elf_load_addresses[@]}" -ne 3 ] ||
+	(( elf_load_addresses[0] / 4096 != elf_load_addresses[1] / 4096 ||
+	   elf_load_addresses[0] / 4096 != elf_load_addresses[2] / 4096 )); then
 	echo "ELF boundary selftest must share a PT_LOAD page" >&2
 	exit 1
 fi
@@ -371,10 +372,25 @@ fi
 	-L"$staging/lib" -ldynamic-fixture \
 	-o "$staging/bin/dynamic-runtime"
 
+"$musl_cc" \
+	-fPIE -pie -march=rv64gc -mabi=lp64d \
+	-O2 -Wall -Wextra -Werror \
+	"$tests_dir/aslr_runtime.c" \
+	-L"$staging/lib" -ldynamic-fixture \
+	-o "$staging/bin/aslr-runtime"
+
+"$musl_cc" \
+	-march=rv64gc -mabi=lp64d \
+	-O2 -Wall -Wextra -Werror \
+	"$tests_dir/memory_runtime.c" \
+	-o "$staging/bin/memory-dynamic"
+
 for program in \
 	"$staging/bin/dynamic-hello" \
 	"$staging/bin/dynamic-child" \
-	"$staging/bin/dynamic-runtime"; do
+	"$staging/bin/dynamic-runtime" \
+	"$staging/bin/aslr-runtime" \
+	"$staging/bin/memory-dynamic"; do
 	if ! "${cross_compile}readelf" -l "$program" |
 		grep -q '/lib/ld-musl-riscv64.so.1'; then
 		echo "dynamic fixture has the wrong PT_INTERP: $program" >&2
@@ -386,6 +402,12 @@ for program in \
 		exit 1
 	fi
 done
+
+if [ "$("${cross_compile}readelf" -h "$staging/bin/aslr-runtime" |
+	awk '$1 == "Type:" { print $2 }')" != DYN ]; then
+	echo "ASLR selftest must be a PIE executable" >&2
+	exit 1
+fi
 
 if ! "${cross_compile}readelf" -d "$staging/bin/dynamic-runtime" |
 	grep -q 'Shared library: \[libdynamic-fixture.so\]'; then
@@ -454,6 +476,49 @@ done
 	"$tests_dir/vm_runtime.c" \
 	-o "$staging/bin/vm-runtime"
 
+"$musl_cc" \
+	-static -march=rv64gc -mabi=lp64d \
+	-O2 -Wall -Wextra -Werror \
+	"$tests_dir/memory_runtime.c" \
+	-o "$staging/bin/memory-static"
+
+"$musl_cc" \
+	-static -march=rv64gc -mabi=lp64d \
+	-O2 -Wall -Wextra -Werror \
+	"$tests_dir/random_runtime.c" \
+	-o "$staging/bin/random-runtime"
+
+"$musl_cc" \
+	-static -march=rv64gc -mabi=lp64d \
+	-O2 -Wall -Wextra -Werror \
+	"$tests_dir/thread_runtime.c" "$tests_dir/thread_clone.S" \
+	-o "$staging/bin/thread-runtime"
+
+"$musl_cc" \
+	-march=rv64gc -mabi=lp64d \
+	-O2 -Wall -Wextra -Werror -pthread \
+	"$tests_dir/pthread_runtime.c" \
+	-o "$staging/bin/pthread-runtime"
+
+"$musl_cc" \
+	-march=rv64gc -mabi=lp64d \
+	-O2 -Wall -Wextra -Werror -pthread \
+	"$tests_dir/futex_runtime.c" \
+	-o "$staging/bin/futex-runtime"
+
+"$musl_cc" \
+	-march=rv64gc -mabi=lp64d \
+	-O2 -Wall -Wextra -Werror -pthread \
+	"$tests_dir/membarrier_runtime.c" \
+	-o "$staging/bin/membarrier-runtime"
+
+"$musl_cc" \
+	-march=rv64gc -mabi=lp64d \
+	-O2 -Wall -Wextra -Werror -pthread \
+	"$tests_dir/signal_runtime.c" \
+	"$tests_dir/signal_register.S" \
+	-o "$staging/bin/signal-runtime"
+
 if "${cross_compile}readelf" -l "$staging/bin/fs-runtime" |
 	grep -q INTERP; then
 	echo "guest selftest must be statically linked" >&2
@@ -487,6 +552,48 @@ fi
 if "${cross_compile}readelf" -l "$staging/bin/vm-runtime" |
 	grep -q INTERP; then
 	echo "VM selftest must be statically linked" >&2
+	exit 1
+fi
+
+if "${cross_compile}readelf" -l "$staging/bin/memory-static" |
+	grep -q INTERP; then
+	echo "static memory benchmark must not contain PT_INTERP" >&2
+	exit 1
+fi
+
+if "${cross_compile}readelf" -l "$staging/bin/random-runtime" |
+	grep -q INTERP; then
+	echo "random selftest must be statically linked" >&2
+	exit 1
+fi
+
+if "${cross_compile}readelf" -l "$staging/bin/thread-runtime" |
+	grep -q INTERP; then
+	echo "thread selftest must be statically linked" >&2
+	exit 1
+fi
+
+if ! "${cross_compile}readelf" -l "$staging/bin/pthread-runtime" |
+	grep -q '/lib/ld-musl-riscv64.so.1'; then
+	echo "pthread selftest must use the musl runtime linker" >&2
+	exit 1
+fi
+
+if ! "${cross_compile}readelf" -l "$staging/bin/futex-runtime" |
+	grep -q '/lib/ld-musl-riscv64.so.1'; then
+	echo "futex selftest must use the musl runtime linker" >&2
+	exit 1
+fi
+
+if ! "${cross_compile}readelf" -l "$staging/bin/membarrier-runtime" |
+	grep -q '/lib/ld-musl-riscv64.so.1'; then
+	echo "membarrier selftest must use the musl runtime linker" >&2
+	exit 1
+fi
+
+if ! "${cross_compile}readelf" -l "$staging/bin/signal-runtime" |
+	grep -q '/lib/ld-musl-riscv64.so.1'; then
+	echo "signal selftest must use the musl runtime linker" >&2
 	exit 1
 fi
 

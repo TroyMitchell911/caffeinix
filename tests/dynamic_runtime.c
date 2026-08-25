@@ -1,6 +1,7 @@
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -99,7 +100,7 @@ static void test_relro(void)
 		_exit(0);
 	}
 	if (waitpid(pid, &status, 0) != pid ||
-	    !WIFEXITED(status) || WEXITSTATUS(status) == 0)
+	    !WIFSIGNALED(status) || WTERMSIG(status) != SIGSEGV)
 		fail("RELRO protection");
 	puts("DYNAMIC_RELRO_OK");
 }
@@ -145,9 +146,15 @@ static void test_exec_pressure(void)
 		}
 	}
 	for (size_t i = 0; i < sizeof(children) / sizeof(children[0]); i++) {
-		if (waitpid(children[i], &status, 0) != children[i] ||
-		    !WIFEXITED(status) || WEXITSTATUS(status))
+		pid_t waited = waitpid(children[i], &status, 0);
+
+		if (waited != children[i] || !WIFEXITED(status) ||
+		    WEXITSTATUS(status)) {
+			printf("DYNAMIC_PRESSURE_CHILD index=%zu pid=%d "
+			       "waited=%d status=%#x\n", i, children[i],
+			       waited, status);
 			fail("pressure wait");
+		}
 	}
 }
 

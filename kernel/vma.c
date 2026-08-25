@@ -4,11 +4,21 @@
 #include <vfs.h>
 #include <vma.h>
 
+static int vma_insert_file_length(struct vma_set *set, uint64 start,
+				  uint64 end, uint32 protection,
+				  uint32 flags, enum vma_origin origin,
+				  enum vma_usage usage,
+				  struct vfs_file *file,
+				  struct vma_backing *backing, uint64 offset,
+				  uint64 file_length);
+
 static struct vm_area *vma_allocate(uint64 start, uint64 end,
 				    uint32 protection, uint32 flags,
 				    enum vma_origin origin,
 				    enum vma_usage usage,
-				    struct vfs_file *file, uint64 offset)
+				    struct vfs_file *file,
+				    struct vma_backing *backing, uint64 offset,
+				    uint64 file_length)
 {
 	struct vm_area *area = malloc(sizeof(*area));
 
@@ -18,29 +28,43 @@ static struct vm_area *vma_allocate(uint64 start, uint64 end,
 	area->start = start;
 	area->end = end;
 	area->offset = offset;
+	area->file_length = file_length;
 	area->protection = protection;
 	area->flags = flags;
 	area->origin = origin;
 	area->usage = usage;
 	area->file = file ? vfs_file_get(file) : 0;
+	area->backing = backing;
+	if (backing)
+		backing->get(backing);
 	return area;
 }
 
 static struct vm_area *vma_allocate_split(const struct vm_area *area,
 					  uint64 start)
 {
+	uint64 delta = start - area->start;
+	uint64 file_length = area->file_length;
 	uint64 offset = area->offset;
 
-	if (area->origin == VMA_FILE_BACKED)
-		offset += start - area->start;
+	if (area->origin == VMA_FILE_BACKED || area->backing) {
+		offset += delta;
+	}
+	if (area->origin == VMA_FILE_BACKED) {
+		file_length = file_length > delta ? file_length - delta : 0;
+	}
 	return vma_allocate(start, area->end, area->protection, area->flags,
-			    area->origin, area->usage, area->file, offset);
+			    area->origin, area->usage, area->file,
+			    area->backing, offset,
+			    file_length);
 }
 
 static void vma_release(struct vm_area *area)
 {
 	if (area->file)
 		vfs_file_put(area->file);
+	if (area->backing)
+		area->backing->put(area->backing);
 	free(area);
 }
 
@@ -52,9 +76,17 @@ static int vma_can_merge(const struct vm_area *left,
 	if (left->end != right->start ||
 	    left->protection != right->protection ||
 	    left->flags != right->flags || left->origin != right->origin ||
-	    left->usage != right->usage || left->file != right->file)
+	    left->usage != right->usage || left->file != right->file ||
+	    left->backing != right->backing)
 		return 0;
 	if (left->origin == VMA_FILE_BACKED) {
+		if (left->file_length != left->end - left->start)
+			return 0;
+		next_offset = left->offset + left->end - left->start;
+		if (next_offset < left->offset || next_offset != right->offset)
+			return 0;
+	}
+	if (left->backing) {
 		next_offset = left->offset + left->end - left->start;
 		if (next_offset < left->offset || next_offset != right->offset)
 			return 0;
@@ -65,6 +97,8 @@ static int vma_can_merge(const struct vm_area *left,
 static struct vm_area *vma_merge_pair(struct vm_area *left,
 				      struct vm_area *right)
 {
+	if (left->origin == VMA_FILE_BACKED)
+		left->file_length += right->file_length;
 	left->end = right->end;
 	list_remove(&right->node);
 	vma_release(right);
@@ -133,9 +167,12 @@ int vma_set_clone(struct vma_set *destination,
 		const struct vm_area *area;
 
 		area = list_entry(node, struct vm_area, node);
-		if (vma_insert(destination, area->start, area->end,
-			       area->protection, area->flags, area->origin,
-			       area->usage, area->file, area->offset) < 0) {
+		if (vma_insert_file_length(destination, area->start, area->end,
+					   area->protection, area->flags,
+					   area->origin, area->usage,
+					   area->file, area->backing,
+					   area->offset,
+					   area->file_length) < 0) {
 			vma_set_destroy(destination);
 			return -1;
 		}
@@ -143,17 +180,24 @@ int vma_set_clone(struct vma_set *destination,
 	return 0;
 }
 
-int vma_insert(struct vma_set *set, uint64 start, uint64 end,
-	       uint32 protection, uint32 flags, enum vma_origin origin,
-	       enum vma_usage usage, struct vfs_file *file, uint64 offset)
+static int vma_insert_file_length(struct vma_set *set, uint64 start,
+				  uint64 end, uint32 protection,
+				  uint32 flags, enum vma_origin origin,
+				  enum vma_usage usage,
+				  struct vfs_file *file,
+				  struct vma_backing *backing, uint64 offset,
+				  uint64 file_length)
 {
 	struct vm_area *area, *current;
 	list_t node;
 
 	if (!set || start >= end || start % PGSIZE || end % PGSIZE ||
-	    end > MAXVA || offset % PGSIZE ||
-	    (origin == VMA_FILE_BACKED && end - start > (uint64)-1 - offset) ||
-	    (origin == VMA_FILE_BACKED) != !!file)
+	    end > MAXVA || offset % PGSIZE || file_length > end - start ||
+	    ((origin == VMA_FILE_BACKED || backing) &&
+	     end - start > (uint64)-1 - offset) ||
+	    (origin == VMA_FILE_BACKED) != !!file ||
+	    (backing && (origin != VMA_ANONYMOUS || file)) ||
+	    (origin != VMA_FILE_BACKED && file_length))
 		return -1;
 	for (node = set->areas.next; node != &set->areas;
 	     node = node->next) {
@@ -164,7 +208,7 @@ int vma_insert(struct vma_set *set, uint64 start, uint64 end,
 			return -1;
 	}
 	area = vma_allocate(start, end, protection, flags, origin, usage,
-			    file, offset);
+			    file, backing, offset, file_length);
 	if (!area)
 		return -1;
 	list_insert_before(node, &area->node);
@@ -181,15 +225,44 @@ int vma_insert(struct vma_set *set, uint64 start, uint64 end,
 	return 0;
 }
 
+int vma_insert(struct vma_set *set, uint64 start, uint64 end,
+	       uint32 protection, uint32 flags, enum vma_origin origin,
+	       enum vma_usage usage, struct vfs_file *file, uint64 offset)
+{
+	return vma_insert_file_length(set, start, end, protection, flags,
+				      origin, usage, file, 0, offset,
+				      origin == VMA_FILE_BACKED ? end - start : 0);
+}
+
+int vma_insert_backed(struct vma_set *set, uint64 start, uint64 end,
+		      uint32 protection, uint32 flags,
+		      enum vma_usage usage, struct vma_backing *backing,
+		      uint64 offset)
+{
+	if (!backing || !backing->get || !backing->put)
+		return -1;
+	return vma_insert_file_length(set, start, end, protection, flags,
+				      VMA_ANONYMOUS, usage, 0, backing, offset,
+				      0);
+}
+
 int vma_insert_elf(struct vma_set *set, uint64 start, uint64 end,
 		   uint32 protection, struct vfs_file *file, uint64 offset)
+{
+	return vma_insert_elf_file(set, start, end, protection, file, offset,
+				    end - start);
+}
+
+int vma_insert_elf_file(struct vma_set *set, uint64 start, uint64 end,
+			 uint32 protection, struct vfs_file *file,
+			 uint64 offset, uint64 file_length)
 {
 	struct vm_area *area, *overlap;
 	uint64 overlap_end;
 
 	if (!set || !file || start >= end || start % PGSIZE ||
 	    end % PGSIZE || end > MAXVA || offset % PGSIZE ||
-	    end - start > (uint64)-1 - offset)
+	    end - start > (uint64)-1 - offset || file_length > end - start)
 		return -1;
 	overlap = (struct vm_area *)vma_find(set, start);
 	if (overlap) {
@@ -199,11 +272,17 @@ int vma_insert_elf(struct vma_set *set, uint64 start, uint64 end,
 		    overlap->usage != VMA_ELF ||
 		    overlap->flags != LINUX_MAP_PRIVATE)
 			return -1;
+		if ((overlap->protection | protection) & LINUX_PROT_WRITE &&
+		    (overlap->protection | protection) & LINUX_PROT_EXEC)
+			return -1;
 		if (overlap->start < start) {
 			area = vma_allocate_split(overlap, start);
 			if (!area)
 				return -1;
 			overlap->end = start;
+			if (overlap->file_length > overlap->end - overlap->start)
+				overlap->file_length = overlap->end -
+					overlap->start;
 			list_insert_after(&overlap->node, &area->node);
 			overlap = area;
 		}
@@ -214,13 +293,21 @@ int vma_insert_elf(struct vma_set *set, uint64 start, uint64 end,
 			overlap->file = 0;
 			overlap->origin = VMA_ANONYMOUS;
 			overlap->offset = 0;
+			overlap->file_length = 0;
+		} else if (overlap->origin == VMA_FILE_BACKED &&
+			   overlap->file_length < file_length) {
+			overlap->file_length = file_length < PGSIZE ?
+				file_length : PGSIZE;
 		}
 		start = overlap_end;
 		offset += PGSIZE;
+		file_length = file_length > PGSIZE ?
+			file_length - PGSIZE : 0;
 	}
 	if (start < end &&
-	    vma_insert(set, start, end, protection, LINUX_MAP_PRIVATE,
-		       VMA_FILE_BACKED, VMA_ELF, file, offset) < 0)
+	    vma_insert_file_length(set, start, end, protection,
+				   LINUX_MAP_PRIVATE, VMA_FILE_BACKED,
+				   VMA_ELF, file, 0, offset, file_length) < 0)
 		return -1;
 	vma_merge_all(set);
 	return 0;
@@ -407,16 +494,26 @@ int vma_unmap(struct vma_set *set, uint64 start, uint64 end)
 			continue;
 		}
 		if (start <= area->start) {
+			uint64 delta = end - old_start;
+
 			area->start = end;
-			if (area->origin == VMA_FILE_BACKED)
-				area->offset += end - old_start;
+			if (area->origin == VMA_FILE_BACKED || area->backing)
+				area->offset += delta;
+			if (area->origin == VMA_FILE_BACKED) {
+				area->file_length = area->file_length > delta ?
+					area->file_length - delta : 0;
+			}
 			break;
 		}
 		if (end >= area->end) {
 			area->end = start;
+			if (area->file_length > area->end - area->start)
+				area->file_length = area->end - area->start;
 			continue;
 		}
 		area->end = start;
+		if (area->file_length > area->end - area->start)
+			area->file_length = area->end - area->start;
 		list_insert_after(&area->node, &split->node);
 		split = 0;
 		break;
@@ -453,11 +550,17 @@ int vma_protect(struct vma_set *set, uint64 start, uint64 end,
 	}
 	if (start_split) {
 		start_area->end = start;
+		if (start_area->file_length > start_area->end -
+		    start_area->start)
+			start_area->file_length = start_area->end -
+						  start_area->start;
 		list_insert_after(&start_area->node, &start_split->node);
 	}
 	end_area = (struct vm_area *)vma_find(set, end - 1);
 	if (end_split) {
 		end_area->end = end;
+		if (end_area->file_length > end_area->end - end_area->start)
+			end_area->file_length = end_area->end - end_area->start;
 		list_insert_after(&end_area->node, &end_split->node);
 	}
 	for (node = set->areas.next; node != &set->areas;

@@ -53,6 +53,8 @@ expected=(
 	-netdev "user,id=n0,hostfwd=tcp:127.0.0.1:18082-:18082"
 	-device \
 		"virtio-net-device,netdev=n0,bus=virtio-mmio-bus.2,mac=52:54:00:12:34:56"
+	-object "rng-random,filename=/dev/urandom,id=rng0"
+	-device "virtio-rng-device,rng=rng0,bus=virtio-mmio-bus.3"
 )
 
 if [ "${#actual[@]}" -ne "${#expected[@]}" ]; then

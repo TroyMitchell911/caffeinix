@@ -96,8 +96,14 @@ printk:
 qemu-args:
 	$(CURDIR)/scripts/check-qemu-args.sh
 
+.PHONY: user-trapframe
+user-trapframe:
+	$(MAKE) -C $(TOPDIR) -j$(JOBS)
+	$(CURDIR)/scripts/check-user-trapframe.sh
+
 .PHONY: qemu
-qemu: printk memrange buddy sv39 rbtree vma elf virtqueue qemu-args
+qemu: printk memrange buddy sv39 rbtree vma elf virtqueue qemu-args \
+	user-trapframe
 	TEST_OUTPUT="$(TEST_OUTPUT)" JOBS="$(JOBS)" \
 		$(CURDIR)/scripts/run-qemu.sh
 
@@ -110,3 +116,13 @@ scheduler-perf:
 	ROOT_IMAGE="$(TEST_OUTPUT)/root.ext4" \
 		$(CURDIR)/scripts/benchmark-scheduler.py \
 		--output "$(TEST_OUTPUT)/scheduler-benchmark.json" --check
+
+.PHONY: memory-perf
+memory-perf:
+	$(MAKE) -C $(TOPDIR) -j$(JOBS)
+	TEST_OUTPUT="$(TEST_OUTPUT)" JOBS="$(JOBS)" \
+		$(CURDIR)/scripts/build-rootfs.sh
+	KERNEL="$(TOPDIR)/output/kernel" \
+	ROOT_IMAGE="$(TEST_OUTPUT)/root.ext4" \
+		$(CURDIR)/scripts/benchmark-memory.py \
+		--output "$(TEST_OUTPUT)/memory-benchmark.json" --check

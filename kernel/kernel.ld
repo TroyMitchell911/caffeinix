@@ -20,6 +20,8 @@ SECTIONS
     /* _trampoline = .; */
     *(trampsec)
     . = ALIGN(0x1000);
+    *(sigtrampsec)
+    . = ALIGN(0x1000);
     PROVIDE(etext = .);
   } :text
   

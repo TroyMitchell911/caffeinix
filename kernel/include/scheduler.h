@@ -22,6 +22,8 @@ typedef struct cpu {
 	volatile uint8 online;
 	uint8 idle;
 	volatile uint8 need_resched;
+	volatile uint64 membarrier_request;
+	volatile uint64 membarrier_done;
 }*cpu_t;
 
 extern cpu_t *cpus;
@@ -37,6 +39,7 @@ void sched(void);
 void scheduler_exit(void);
 void scheduler_exit_locked(void);
 void scheduler_make_runnable(thread_t thread);
+void scheduler_kick(thread_t thread);
 void scheduler_block_current(void);
 void scheduler_inherit(thread_t child, thread_t parent);
 int scheduler_set_nice(thread_t thread, int nice);

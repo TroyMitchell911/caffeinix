@@ -1,13 +1,13 @@
-#include <linux_uapi.h>
+#include <cpu.h>
 #include <ktime.h>
+#include <linux_uapi.h>
 #include <mem_layout.h>
 #include <mystring.h>
 #include <process.h>
+#include <random.h>
 #include <scheduler.h>
 #include <syscall.h>
 #include <vm.h>
-
-extern void exit(int cause);
 
 uint64 sys_linux_clock_gettime(void)
 {
@@ -34,22 +34,25 @@ uint64 sys_linux_exit_group(void)
 	int status;
 
 	argint(0, &status);
-	exit(status);
+	process_thread_exit(status, 1);
 	return 0;
 }
 
 uint64 sys_linux_exit(void)
 {
-	return sys_linux_exit_group();
+	int status;
+
+	argint(0, &status);
+	process_thread_exit(status, 0);
+	return 0;
 }
 
 uint64 sys_linux_set_tid_address(void)
 {
-	process_t p = cur_proc();
 	uint64 address;
 
 	argaddr(0, &address);
-	p->clear_child_tid = address;
+	cur_thread()->clear_child_tid = address;
 	return cur_thread()->tid;
 }
 
@@ -108,9 +111,41 @@ uint64 sys_linux_gettid(void)
 	return cur_thread()->tid;
 }
 
+uint64 sys_linux_getrandom(void)
+{
+	uint8 buffer[64];
+	uint64 address, length, total = 0;
+	int flags;
+
+	argaddr(0, &address);
+	argaddr(1, &length);
+	argint(2, &flags);
+	if (flags & ~(LINUX_GRND_NONBLOCK | LINUX_GRND_RANDOM |
+		      LINUX_GRND_INSECURE) ||
+	    (flags & LINUX_GRND_RANDOM && flags & LINUX_GRND_INSECURE))
+		return -LINUX_EINVAL;
+	if (length && address > (uint64)-1 - length)
+		return -LINUX_EFAULT;
+	while (total < length) {
+		uint64 count = length - total;
+
+		if (count > sizeof(buffer))
+			count = sizeof(buffer);
+		if (get_random_bytes(buffer, count) < 0)
+			return total ? total : -LINUX_EAGAIN;
+		if (copyout(cur_proc()->pagetable, address + total,
+			    (char *)buffer, count) < 0) {
+			memset(buffer, 0, sizeof(buffer));
+			return -LINUX_EFAULT;
+		}
+		total += count;
+	}
+	memset(buffer, 0, sizeof(buffer));
+	return total;
+}
+
 uint64 sys_linux_setpriority(void)
 {
-	process_t process = cur_proc();
 	int which, who, nice;
 
 	argint(0, &which);
@@ -118,26 +153,21 @@ uint64 sys_linux_setpriority(void)
 	argint(2, &nice);
 	if (which != LINUX_PRIO_PROCESS)
 		return -LINUX_EINVAL;
-	if (!who)
-		who = process->pid;
 	if (nice < -20)
 		nice = -20;
 	if (nice > 19)
 		nice = 19;
-	return process_set_nice(who, nice) ? -LINUX_ESRCH : 0;
+	return process_set_nice(who, nice);
 }
 
 uint64 sys_linux_getpriority(void)
 {
-	process_t process = cur_proc();
 	int nice, which, who;
 
 	argint(0, &which);
 	argint(1, &who);
 	if (which != LINUX_PRIO_PROCESS)
 		return -LINUX_EINVAL;
-	if (!who)
-		who = process->pid;
 	if (process_get_nice(who, &nice))
 		return -LINUX_ESRCH;
 	/* Linux returns 20 - nice so a negative nice value is not an error. */
@@ -155,81 +185,51 @@ uint64 sys_linux_umask(void)
 	return old_mask;
 }
 
-uint64 sys_linux_rt_sigaction(void)
+uint64 sys_linux_riscv_flush_icache(void)
 {
-	struct linux_sigaction action;
-	process_t process = cur_proc();
-	uint64 action_address, old_action_address, sigset_size;
-	int signal;
+	uint64 end, flags, start;
 
-	_Static_assert(sizeof(action) ==
-	               sizeof(struct process_signal_action),
-	               "signal action layout mismatch");
-	argint(0, &signal);
-	argaddr(1, &action_address);
-	argaddr(2, &old_action_address);
-	argaddr(3, &sigset_size);
-	if (signal < 1 || signal > 64 ||
-	    sigset_size != LINUX_SIGSET_SIZE)
+	argaddr(0, &start);
+	argaddr(1, &end);
+	argaddr(2, &flags);
+	(void)start;
+	(void)end;
+	if (flags & ~LINUX_SYS_RISCV_FLUSH_ICACHE_ALL)
 		return -LINUX_EINVAL;
-	if (old_action_address &&
-	    copyout(process->pagetable, old_action_address,
-	            (char *)&process->signal_actions[signal - 1],
-	            sizeof(action)) < 0)
-		return -LINUX_EFAULT;
-	if (!action_address)
-		return 0;
-	if (signal == LINUX_SIGKILL || signal == LINUX_SIGSTOP)
-		return -LINUX_EINVAL;
-	if (copyin(process->pagetable, (char *)&action, action_address,
-	           sizeof(action)) < 0)
-		return -LINUX_EFAULT;
-	memmove(&process->signal_actions[signal - 1], &action,
-	        sizeof(action));
-	return 0;
-}
 
-uint64 sys_linux_rt_sigprocmask(void)
-{
-	process_t process = cur_proc();
-	uint64 mask, mask_address, old_mask_address, sigset_size;
-	int how;
-
-	argint(0, &how);
-	argaddr(1, &mask_address);
-	argaddr(2, &old_mask_address);
-	argaddr(3, &sigset_size);
-	if (sigset_size != LINUX_SIGSET_SIZE)
-		return -LINUX_EINVAL;
-	if (old_mask_address &&
-	    copyout(process->pagetable, old_mask_address,
-	            (char *)&process->signal_mask, sizeof(uint64)) < 0)
-		return -LINUX_EFAULT;
-	if (!mask_address)
-		return 0;
-	if (copyin(process->pagetable, (char *)&mask, mask_address,
-	           sizeof(mask)) < 0)
-		return -LINUX_EFAULT;
-	mask &= ~(1ULL << (LINUX_SIGKILL - 1));
-	mask &= ~(1ULL << (LINUX_SIGSTOP - 1));
-	if (how == LINUX_SIG_BLOCK)
-		process->signal_mask |= mask;
-	else if (how == LINUX_SIG_UNBLOCK)
-		process->signal_mask &= ~mask;
-	else if (how == LINUX_SIG_SETMASK)
-		process->signal_mask = mask;
-	else
-		return -LINUX_EINVAL;
+	/*
+	 * Until address spaces track stale instruction caches per hart,
+	 * conservatively flush every online hart for both Linux modes.
+	 */
+	cpu_icache_flush_all();
 	return 0;
 }
 
 uint64 sys_linux_clone(void)
 {
-	uint64 child_stack, flags;
+	const uint64 thread_required =
+		LINUX_CLONE_VM | LINUX_CLONE_FS | LINUX_CLONE_FILES |
+		LINUX_CLONE_SIGHAND | LINUX_CLONE_THREAD;
+	const uint64 thread_allowed =
+		thread_required | LINUX_CLONE_SYSVSEM | LINUX_CLONE_SETTLS |
+		LINUX_CLONE_PARENT_SETTID | LINUX_CLONE_CHILD_CLEARTID |
+		LINUX_CLONE_CHILD_SETTID | LINUX_CLONE_DETACHED;
+	uint64 child_stack, child_tid, flags, parent_tid, tls;
 	int pid;
 
 	argaddr(0, &flags);
 	argaddr(1, &child_stack);
+	argaddr(2, &parent_tid);
+	argaddr(3, &tls);
+	argaddr(4, &child_tid);
+	if (flags & LINUX_CLONE_THREAD) {
+		if ((flags & thread_required) != thread_required ||
+		    flags & ~thread_allowed ||
+		    (flags & LINUX_CLONE_SIGNAL_MASK))
+			return -LINUX_EINVAL;
+		return process_clone_thread(flags, child_stack, parent_tid,
+		                            tls, child_tid);
+	}
 	if ((flags & LINUX_CLONE_SIGNAL_MASK) != LINUX_SIGCHLD ||
 	    flags & ~(LINUX_CLONE_SIGNAL_MASK | LINUX_CLONE_VM |
 	              LINUX_CLONE_VFORK))
@@ -246,12 +246,15 @@ uint64 sys_linux_wait4(void)
 	argint(0, &target);
 	argaddr(1, &status_address);
 	argint(2, &options);
-	if ((target < -1) || target == 0 || options & ~LINUX_WNOHANG)
+	if ((target < -1) || target == 0 ||
+	    options & ~(LINUX_WNOHANG | LINUX_WUNTRACED |
+	                LINUX_WCONTINUED))
 		return -LINUX_EINVAL;
-	result = process_wait(target, status_address,
-	                      options & LINUX_WNOHANG);
-	if (result == -2)
+	result = process_wait(target, status_address, options);
+	if (result == PROCESS_WAIT_FAULT)
 		return -LINUX_EFAULT;
+	if (result == PROCESS_WAIT_INTR)
+		return -SIGNAL_RESTART_SYS;
 	if (result < 0)
 		return -LINUX_ECHILD;
 	return result;

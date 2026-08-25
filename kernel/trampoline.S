@@ -7,10 +7,7 @@ trampoline:
 .align 4
 .global user_vec
 user_vec:
-        csrw sscratch, a0
-
-        li a0, TRAPFRAME_INFO
-        ld a0, 0(a0)
+	csrrw a0, sscratch, a0
 
         sd ra, 40(a0)
         sd sp, 48(a0)
@@ -100,8 +97,8 @@ user_ret:
         csrw satp, a0
         sfence.vma zero, zero
 
-        li a0, TRAPFRAME_INFO
-        ld a0, 0(a0)
+	csrw sscratch, a1
+	mv a0, a1
 
 	ld t0, 544(a0)
 	fscsr t0
@@ -138,7 +135,7 @@ user_ret:
 	fld f30, 528(a0)
 	fld f31, 536(a0)
 
-        # restore all but a0 from TRAPFRAME_INFO
+	# Restore all but a0 from the current thread's trapframe.
         ld ra, 40(a0)
         ld sp, 48(a0)
         ld gp, 56(a0)

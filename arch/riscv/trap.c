@@ -1,13 +1,17 @@
 #include <trap.h>
 #include <spinlock.h>
 #include <debug.h>
+#include <cpu.h>
 #include <irq.h>
 #include <scheduler.h>
+#include <signal.h>
+#include <linux_uapi.h>
 #include <printf.h>
 #include <plic.h>
 #include <printk.h>
 #include <timer.h>
 #include <wait.h>
+#include <mmap.h>
 
 extern void kernel_vec(void);
 extern char trampoline[], user_vec[], user_ret[];
@@ -34,6 +38,7 @@ static int dev_intr(uint64 scause)
         if((scause & 0x8000000000000000L) &&
            (scause & 0xff) == 1) {
                 sip_clear_ssip();
+		cpu_membarrier_interrupt();
                 return 3;
         }
         /* This is a supervisor external interrupt via PLIC */
@@ -91,8 +96,6 @@ void kernel_trap(void)
         sstatus_w(sstatus);
 }
 
-extern void exit(int cause);
-
 __attribute__((noreturn)) void kernel_stack_overflow(uint64 stack_pointer)
 {
 	printf_enter_panic();
@@ -108,8 +111,12 @@ __attribute__((noreturn)) void kernel_stack_overflow(uint64 stack_pointer)
 void user_trap_entry(void)
 {
         int which_dev = 0;
+	int exit_status;
+	int from_syscall = 0;
         process_t p = cur_proc();
+	thread_t current = cur_thread();
         uint64 cause = scause_r();
+	uint64 trap_value = stval_r();
 
         if((sstatus_r() & SSTATUS_SPP)) {
                 PANIC("Not from user mode");
@@ -117,36 +124,68 @@ void user_trap_entry(void)
 
         stvec_w((uint64)kernel_vec);
 
-        cur_thread()->trapframe->epc = sepc_r();
+        current->trapframe->epc = sepc_r();
 
         if(cause == 8) {
-                if(killed(p))
-                        exit(-1);
+		if (process_group_exiting(p, &exit_status))
+			process_thread_exit(exit_status, 0);
+		if (process_thread_exit_requested(current, &exit_status))
+			process_thread_exit(exit_status, 0);
 
                 /* System call */
-                cur_thread()->trapframe->epc += 4;
+		current->syscall_a0 = current->trapframe->a0;
+		current->trapframe->epc += 4;
+		from_syscall = 1;
                 intr_on();
                 syscall();
-        } else if (cause == SCAUSE_INSTRUCTION_PAGE_FAULT ||
+	} else if (cause == SCAUSE_INSTRUCTION_PAGE_FAULT ||
 		   cause == SCAUSE_LOAD_PAGE_FAULT ||
 		   cause == SCAUSE_STORE_PAGE_FAULT) {
+		enum mmap_fault_access access = cause ==
+			SCAUSE_INSTRUCTION_PAGE_FAULT ? MMAP_FAULT_EXEC :
+			cause == SCAUSE_STORE_PAGE_FAULT ? MMAP_FAULT_WRITE :
+			MMAP_FAULT_READ;
+		enum mmap_fault_result fault;
+
 		intr_on();
-		pr_warn("process: pid=%d (%s) page fault cause=%lu "
-			"address=%p epc=%p", p->pid, p->name, cause,
-			stval_r(), cur_thread()->trapframe->epc);
-		exit(-1);
-		return;
+		fault = mmap_handle_fault(p, trap_value, access);
+		if (fault == MMAP_FAULT_BUSERR)
+			signal_force_fault(LINUX_SIGBUS, LINUX_BUS_ADRERR,
+					   trap_value);
+		else if (fault != MMAP_FAULT_OK)
+			signal_force_fault(LINUX_SIGSEGV,
+				fault == MMAP_FAULT_ACCERR ?
+				LINUX_SEGV_ACCERR : LINUX_SEGV_MAPERR,
+				trap_value);
         } else {
                 if((which_dev = dev_intr(cause)) == 0) {
-                        printf("scause %p\n", cause);
-                        printf("sepc=%p stval=%p\n",
-                               cur_thread()->trapframe->epc, stval_r());
-                        PANIC("user_trap_entry");
+			if ((int64)cause < 0)
+				PANIC("unhandled user interrupt");
+			intr_on();
+			if (cause == 0 || cause == 4 || cause == 6)
+				signal_force_fault(LINUX_SIGBUS,
+				                   LINUX_BUS_ADRALN, trap_value);
+			else if (cause == 2)
+				signal_force_fault(LINUX_SIGILL,
+				                   LINUX_ILL_ILLOPC,
+				                   current->trapframe->epc);
+			else if (cause == 3)
+				signal_force_fault(LINUX_SIGTRAP,
+				                   LINUX_TRAP_BRKPT,
+				                   current->trapframe->epc);
+			else if (cause == 1 || cause == 5 || cause == 7)
+				signal_force_fault(LINUX_SIGSEGV,
+				                   LINUX_SEGV_ACCERR, trap_value);
+			else
+				signal_force_fault(LINUX_SIGSEGV,
+				                   LINUX_SEGV_MAPERR, trap_value);
                 }
         }
 
-        if(killed(p))
-                exit(-1);
+	if (process_group_exiting(p, &exit_status))
+		process_thread_exit(exit_status, 0);
+	if (process_thread_exit_requested(current, &exit_status))
+		process_thread_exit(exit_status, 0);
 
 	if (which_dev == 2)
 		scheduler_tick();
@@ -156,6 +195,7 @@ void user_trap_entry(void)
         if(scheduler_should_resched())
                 yield();
 
+	signal_user_return(from_syscall);
         user_trap_ret();
 }
 
@@ -195,8 +235,9 @@ void user_trap_ret(void)
         satp = MAKE_SATP(p->pagetable);
 
         trampoline_userret = TRAMPOLINE + (user_ret - trampoline);
-        /* Call user_ret */
-        ((void (*)(uint64))trampoline_userret)(satp);
+	/* Call user_ret with this hart's current user trapframe mapping. */
+	((void (*)(uint64, uint64))trampoline_userret)(
+		satp, TRAPFRAME(cur_thread()->id_p));
 }
 
 /* This function for first hart */

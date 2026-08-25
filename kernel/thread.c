@@ -20,6 +20,7 @@
 struct thread thread[NTHREAD];
 
 static int next_tid = 1;
+static int next_kernel_tid = -1;
 static struct spinlock tid_lock;
 
 static void thread_sched_init(thread_t thread)
@@ -56,6 +57,16 @@ static int tid_alloc(void)
         return tid;
 }
 
+static int kernel_tid_alloc(void)
+{
+	int tid;
+
+	spinlock_acquire(&tid_lock);
+	tid = next_kernel_tid--;
+	spinlock_release(&tid_lock);
+	return tid;
+}
+
 /* Be called by vm_create */
 void map_kernel_stack(pagedir_t pgdir)
 {
@@ -83,10 +94,14 @@ void thread_setup(void)
                 t->kstack = KSTACK((int)(t - thread));;
                 t->state = THREAD_UNUSED;
 		thread_sched_init(t);
+	signal_thread_init(t);
                 t->waiting_on = 0;
                 t->on_waitqueue = 0;
+		t->wait_private = 0;
+		t->wait_bitset = ~(uint32)0;
                 list_init(&t->wait_node);
 		t->on_timeout_queue = 0;
+		t->wait_interruptible = 0;
 		list_init(&t->timeout_node);
                 strncpy(t->name, "thread", 7);
         }
@@ -95,6 +110,18 @@ void thread_setup(void)
 thread_t thread_alloc(process_t p)
 {
         thread_t t;
+	int slot;
+
+	if (!p || !spinlock_holding(&p->lock))
+		PANIC("thread_alloc process lock");
+	if (p->tnums == PROC_MAXTHREAD)
+		return 0;
+	for (slot = 0; slot < PROC_MAXTHREAD; slot++) {
+		if (!p->thread[slot])
+			break;
+	}
+	if (slot == PROC_MAXTHREAD)
+		PANIC("thread slot count");
 
         for(t = thread; t <= &thread[NTHREAD - 1]; t++) {
                 int ret = spinlock_trylock(&t->lock);
@@ -109,18 +136,28 @@ thread_t thread_alloc(process_t p)
         }
         return 0;
 found:
-        if(p->tnums == PROC_MAXTHREAD)
-                goto r1;
-        t->id_p = p->tnums ++;
+	t->id_p = slot;
         p->thread[t->id_p] = t;
+	p->tnums++;
+	p->live_threads++;
 
         t->state = THREAD_ALLOCATED;
 	t->lwip_errno = 0;
+	t->clear_child_tid = 0;
+	t->robust_list = 0;
+	t->robust_list_len = 0;
+	signal_thread_init(t);
+	t->process_reaper = 0;
+	t->exit_requested = 0;
+	t->exit_status = 0;
 	thread_sched_init(t);
         t->waiting_on = 0;
         t->on_waitqueue = 0;
+	t->wait_private = 0;
+	t->wait_bitset = ~(uint32)0;
         list_init(&t->wait_node);
 	t->on_timeout_queue = 0;
+	t->wait_interruptible = 0;
 	list_init(&t->timeout_node);
 	t->kernel_function = 0;
 	t->kernel_argument = 0;
@@ -140,9 +177,9 @@ found:
 
         return t;
 r2:
-        p->tnums --;
+	p->live_threads--;
+	p->tnums--;
         p->thread[t->id_p] = 0;
-r1:
         t->state = THREAD_UNUSED;
         t->home = 0;
         spinlock_release(&t->lock);
@@ -167,7 +204,7 @@ thread_t kernel_thread_create(const char *name, thread_func_t function,
 
 found:
 	t->state = THREAD_ALLOCATED;
-	t->tid = tid_alloc();
+	t->tid = kernel_tid_alloc();
 	t->id_p = -1;
 	t->home = 0;
 	t->trapframe = 0;
@@ -175,11 +212,21 @@ found:
 	t->kernel_argument = argument;
 	t->kernel_thread = 1;
 	t->lwip_errno = 0;
+	t->clear_child_tid = 0;
+	t->robust_list = 0;
+	t->robust_list_len = 0;
+		signal_thread_init(t);
+	t->process_reaper = 0;
+	t->exit_requested = 0;
+	t->exit_status = 0;
 	thread_sched_init(t);
 	t->waiting_on = 0;
 	t->on_waitqueue = 0;
+	t->wait_private = 0;
+	t->wait_bitset = ~(uint32)0;
 	list_init(&t->wait_node);
 	t->on_timeout_queue = 0;
+	t->wait_interruptible = 0;
 	list_init(&t->timeout_node);
 	memset(&t->context, 0, sizeof(t->context));
 	t->context.ra = (uint64)kernel_thread_entry;
@@ -202,6 +249,16 @@ void kernel_thread_reap(thread_t t)
 	t->kernel_function = 0;
 	t->kernel_argument = 0;
 	t->lwip_errno = 0;
+	t->clear_child_tid = 0;
+	t->robust_list = 0;
+	t->robust_list_len = 0;
+	signal_thread_destroy(t);
+	t->process_reaper = 0;
+	t->exit_requested = 0;
+	t->exit_status = 0;
+	t->wait_private = 0;
+	t->wait_bitset = ~(uint32)0;
+	t->wait_interruptible = 0;
 	thread_sched_init(t);
 	list_init(&t->wait_node);
 	list_init(&t->timeout_node);
@@ -211,9 +268,13 @@ void kernel_thread_reap(thread_t t)
 void thread_free(thread_t t)
 {
         process_t p;
-        int i;
+	int found = 0;
+	int i;
 
-        p = t->home;
+	p = t->home;
+	if (!p || !spinlock_holding(&p->lock) ||
+	    !spinlock_holding(&t->lock))
+		PANIC("thread_free locks");
 
 	if (t->sched.on_runqueue)
                 PANIC("thread_free runnable");
@@ -222,20 +283,89 @@ void thread_free(thread_t t)
         if(p->tnums == 0)
                 PANIC("thread_free");
 
-        for(i = 0; i < PROC_MAXTHREAD; i++) {
+	signal_thread_detach_locked(p, t);
+	for(i = 0; i < PROC_MAXTHREAD; i++) {
                 if(p->thread[i] == t) {
                         p->thread[i] = 0;
+			found = 1;
                         break;
                 }
         }
-        p->tnums --;
+	if (!found)
+		PANIC("thread_free slot");
+	p->tnums--;
+	if (t->state != THREAD_EXITED) {
+		if (!p->live_threads)
+			PANIC("thread_free live count");
+		p->live_threads--;
+	}
 
         t->state = THREAD_UNUSED;
         if(t->trapframe)
                 pfree(t->trapframe);
-        t->trapframe = 0;
-        t->home = 0;
+	t->trapframe = 0;
+	t->home = 0;
+	t->tid = 0;
+	t->id_p = -1;
+	t->clear_child_tid = 0;
+	t->robust_list = 0;
+	t->robust_list_len = 0;
+	signal_thread_destroy(t);
+	t->process_reaper = 0;
+	t->exit_requested = 0;
+	t->exit_status = 0;
+	t->wait_private = 0;
+	t->wait_bitset = ~(uint32)0;
+	t->wait_interruptible = 0;
 	thread_sched_init(t);
         list_init(&t->wait_node);
 	list_init(&t->timeout_node);
+}
+
+int thread_get_robust_list(int tid, uint64 *head, uint64 *length)
+{
+	thread_t target;
+
+	if (tid <= 0 || !head || !length)
+		return -1;
+	for (target = thread; target < &thread[NTHREAD]; target++) {
+		spinlock_acquire(&target->lock);
+		if (target->state != THREAD_UNUSED && !target->kernel_thread &&
+		    target->tid == tid) {
+			*head = target->robust_list;
+			*length = target->robust_list_len;
+			spinlock_release(&target->lock);
+			return 0;
+		}
+		spinlock_release(&target->lock);
+	}
+	return -1;
+}
+
+void user_thread_reap(thread_t t)
+{
+	process_t p;
+	int slot;
+
+	if (!t || !spinlock_holding(&t->lock) || t->kernel_thread ||
+	    t->state != THREAD_EXITED || t->process_reaper)
+		PANIC("reap user thread");
+	p = t->home;
+	if (!p)
+		PANIC("reap detached thread");
+	/* Keep the global process -> thread lock order. */
+	spinlock_release(&t->lock);
+	spinlock_acquire(&p->lock);
+	spinlock_acquire(&t->lock);
+	if (t->home != p || t->state != THREAD_EXITED ||
+	    t->process_reaper)
+		PANIC("changed user reaper");
+	slot = t->id_p;
+	if (slot < 0 || slot >= PROC_MAXTHREAD || p->thread[slot] != t)
+		PANIC("reap user slot");
+	if (vm_mapped(p->pagetable, TRAPFRAME(slot)))
+		vm_unmap(p->pagetable, TRAPFRAME(slot), 1, 0);
+	thread_free(t);
+	wait_queue_wake_all(&p->thread_reap_wait);
+	spinlock_release(&p->lock);
 }

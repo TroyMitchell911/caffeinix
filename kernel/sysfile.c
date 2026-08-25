@@ -4,6 +4,7 @@
 #include <palloc.h>
 #include <process.h>
 #include <scheduler.h>
+#include <signal.h>
 #include <syscall.h>
 #include <vfs.h>
 #include <vm.h>
@@ -142,6 +143,8 @@ static uint64 linux_error(int result)
 		return -LINUX_EINPROGRESS;
 	case VFS_ERR_PIPE:
 		return -LINUX_EPIPE;
+	case VFS_ERR_INTR:
+		return -LINUX_EINTR;
 	default:
 		return -LINUX_EIO;
 	}
@@ -278,6 +281,8 @@ uint64 sys_linux_read(void)
 	argaddr(1, &address);
 	argint(2, &length);
 	result = vfs_read(fd, address, length);
+	if (result == VFS_ERR_INTR)
+		return -SIGNAL_RESTART_SYS;
 	return result < 0 ? linux_error(result) : result;
 }
 

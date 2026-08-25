@@ -45,6 +45,10 @@
 #include <virtio.h>
 #include <netdevice.h>
 #include <network_stack.h>
+#include <futex.h>
+#include <page_cache.h>
+#include <mmap.h>
+#include <random.h>
 
 volatile static uint8 start = 0;
 extern char end[];
@@ -57,8 +61,12 @@ static void main_boot(void)
 {
 	thread_setup();
 	scheduler_init();
+	cpu_membarrier_init();
 	wait_queue_timeout_init();
+	futex_init();
 	workqueue_init();
+	debug_init();
+	random_init();
 	trap_init_lock();
 	trap_init();
 #ifdef CONFIG_STACK_OVERFLOW_TEST
@@ -89,8 +97,11 @@ static void main_boot(void)
 		PANIC("register virtio-blk driver");
 	if (virtio_net_init() < 0)
 		PANIC("register virtio-net driver");
+	if (virtio_rng_init() < 0)
+		PANIC("register virtio-rng driver");
 	if (virtio_mmio_init() < 0)
 		PANIC("register virtio-mmio driver");
+	random_finalize_boot();
 	network_stack_init();
 	ext4fs_init();
 	fatfs_init();
@@ -144,6 +155,8 @@ void main(void)
 		pr_info("clocksource: riscv timer at %lu MHz",
 			timer_frequency() / 1000000);
 		palloc_init();
+		if (palloc_reference_selftest() < 0)
+			PANIC("physical page references");
 		cpu_topology_init(boot_hart_id);
 		sbi_init(cpu_count());
 		timer_init();
@@ -151,8 +164,10 @@ void main(void)
 		pr_info("memory: %lu MiB usable",
 			palloc_usable_bytes() / (1024 * 1024));
 		pr_info("smp: detected %d CPUs", cpu_count());
-		file_init();
-		vfs_init();
+	file_init();
+	vfs_init();
+	page_cache_init();
+	mmap_init();
 		irq_init();
 		plic_init();
 		plic_init_hart();

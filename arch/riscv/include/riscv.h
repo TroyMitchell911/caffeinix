@@ -25,6 +25,8 @@
 #define PTE_D                   (1L << 7)
 /* RSW bit used to retain ownership while PTE_U is clear for PROT_NONE. */
 #define PTE_SW_USER             (1L << 8)
+/* RSW bit used for writable private mappings shared until first write. */
+#define PTE_SW_COW              (1L << 9)
 
 #define SCAUSE_INSTRUCTION_PAGE_FAULT 12
 #define SCAUSE_LOAD_PAGE_FAULT        13
@@ -62,6 +64,11 @@ static inline uint64 satp_r(void)
 static inline void sfence_vma(void)
 {
         asm volatile("sfence.vma zero, zero");
+}
+
+static inline void fence_i(void)
+{
+	asm volatile("fence.i" : : : "memory");
 }
 
 /* Supervisor Interrupt Enable */

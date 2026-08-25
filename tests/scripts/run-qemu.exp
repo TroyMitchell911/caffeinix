@@ -82,6 +82,34 @@ expect {
 }
 expect_prompt
 
+send -- "/bin/random-runtime\r"
+expect {
+	-re {\r?\nRANDOM_RUNTIME_OK} {}
+	-re {RANDOM_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "userspace random test reported failure"
+	}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic in userspace random test"
+	}
+	timeout { abort_test "userspace random test timeout" }
+	eof { abort_test "QEMU exited during userspace random test" }
+}
+expect_prompt
+
+send -- "/bin/aslr-runtime\r"
+expect {
+	-re {\r?\nASLR_RUNTIME_OK} {}
+	-re {ASLR_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "address randomization test reported failure"
+	}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic in address randomization test"
+	}
+	timeout { abort_test "address randomization test timeout" }
+	eof { abort_test "QEMU exited during address randomization test" }
+}
+expect_prompt
+
 send -- "/bin/dynamic-runtime\r"
 foreach marker {
 	DYNAMIC_CONSTRUCTOR_OK
@@ -421,6 +449,64 @@ expect {
 	-re {\[PANIC\]} { abort_test "kernel panic in pread64 runtime test" }
 	timeout { abort_test "pread64 runtime test timeout" }
 	eof { abort_test "QEMU exited during pread64 runtime test" }
+}
+expect {
+	-re {\r?\nVM_SHARED_ANON_OK} {}
+	-re {VM_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "shared anonymous mapping test reported failure"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in shared anonymous test" }
+	timeout { abort_test "shared anonymous mapping test timeout" }
+	eof { abort_test "QEMU exited during shared anonymous mapping test" }
+}
+expect {
+	-re {\r?\nVM_SHARED_MAP_OK} {}
+	-re {VM_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "shared file mapping test reported failure"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in shared mapping test" }
+	timeout { abort_test "shared file mapping test timeout" }
+	eof { abort_test "QEMU exited during shared mapping test" }
+}
+expect {
+	-re {\r?\nVM_COW_OK} {}
+	-re {VM_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "copy-on-write VM test reported failure"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in copy-on-write VM test" }
+	timeout { abort_test "copy-on-write VM test timeout" }
+	eof { abort_test "QEMU exited during copy-on-write VM test" }
+}
+expect {
+	-re {\r?\nVM_ZOMBIE_RELEASE_OK} {}
+	-re {VM_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "zombie memory release test reported failure"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in zombie release test" }
+	timeout { abort_test "zombie memory release test timeout" }
+	eof { abort_test "QEMU exited during zombie memory release test" }
+}
+expect {
+	-re {\r?\nVM_ICACHE_OK} {}
+	-re {VM_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "instruction cache flush test reported failure"
+	}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic in instruction cache flush test"
+	}
+	timeout { abort_test "instruction cache flush test timeout" }
+	eof { abort_test "QEMU exited during instruction cache flush test" }
+}
+expect {
+	-re {\r?\nVM_HARDENING_OK} {}
+	-re {VM_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "virtual memory hardening test reported failure"
+	}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic in virtual memory hardening test"
+	}
+	timeout { abort_test "virtual memory hardening test timeout" }
+	eof { abort_test "QEMU exited during virtual memory hardening test" }
 }
 expect {
 	-re {\r?\nVM_RUNTIME_OK} {}

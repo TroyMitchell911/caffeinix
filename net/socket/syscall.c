@@ -5,6 +5,7 @@
 #include <palloc.h>
 #include <process.h>
 #include <scheduler.h>
+#include <signal.h>
 #include <syscall.h>
 #include <vfs.h>
 #include <vm.h>
@@ -515,18 +516,24 @@ uint64 sys_linux_ppoll(void)
 	struct linux_pollfd fds[NOFILE];
 	struct vfs_pollfd pollfds[NOFILE];
 	process_t process = cur_proc();
-	uint64 fds_address, timeout_address, mask_address;
-	uint64 milliseconds;
+	thread_t thread = cur_thread();
+	uint64 fds_address, timeout_address, mask_address, mask_size;
+	uint64 milliseconds, mask = 0, old_mask = 0;
 	int count, index, timeout = -1, result;
 
 	argaddr(0, &fds_address);
 	argint(1, &count);
 	argaddr(2, &timeout_address);
 	argaddr(3, &mask_address);
+	argaddr(4, &mask_size);
 	if (count < 0 || count > NOFILE)
 		return -LINUX_EINVAL;
-	if (mask_address)
-		return -LINUX_EOPNOTSUPP;
+	if (mask_address && mask_size != LINUX_SIGSET_SIZE)
+		return -LINUX_EINVAL;
+	if (mask_address &&
+	    copyin(process->pagetable, (char *)&mask, mask_address,
+	           sizeof(mask)) < 0)
+		return -LINUX_EFAULT;
 	if (timeout_address) {
 		if (copyin(process->pagetable, (char *)&time,
 			   timeout_address, sizeof(time)) < 0)
@@ -553,7 +560,25 @@ uint64 sys_linux_ppoll(void)
 		if (fds[index].events & LINUX_POLLOUT)
 			pollfds[index].events |= VFS_POLL_OUT;
 	}
+	if (mask_address) {
+		spinlock_acquire(&process->lock);
+		old_mask = thread->signal_mask;
+		thread->signal_saved_mask = old_mask;
+		thread->signal_restore_mask = 1;
+		thread->signal_mask = signal_mask_sanitize(mask);
+		signal_thread_mask_changed_locked(process, thread);
+		spinlock_release(&process->lock);
+	}
 	result = vfs_poll(pollfds, count, timeout);
+	if (mask_address && result != VFS_ERR_INTR) {
+		spinlock_acquire(&process->lock);
+		thread->signal_mask = old_mask;
+		thread->signal_restore_mask = 0;
+		signal_thread_mask_changed_locked(process, thread);
+		spinlock_release(&process->lock);
+	}
+	if (result == VFS_ERR_INTR)
+		return -LINUX_EINTR;
 	if (result < 0)
 		return -LINUX_EINVAL;
 	for (index = 0; index < count; index++) {

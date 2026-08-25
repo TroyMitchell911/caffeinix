@@ -98,6 +98,8 @@ NET_BACKEND ?= user
 NET_OPTIONS ?=
 NET_BUS ?= virtio-mmio-bus.2
 NET_MAC ?= 52:54:00:12:34:56
+RNG_BACKEND ?= /dev/urandom
+RNG_BUS ?= virtio-mmio-bus.3
 MEMORY ?= 256M
 QEMU_SNAPSHOT ?=
 QEMU_EXTRA_OPTS ?=
@@ -119,6 +121,10 @@ ifneq ($(strip $(NET_BACKEND)),)
 QEMUOPTS += -netdev "$(NET_BACKEND),id=n0$(if \
 	$(strip $(NET_OPTIONS)),$(comma)$(NET_OPTIONS))"
 QEMUOPTS += -device virtio-net-device,netdev=n0,bus=$(NET_BUS),mac=$(NET_MAC)
+endif
+ifneq ($(strip $(RNG_BACKEND)),)
+QEMUOPTS += -object rng-random,filename=$(RNG_BACKEND),id=rng0
+QEMUOPTS += -device virtio-rng-device,rng=rng0,bus=$(RNG_BUS)
 endif
 QEMUOPTS += $(QEMU_EXTRA_OPTS)
 ifndef CPUS

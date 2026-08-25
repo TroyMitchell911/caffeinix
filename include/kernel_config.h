@@ -14,7 +14,7 @@
 #define NPROC                           64
 
 #define NTHREAD                         64
-#define PROC_MAXTHREAD                  3
+#define PROC_MAXTHREAD                  32
 
 #define MAXNAME                         16
 

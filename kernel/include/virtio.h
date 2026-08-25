@@ -6,6 +6,7 @@
 
 #define VIRTIO_ID_NET 1
 #define VIRTIO_ID_BLOCK 2
+#define VIRTIO_ID_RNG 4
 
 #define VIRTIO_F_VERSION_1 32
 
@@ -65,6 +66,7 @@ struct virtio_driver {
 
 void virtio_bus_init(void);
 int virtio_mmio_init(void);
+int virtio_rng_init(void);
 int virtio_device_register(struct virtio_device *device);
 void virtio_device_unregister(struct virtio_device *device);
 int virtio_driver_register(struct virtio_driver *driver);

@@ -20,17 +20,22 @@
         in both user and kernel space.
  */
 #define TRAMPOLINE      (MAXVA - PGSIZE)
-#define TRAPFRAME_INFO   (TRAMPOLINE - PGSIZE)
-#define TRAPFRAME(x)    (TRAPFRAME_INFO - ((PGSIZE) * (x + 1)))
+#define TRAPFRAME(x)    (TRAMPOLINE - ((PGSIZE) * ((x) + 1)))
 
-/* Keep the userspace stack separate from the ELF break and mmap area. */
-#define USER_STACK_TOP   0x40000000L
-#define USER_STACK_SIZE  (64 * PGSIZE)
-#define USER_STACK_BASE  (USER_STACK_TOP - USER_STACK_SIZE)
-#define USER_MMAP_TOP    (USER_STACK_BASE - PGSIZE)
-/* Deterministic hints; VMA placement falls back when either range is busy. */
-#define USER_PIE_BASE     0x10000000L
-#define USER_INTERP_BASE  0x30000000L
+/* Keep randomized userspace regions in disjoint address-space windows. */
+#define USER_PIE_BASE        0x08000000L
+#define USER_PIE_RND_SIZE    (128 * 1024 * 1024L)
+#define USER_INTERP_BASE     0x28000000L
+#define USER_INTERP_RND_SIZE (64 * 1024 * 1024L)
+#define USER_BRK_RND_SIZE    (8 * 1024 * 1024L)
+#define USER_STACK_TOP       0x40000000L
+#define USER_STACK_SIZE      (64 * PGSIZE)
+#define USER_STACK_RND_SIZE  (16 * 1024 * 1024L)
+#define USER_STACK_MIN_TOP   (USER_STACK_TOP - USER_STACK_RND_SIZE)
+#define USER_MMAP_TOP        (USER_STACK_MIN_TOP - USER_STACK_SIZE - PGSIZE)
+#define USER_MMAP_RND_SIZE   (16 * 1024 * 1024L)
+/* Executable userspace stub for the Linux RISC-V rt_sigreturn ABI. */
+#define USER_SIGRETURN   USER_STACK_TOP
 /*
  * Put each runtime kernel stack in the lower half of an aligned slot.
  * The unused upper half and the preceding slot's upper half guard both

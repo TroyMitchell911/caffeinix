@@ -85,9 +85,43 @@ The guest selftest covers:
 - upstream musl relocation, `DT_NEEDED` lookup, constructors, destructors,
   initial-exec TLS, RELRO, `dlopen`, `dlsym`, `dlclose`, `pread64`,
   close-on-exec, and concurrent dynamic fork/exec;
+- musl pthread creation, TLS, join, detach, mutexes, condition variables,
+  barriers, robust-owner recovery, cancellation, futex operations, and
+  private expedited memory barriers;
+- process- and thread-directed Linux signals, RV64 integer and floating-point
+  signal context, alternate and nested stacks, masks, pending signals,
+  synchronous faults, stop/continue and child state, exec dispositions, and
+  automatic child reaping;
+- `SA_RESTART` and `EINTR` behavior for futex, wait, TTY read, and `ppoll`,
+  including atomic temporary masks and multithreaded `exit_group` pressure;
 - anonymous and private file mappings, address hints, fixed replacement,
   partial protection and removal, child fault isolation, fork isolation, and
   mapping lifetime, including kernel copies honoring mapping permissions;
+- demand faults for anonymous, ELF, interpreter, and private file mappings,
+  sharing of clean executable pages, page-cache accounting, and `SIGBUS` for
+  pages wholly beyond the mapped file's end;
+- copy-on-write isolation for anonymous and cached private mappings, kernel
+  copies into child memory, fork under resident-memory pressure, and stale
+  writable-TLB rejection while sibling threads run on other harts;
+- shared file mappings, immediate alias and fork visibility, coherent
+  positional and ordinary I/O, synchronous writeback, persistence, partial
+  final pages, and cross-process invalidation after truncation;
+- shared anonymous mappings faulted before and after `fork`, including VMA
+  protection splits and partial unmapping;
+- per-exec `AT_RANDOM`, Linux `getrandom` flags and errors, non-repeating
+  output across calls and `fork`, a default VirtIO entropy source, and the
+  explicitly warned no-device fallback;
+- independently randomized PIE, interpreter, shared-library, anonymous mmap,
+  heap, and stack addresses across repeated executions;
+- W^X enforcement for ELF and runtime mappings, explicit executable-stack
+  handling, safe write-to-execute transitions, `MAP_FIXED_NOREPLACE`, and
+  supported stack, reservation, and prefault mapping flags;
+- clean file-cache and private anonymous page eviction under a 64 MiB memory
+  limit, including file reload, zero-page recreation, and dirty-page
+  preservation;
+- remote TLB invalidation after a sibling thread removes a user mapping;
+- prompt release of exited processes' user pages while zombies await their
+  parent's `wait4`, under memory pressure exceeding available guest RAM;
 - read and positional-read copy faults through ext4, tmpfs, FAT, and
   character devices, plus concurrent reads through one ext4 file handle;
 - CFS runqueue progress with 24 runnable processes, timer preemption,
@@ -144,6 +178,21 @@ benchmark reports 13-sample medians for a shell builtin, `pwd`, and
 reported rather than used as CI gates because shared-runner timing is noisy.
 Idle QEMU CPU usage is gated because the pre-fix scheduler consistently
 consumed one host CPU per guest CPU while doing no work.
+
+Measure static and dynamic musl startup, resident memory, physical file-page
+sharing, and sequential `fork()` cost with:
+
+```bash
+make -C tests memory-perf
+```
+
+The benchmark runs identical statically and dynamically linked programs in a
+one-CPU, 256 MiB guest. It uses the kernel emergency state dump to compare
+allocator occupancy and page-cache references while processes are alive and
+after they exit. CI applies broad timing limits to catch deadlocks and severe
+regressions while tolerating shared-runner noise. Physical sharing and
+resident-page limits are deterministic gates; twelve concurrent dynamic
+processes must share their musl and executable file pages.
 
 Run the same matrix against an externally built OpenSBI image with:
 

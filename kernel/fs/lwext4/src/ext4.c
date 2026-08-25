@@ -1057,7 +1057,7 @@ static int ext4_generic_open2(ext4_file *f, const char *path, int flags,
 
 		r = ext4_fs_get_inode_ref(fs, next_inode, &ref);
 		if (r != EOK)
-			break;
+			return r;
 
 		if (is_goal)
 			break;

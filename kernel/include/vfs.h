@@ -82,6 +82,7 @@ enum vfs_result {
 	VFS_ERR_ALREADY = -46,
 	VFS_ERR_INPROGRESS = -47,
 	VFS_ERR_PIPE = -48,
+	VFS_ERR_INTR = -49,
 };
 
 #define VFS_RENAME_NOREPLACE (1U << 0)
@@ -290,6 +291,10 @@ struct vfs_file *vfs_file_get(struct vfs_file *file);
 void vfs_file_put(struct vfs_file *file);
 int64 vfs_file_pread(struct vfs_file *file, int user_destination,
 		     uint64 destination, uint64 count, uint64 offset);
+int64 vfs_file_pread_raw(struct vfs_file *file, int user_destination,
+			 uint64 destination, uint64 count, uint64 offset);
+int64 vfs_file_pwrite_raw(struct vfs_file *file, int user_source,
+			  uint64 source, uint64 count, uint64 offset);
 
 int vfs_open(const char *path, uint32 flags, uint32 mode, int *fd_out);
 int vfs_install_file(struct vfs_file *file, uint8 flags, int *fd_out);

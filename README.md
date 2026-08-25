@@ -10,13 +10,17 @@ The kernel mounts devfs at `/dev`, tmpfs at `/tmp`, can mount a second FAT16
 or FAT32 disk at `/mnt/fat`, and can run IPv4 over a modern VirtIO network
 device through lwIP.
 
+Upstream musl pthreads run as Linux-style thread groups. The kernel provides
+process- and thread-directed signals, RV64 signal frames, alternate stacks,
+default actions, child notifications, and interruptible blocking calls.
+
 ## Supported target
 
 - Architecture: RISC-V 64-bit little-endian
 - ISA and ABI: RV64GC with LP64D
 - Machine: QEMU `virt`, one, two, four, and eight harts tested
 - Firmware: OpenSBI with SBI v0.2 or newer, TIME, HSM, and IPI for SMP
-- Userspace: dynamically linked and static musl ELF executables
+- Userspace: dynamically linked and static musl ELF executables with pthreads
 - Root filesystem: ext4 with 1 KiB filesystem blocks
 - Optional data filesystem: FAT16 or FAT32
 - Serial console: DT-discovered NS16550A at `/dev/ttyS0` (device 4:64)
@@ -255,6 +259,8 @@ described in the
 [`network architecture`](Documentation/networking/architecture.md).
 The SMP scheduling and virtual-runtime rules are described in
 [`Documentation/scheduler.md`](Documentation/scheduler.md).
+The userspace entropy source and weak-seed fallback are described in
+[`Documentation/random.md`](Documentation/random.md).
 
 ## Run
 
@@ -292,6 +298,24 @@ make -C "$CAFFEINIX_DIR" qemu \
 The kernel Makefile never downloads or builds OpenSBI. See
 [`Documentation/opensbi.md`](Documentation/opensbi.md) for the boot register,
 memory, SBI extension, and multi-hart contracts.
+
+## Randomness
+
+QEMU attaches a VirtIO entropy source backed by `/dev/urandom` by default.
+The kernel uses it for Linux `getrandom(2)` and the `AT_RANDOM` bytes passed
+to every program. Select another host source with `RNG_BACKEND`, or omit the
+device by passing an empty value:
+
+```bash
+make -C "$CAFFEINIX_DIR" qemu \
+  FS_IMG="$FS_IMG" \
+  RNG_BACKEND=
+```
+
+Without a trusted source the kernel keeps the system usable with a weak
+boot-time seed and prints a warning. Such output is not suitable for keys or
+other secrets. `RNG_BUS` selects the VirtIO MMIO slot and defaults to
+`virtio-mmio-bus.3`.
 
 ## Network device
 
@@ -407,10 +431,11 @@ the kernel. No separate rootfs repository or private compiler is required.
 ## Current limitations
 
 - Only a Linux RISC-V UAPI subset is implemented.
-- Pipelines, job control, and real signal delivery are not ready.
-- Dynamic musl executables and shared libraries use eager private mappings;
-  demand paging, shared clean pages, copy-on-write, and ASLR are not ready.
-- Userspace threads are not ready.
+- Pipelines, process groups, job control, and terminal-generated signals are
+  not ready. The underlying thread and signal core is available.
+- Userspace uses demand paging, shared clean file pages, copy-on-write, and
+  ASLR. Reclaim currently discards clean file and private anonymous pages;
+  swap and background writeback of dirty pages are not implemented.
 - Networking is IPv4-only and omits interface configuration, AF_UNIX,
   netlink, namespaces, firewalling, and the wider Linux socket option set.
 - VirtIO currently uses modern MMIO split rings without packed rings,

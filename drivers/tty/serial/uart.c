@@ -84,7 +84,7 @@ int uart_handle_irq(struct uart_port *port)
 	while ((character = port->operations->get_char(port)) >= 0) {
 		if (character == UART_RX_BREAK) {
 			if (tty_get_console() == &port->tty)
-				debug_dump_state();
+				debug_dump_state_request();
 			else
 				tty_receive_char(&port->tty, '\0');
 		} else {
