@@ -1067,8 +1067,6 @@ static int ext4fs_readlink(struct vfs_inode *inode, char *buffer,
 	struct ext4fs_inode *private = inode->private;
 	size_t count;
 	int result = ext4_readlink(private->path, buffer, size, &count);
-	if (result == EOK)
-		ext4fs_touch(private->path, EXT4_TIME_ATIME);
 
 	return result == EOK ? (int)count : ext4fs_result(result);
 }
@@ -1143,6 +1141,23 @@ static int ext4fs_set_times(struct vfs_inode *inode,
 	return ext4fs_refresh(inode);
 }
 
+static int ext4fs_accessed(struct vfs_inode *inode,
+			   const struct vfs_timespec *time)
+{
+	struct ext4_timespec times[3] = { 0 };
+	int result;
+
+	times[0].seconds = time->seconds;
+	times[0].nanoseconds = time->nanoseconds;
+	result = ext4_times_set_by_number(EXT4FS_MOUNT_POINT, inode->number,
+					  times, EXT4_TIME_ATIME);
+	if (result == ERANGE)
+		return VFS_ERR_OVERFLOW;
+	if (result != EOK)
+		return ext4fs_result(result);
+	return ext4fs_refresh(inode);
+}
+
 static int ext4fs_setattr(struct vfs_inode *inode,
 			  const struct vfs_iattr *attributes)
 {
@@ -1182,6 +1197,7 @@ static const struct vfs_inode_operations ext4fs_inode_operations = {
 	.truncate = ext4fs_truncate,
 	.setattr = ext4fs_setattr,
 	.set_times = ext4fs_set_times,
+	.accessed = ext4fs_accessed,
 	.getattr = ext4fs_getattr,
 };
 
@@ -1244,9 +1260,10 @@ static int64 ext4fs_read(struct vfs_file *file, int user_destination,
 			 uint64 destination, uint64 count, uint64 *position)
 {
 	struct ext4fs_file *handle = file->private;
+	void *buffer;
 	uint64 total = 0;
 	size_t transferred;
-	uint32 chunk;
+	uint64 chunk;
 	int64 status;
 	int result;
 
@@ -1257,15 +1274,20 @@ static int64 ext4fs_read(struct vfs_file *file, int user_destination,
 		goto out;
 	}
 	while (total < count) {
-		chunk = count - total > PGSIZE ? PGSIZE : count - total;
-		result = ext4_fread(&handle->file, handle->buffer, chunk,
+		chunk = count - total;
+		if (user_destination && chunk > PGSIZE)
+			chunk = PGSIZE;
+		buffer = user_destination ? handle->buffer :
+			 (void *)(destination + total);
+		result = ext4_fread(&handle->file, buffer, chunk,
 		                    &transferred);
 		if (result != EOK) {
 			status = total ? total : ext4fs_result(result);
 			goto out;
 		}
-		if (either_copyout(user_destination, destination + total,
-		                   handle->buffer, transferred) < 0) {
+		if (user_destination &&
+		    either_copyout(1, destination + total, handle->buffer,
+				   transferred) < 0) {
 			status = total ? total : VFS_ERR_FAULT;
 			goto out;
 		}
@@ -1276,10 +1298,6 @@ static int64 ext4fs_read(struct vfs_file *file, int user_destination,
 	*position += total;
 	status = total;
 out:
-	if (status >= 0 && count)
-		ext4fs_touch(((struct ext4fs_inode *)
-			     file->path.dentry->inode->private)->path,
-			     EXT4_TIME_ATIME);
 	ext4fs_unlock_mount();
 	return status;
 }
@@ -1288,9 +1306,10 @@ static int64 ext4fs_write(struct vfs_file *file, int user_source,
 			  uint64 source, uint64 count, uint64 *position)
 {
 	struct ext4fs_file *handle = file->private;
+	const void *buffer;
 	uint64 total = 0;
 	size_t transferred;
-	uint32 chunk;
+	uint64 chunk;
 	int64 status;
 	int result;
 
@@ -1301,13 +1320,16 @@ static int64 ext4fs_write(struct vfs_file *file, int user_source,
 		goto out;
 	}
 	while (total < count) {
-		chunk = count - total > PGSIZE ? PGSIZE : count - total;
-		if (either_copyin(handle->buffer, user_source, source + total,
-		                  chunk) < 0) {
+		chunk = count - total;
+		if (user_source && chunk > PGSIZE)
+			chunk = PGSIZE;
+		if (user_source &&
+		    either_copyin(handle->buffer, 1, source + total, chunk) < 0) {
 			status = total ? total : VFS_ERR_IO;
 			goto out;
 		}
-		result = ext4_fwrite(&handle->file, handle->buffer, chunk,
+		buffer = user_source ? handle->buffer : (void *)(source + total);
+		result = ext4_fwrite(&handle->file, buffer, chunk,
 		                     &transferred);
 		if (result != EOK) {
 			status = total ? total : ext4fs_result(result);
@@ -1478,9 +1500,6 @@ static int ext4fs_readdir(struct vfs_file *file,
 	memmove(result->name, entry->name, length);
 	result->name[length] = 0;
 	file->position = result->next_offset;
-	ext4fs_touch(((struct ext4fs_inode *)
-		     file->path.dentry->inode->private)->path,
-		     EXT4_TIME_ATIME);
 	return 1;
 }
 
@@ -1603,7 +1622,7 @@ fail_buffer:
 
 static struct vfs_filesystem_type ext4fs_type = {
 	.name = "ext4",
-	.flags = VFS_FS_REQUIRES_DEVICE,
+	.flags = VFS_FS_REQUIRES_DEVICE | VFS_FS_SUPPORTS_ATIME,
 	.mount = ext4fs_mount,
 };
 

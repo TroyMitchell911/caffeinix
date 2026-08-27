@@ -488,6 +488,7 @@ static enum mmap_fault_result mmap_file_fault(struct vm_area *area,
 					      page);
 		if (cache_result == PAGE_CACHE_GET_OK) {
 			*cached = 1;
+			vfs_file_accessed(area->file);
 			return MMAP_FAULT_OK;
 		}
 		if (cache_result == PAGE_CACHE_GET_RETRY)

@@ -7,6 +7,7 @@
 #include <mystring.h>
 #include <netdevice.h>
 #include <network_stack.h>
+#include <page_cache.h>
 #include <palloc.h>
 #include <printf.h>
 #include <process.h>
@@ -397,22 +398,39 @@ static void procfs_build_mounts(struct procfs_buffer *buffer)
 		procfs_emit_mount_field(buffer, mounts[index].source);
 		procfs_printf(buffer, " ");
 		procfs_emit_mount_field(buffer, mounts[index].target);
-		procfs_printf(buffer, " %s rw 0 0\n",
+		procfs_printf(buffer, " %s rw",
 			      mounts[index].filesystem);
+		if (mounts[index].flags & VFS_MOUNT_NOATIME)
+			procfs_printf(buffer, ",noatime");
+		if (mounts[index].flags & VFS_MOUNT_NODIRATIME)
+			procfs_printf(buffer, ",nodiratime");
+		if (mounts[index].flags & VFS_MOUNT_RELATIME)
+			procfs_printf(buffer, ",relatime");
+		if (mounts[index].flags & VFS_MOUNT_STRICTATIME)
+			procfs_printf(buffer, ",strictatime");
+		procfs_printf(buffer, " 0 0\n");
 	}
 }
 
 static void procfs_build_meminfo(struct procfs_buffer *buffer)
 {
+	struct page_cache_stats cache;
 	uint64 total = palloc_usable_bytes() / 1024;
 	uint64 free = palloc_free_pages() * (PGSIZE / 1024);
+	uint64 available, cached;
+
+	page_cache_get_stats(&cache);
+	cached = cache.pages * (PGSIZE / 1024);
+	available = free + cache.reclaimable_pages * (PGSIZE / 1024);
+	if (available > total)
+		available = total;
 
 	procfs_printf(buffer,
 		"MemTotal:       %lu kB\n"
 		"MemFree:        %lu kB\n"
 		"MemAvailable:   %lu kB\n"
 		"Buffers:        0 kB\n"
-		"Cached:         0 kB\n"
+		"Cached:         %lu kB\n"
 		"SwapCached:     0 kB\n"
 		"Active:         0 kB\n"
 		"Inactive:       0 kB\n"
@@ -420,7 +438,7 @@ static void procfs_build_meminfo(struct procfs_buffer *buffer)
 		"SReclaimable:   0 kB\n"
 		"SwapTotal:      0 kB\n"
 		"SwapFree:       0 kB\n",
-		total, free, free);
+		total, free, available, cached);
 }
 
 static void procfs_build_uptime(struct procfs_buffer *buffer)
@@ -861,6 +879,7 @@ static int procfs_mount(struct vfs_filesystem_type *type,
 
 static struct vfs_filesystem_type procfs_type = {
 	.name = "proc",
+	.flags = VFS_FS_NO_DENTRY_CACHE,
 	.mount = procfs_mount,
 };
 

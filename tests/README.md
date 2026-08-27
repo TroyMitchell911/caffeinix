@@ -195,11 +195,14 @@ eight-CPU guest consumes less than one host CPU with:
 make -C tests scheduler-perf
 ```
 
-This target builds a fresh test root image before measuring it. The
-benchmark reports 13-sample medians for a shell builtin, `pwd`, and
-`ls` on tmpfs, devfs, and ext4. Absolute command latency and the SMP ratio are
-reported rather than used as CI gates because shared-runner timing is noisy.
-Idle QEMU CPU usage is gated because the pre-fix scheduler consistently
+This target builds a fresh test root image before measuring it. The benchmark
+reports 13-sample medians for a shell builtin, `pwd`, `ls` on tmpfs, devfs,
+and ext4, and interactive pathname completion. Absolute command and
+completion latency and their SMP ratios are reported with broad CI gates:
+boot-to-shell must stay below 15 seconds, command and completion medians below
+500 milliseconds, and the eight-CPU slowdown below 3x. These limits leave
+headroom for shared-runner noise while catching interaction-scale regressions.
+Idle QEMU CPU usage is also gated because the pre-fix scheduler consistently
 consumed one host CPU per guest CPU while doing no work.
 
 Measure static and dynamic musl startup, resident memory, physical file-page

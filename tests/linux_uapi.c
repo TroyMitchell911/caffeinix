@@ -41,7 +41,15 @@ _Static_assert(LINUX_SYS_symlinkat == __NR_symlinkat,
 _Static_assert(LINUX_SYS_linkat == __NR_linkat, "linkat number");
 _Static_assert(LINUX_SYS_umount2 == __NR_umount2, "umount2 number");
 _Static_assert(LINUX_SYS_mount == __NR_mount, "mount number");
+_Static_assert(LINUX_MOUNT_NOATIME == MS_NOATIME,
+	       "mount noatime flag");
+_Static_assert(LINUX_MOUNT_NODIRATIME == MS_NODIRATIME,
+	       "mount nodiratime flag");
 _Static_assert(LINUX_MOUNT_SILENT == MS_SILENT, "mount silent flag");
+_Static_assert(LINUX_MOUNT_RELATIME == MS_RELATIME,
+	       "mount relatime flag");
+_Static_assert(LINUX_MOUNT_STRICTATIME == MS_STRICTATIME,
+	       "mount strictatime flag");
 _Static_assert(LINUX_SYS_ftruncate == __NR_ftruncate,
 	       "ftruncate number");
 _Static_assert(LINUX_SYS_fallocate == __NR_fallocate,

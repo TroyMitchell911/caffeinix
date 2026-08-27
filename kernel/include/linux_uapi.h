@@ -376,7 +376,11 @@ struct linux_linger {
 #define LINUX_O_DIRECTORY       00200000
 #define LINUX_O_CLOEXEC         02000000
 
-#define LINUX_MOUNT_SILENT         0x8000
+#define LINUX_MOUNT_NOATIME          0x00000400UL
+#define LINUX_MOUNT_NODIRATIME       0x00000800UL
+#define LINUX_MOUNT_SILENT           0x00008000UL
+#define LINUX_MOUNT_RELATIME         0x00200000UL
+#define LINUX_MOUNT_STRICTATIME      0x01000000UL
 
 #define LINUX_AF_UNSPEC                  0
 #define LINUX_AF_INET                    2

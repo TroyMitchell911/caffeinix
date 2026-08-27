@@ -22,6 +22,17 @@ virtqueue:
 		-o $(TEST_OUTPUT)/virtqueue
 	$(TEST_OUTPUT)/virtqueue
 
+.PHONY: block
+block:
+	mkdir -p $(TEST_OUTPUT)
+	$(CC) -std=gnu17 -Wall -Wextra -Werror -fno-builtin \
+		-I $(TOPDIR)/kernel/include \
+		-I $(TOPDIR)/arch/riscv/include \
+		-I $(TOPDIR)/include \
+		$(CURDIR)/block.c $(TOPDIR)/drivers/block/core.c \
+		-o $(TEST_OUTPUT)/block
+	$(TEST_OUTPUT)/block
+
 .PHONY: rbtree
 rbtree:
 	mkdir -p $(TEST_OUTPUT)
@@ -102,7 +113,7 @@ user-trapframe:
 	$(CURDIR)/scripts/check-user-trapframe.sh
 
 .PHONY: qemu
-qemu: printk memrange buddy sv39 rbtree vma elf virtqueue qemu-args \
+qemu: printk memrange buddy sv39 rbtree vma elf virtqueue block qemu-args \
 	user-trapframe
 	TEST_OUTPUT="$(TEST_OUTPUT)" JOBS="$(JOBS)" \
 		$(CURDIR)/scripts/run-qemu.sh

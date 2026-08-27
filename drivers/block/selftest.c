@@ -10,29 +10,16 @@ struct block_test_context {
 	int close_finished;
 };
 
-static int block_test_read(struct block_device *device, uint64 sector,
-			   void *buffer, uint32 count)
+static int block_test_submit(struct block_device *device,
+			     struct block_request *request)
 {
 	(void)device;
-	(void)sector;
-	(void)buffer;
-	(void)count;
-	return 0;
-}
-
-static int block_test_write(struct block_device *device, uint64 sector,
-			    const void *buffer, uint32 count)
-{
-	(void)device;
-	(void)sector;
-	(void)buffer;
-	(void)count;
-	return 0;
+	(void)request;
+	return -1;
 }
 
 static const struct block_device_operations block_test_operations = {
-	.read = block_test_read,
-	.write = block_test_write,
+	.submit = block_test_submit,
 };
 
 static void block_test_close(void *argument)

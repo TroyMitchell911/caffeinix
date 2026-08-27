@@ -158,6 +158,7 @@ uint64 sys_linux_mount(void)
 	char options[128];
 	const char *source_path = 0;
 	uint64 source_address, flags, data;
+	uint32 vfs_flags = 0;
 	int result;
 
 	argaddr(0, &source_address);
@@ -165,8 +166,18 @@ uint64 sys_linux_mount(void)
 	argaddr(4, &data);
 	if (!linux_mount_allowed())
 		return -LINUX_EPERM;
-	if (flags & ~LINUX_MOUNT_SILENT)
+	if (flags & ~(LINUX_MOUNT_NOATIME | LINUX_MOUNT_NODIRATIME |
+		      LINUX_MOUNT_SILENT | LINUX_MOUNT_RELATIME |
+		      LINUX_MOUNT_STRICTATIME))
 		return -LINUX_EOPNOTSUPP;
+	if (flags & LINUX_MOUNT_NOATIME)
+		vfs_flags |= VFS_MOUNT_NOATIME;
+	if (flags & LINUX_MOUNT_NODIRATIME)
+		vfs_flags |= VFS_MOUNT_NODIRATIME;
+	if (flags & LINUX_MOUNT_RELATIME)
+		vfs_flags |= VFS_MOUNT_RELATIME;
+	if (flags & LINUX_MOUNT_STRICTATIME)
+		vfs_flags |= VFS_MOUNT_STRICTATIME;
 	if (source_address) {
 		if (fetch_str_from_user(source_address, source,
 					sizeof(source)) < 0)
@@ -182,7 +193,7 @@ uint64 sys_linux_mount(void)
 	if (argstr(1, target, sizeof(target)) < 0 ||
 	    argstr(2, filesystem, sizeof(filesystem)) < 0)
 		return -LINUX_EFAULT;
-	result = vfs_mount_path(filesystem, source_path, target, 0);
+	result = vfs_mount_path(filesystem, source_path, target, vfs_flags, 0);
 	return result < 0 ? linux_error(result) : 0;
 }
 
@@ -528,6 +539,8 @@ uint64 sys_linux_getdents64(void)
 	struct linux_getdents_context context = {
 		.process = cur_proc(),
 	};
+	file_t file;
+	uint64 response;
 	int fd, result = 0;
 
 	argint(0, &fd);
@@ -535,15 +548,23 @@ uint64 sys_linux_getdents64(void)
 	argint(2, &context.length);
 	if (context.length < 24)
 		return -LINUX_EINVAL;
+	result = vfs_get_file_fd(fd, &file);
+	if (result < 0)
+		return linux_error(result);
 	while (context.length - context.used >= 24 &&
-	       (result = vfs_next_dirent(fd, linux_emit_dirent,
+	       (result = vfs_next_dirent(file, linux_emit_dirent,
 	                                 &context)) > 0)
 		;
+	if (context.used || result == VFS_OK)
+		vfs_file_accessed(file);
 	if (result == VFS_ERR_NOSPC)
-		return context.used ? context.used : -LINUX_EINVAL;
-	if (result < 0)
-		return context.used ? context.used : linux_error(result);
-	return context.used;
+		response = context.used ? context.used : -LINUX_EINVAL;
+	else if (result < 0)
+		response = context.used ? context.used : linux_error(result);
+	else
+		response = context.used;
+	vfs_file_put(file);
+	return response;
 }
 
 uint64 sys_linux_fcntl(void)

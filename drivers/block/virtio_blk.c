@@ -23,13 +23,10 @@ struct virtio_blk_header {
 	uint64 sector;
 };
 
-struct virtio_blk_request {
+struct virtio_blk_io {
 	struct virtio_blk_header header;
-	struct spinlock lock;
-	struct wait_queue completion;
-	volatile uint8 pending;
+	struct block_request *request;
 	uint8 status;
-	int result;
 };
 
 struct virtio_blk {
@@ -38,6 +35,7 @@ struct virtio_blk {
 	struct spinlock lock;
 	struct wait_queue descriptor_wait;
 	struct block_device block;
+	uint32 outstanding;
 	uint8 has_flush;
 	char name[16];
 };
@@ -74,112 +72,105 @@ void virtio_blk_debug_dump(void)
 	__atomic_sub_fetch(&debug_readers, 1, __ATOMIC_SEQ_CST);
 }
 
-static int virtio_blk_submit(struct virtio_blk *disk, uint32 type,
-			     uint64 sector, void *buffer, uint32 length)
+static int virtio_blk_submit(struct block_device *device,
+			     struct block_request *request)
 {
-	struct virtio_blk_request request;
-	struct virtio_buffer buffers[3];
+	struct virtio_blk *disk = device->private;
+	struct virtio_blk_io *io;
+	struct virtio_buffer buffers[BLOCK_REQUEST_MAX_SEGMENTS + 2];
+	uint32 length;
+	uint16 index;
 	uint16 count = 0;
 	int status;
 
-	memset(&request, 0, sizeof(request));
-	request.header.type = type;
-	request.header.sector = sector;
-	request.status = 0xff;
-	request.pending = 1;
-	request.result = -1;
-	spinlock_init(&request.lock, "virtio-blk request");
-	wait_queue_init(&request.completion, "virtio-blk completion");
-	buffers[count].address = &request.header;
-	buffers[count].length = sizeof(request.header);
+	io = calloc(1, sizeof(*io));
+	if (!io)
+		return -1;
+	io->request = request;
+	io->header.sector = request->sector;
+	io->status = 0xff;
+	switch (request->operation) {
+	case BLOCK_REQUEST_READ:
+		io->header.type = VIRTIO_BLK_T_IN;
+		break;
+	case BLOCK_REQUEST_WRITE:
+		io->header.type = VIRTIO_BLK_T_OUT;
+		break;
+	case BLOCK_REQUEST_FLUSH:
+		if (!disk->has_flush) {
+			block_request_complete(request, 0);
+			free(io);
+			return 0;
+		}
+		io->header.type = VIRTIO_BLK_T_FLUSH;
+		break;
+	default:
+		free(io);
+		return -1;
+	}
+	buffers[count].address = &io->header;
+	buffers[count].length = sizeof(io->header);
 	buffers[count++].direction = DMA_TO_DEVICE;
-	if (length) {
-		buffers[count].address = buffer;
+	for (index = 0; index < request->segment_count; index++) {
+		if (request->segments[index].sector_count >
+		    0xffffffffU / VIRTIO_BLK_SECTOR_SIZE) {
+			free(io);
+			return -1;
+		}
+		length = request->segments[index].sector_count *
+			 VIRTIO_BLK_SECTOR_SIZE;
+		buffers[count].address = request->segments[index].buffer;
 		buffers[count].length = length;
 		buffers[count++].direction =
-			type == VIRTIO_BLK_T_IN ? DMA_FROM_DEVICE :
+			request->operation == BLOCK_REQUEST_READ ?
+			DMA_FROM_DEVICE :
 			DMA_TO_DEVICE;
 	}
-	buffers[count].address = &request.status;
-	buffers[count].length = sizeof(request.status);
+	buffers[count].address = &io->status;
+	buffers[count].length = sizeof(io->status);
 	buffers[count++].direction = DMA_FROM_DEVICE;
+	if (count > disk->queue->size) {
+		free(io);
+		return -1;
+	}
 
 	spinlock_acquire(&disk->lock);
 	while ((status = virtqueue_add(disk->queue, buffers, count,
-				       &request)) == -1)
+				       io)) == -1)
 		wait_queue_sleep(&disk->descriptor_wait, &disk->lock);
 	if (status < 0) {
 		spinlock_release(&disk->lock);
+		free(io);
 		return -1;
 	}
+	disk->outstanding++;
 	virtqueue_kick(disk->queue);
 	spinlock_release(&disk->lock);
-
-	spinlock_acquire(&request.lock);
-	while (request.pending)
-		wait_queue_sleep(&request.completion, &request.lock);
-	status = request.result;
-	if (!wait_queue_empty(&request.completion))
-		PANIC("virtio-blk completion waiters");
-	spinlock_release(&request.lock);
-	return status;
+	return 0;
 }
 
 static void virtio_blk_done(struct virtqueue *queue)
 {
 	struct virtio_blk *disk = queue->private;
-	struct virtio_blk_request *request;
+	struct virtio_blk_io *io;
 
-	while ((request = virtqueue_get_used(queue, 0))) {
-		spinlock_acquire(&request->lock);
-		if (!request->pending)
-			PANIC("duplicate virtio-blk completion");
-		request->result =
-			request->status == VIRTIO_BLK_S_OK ? 0 : -1;
-		request->pending = 0;
-		wait_queue_wake_one(&request->completion);
-		spinlock_release(&request->lock);
+	while ((io = virtqueue_get_used(queue, 0))) {
+		block_request_complete(io->request,
+			io->status == VIRTIO_BLK_S_OK ? 0 : -1);
+		free(io);
+		spinlock_acquire(&disk->lock);
+		if (!disk->outstanding)
+			PANIC("virtio-blk outstanding underflow");
+		disk->outstanding--;
+		spinlock_release(&disk->lock);
 	}
 	spinlock_acquire(&disk->lock);
 	wait_queue_wake_all(&disk->descriptor_wait);
 	spinlock_release(&disk->lock);
 }
 
-static int virtio_blk_read(struct block_device *device, uint64 sector,
-			   void *buffer, uint32 count)
-{
-	struct virtio_blk *disk = device->private;
-
-	if (count > 0xffffffffU / VIRTIO_BLK_SECTOR_SIZE)
-		return -1;
-	return virtio_blk_submit(disk, VIRTIO_BLK_T_IN, sector, buffer,
-				 count * VIRTIO_BLK_SECTOR_SIZE);
-}
-
-static int virtio_blk_write(struct block_device *device, uint64 sector,
-			    const void *buffer, uint32 count)
-{
-	struct virtio_blk *disk = device->private;
-
-	if (count > 0xffffffffU / VIRTIO_BLK_SECTOR_SIZE)
-		return -1;
-	return virtio_blk_submit(disk, VIRTIO_BLK_T_OUT, sector,
-				 (void *)buffer,
-				 count * VIRTIO_BLK_SECTOR_SIZE);
-}
-
-static int virtio_blk_flush(struct block_device *device)
-{
-	struct virtio_blk *disk = device->private;
-
-	return disk->has_flush ? virtio_blk_submit(
-		disk, VIRTIO_BLK_T_FLUSH, 0, 0, 0) : 0;
-}
-
 static const struct block_device_operations virtio_blk_operations = {
-	.read = virtio_blk_read,
-	.write = virtio_blk_write,
-	.flush = virtio_blk_flush,
+	.submit = virtio_blk_submit,
 };
 
 static int virtio_blk_probe(struct virtio_device *device)
@@ -198,6 +189,8 @@ static int virtio_blk_probe(struct virtio_device *device)
 			"virtio-blk descriptors");
 	if (virtio_find_vqs(device, 1, &disk->queue, callbacks, names) < 0)
 		goto failed;
+	if (disk->queue->size <= 2)
+		goto failed;
 	disk->queue->private = disk;
 	device->config->get_config(device, 0, &capacity, sizeof(capacity));
 	if (!capacity)
@@ -206,6 +199,9 @@ static int virtio_blk_probe(struct virtio_device *device)
 	disk->block.name = disk->name;
 	disk->block.sector_size = VIRTIO_BLK_SECTOR_SIZE;
 	disk->block.sector_count = capacity;
+	disk->block.max_segments = disk->queue->size - 2;
+	if (disk->block.max_segments > BLOCK_REQUEST_MAX_SEGMENTS)
+		disk->block.max_segments = BLOCK_REQUEST_MAX_SEGMENTS;
 	disk->block.operations = &virtio_blk_operations;
 	disk->block.private = disk;
 	disk->has_flush = virtio_has_feature(device, VIRTIO_BLK_F_FLUSH);
@@ -233,7 +229,7 @@ static void virtio_blk_remove(struct virtio_device *device)
 
 	if (!disk)
 		return;
-	if (!wait_queue_empty(&disk->descriptor_wait))
+	if (disk->outstanding || !wait_queue_empty(&disk->descriptor_wait))
 		PANIC("remove busy virtio-blk");
 	__atomic_store_n(&debug_disks[disk->block.id], 0, __ATOMIC_SEQ_CST);
 	while (__atomic_load_n(&debug_readers, __ATOMIC_SEQ_CST))

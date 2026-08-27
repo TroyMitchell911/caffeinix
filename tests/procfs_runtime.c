@@ -333,10 +333,10 @@ static void test_system_files(void)
 	int last_pid;
 
 	if (read_file("/proc/mounts", buffer, sizeof(buffer)) <= 0 ||
-	    !strstr(buffer, " / ext4 rw 0 0\n") ||
-	    !strstr(buffer, "devfs /dev devfs rw 0 0\n") ||
-	    !strstr(buffer, "tmpfs /tmp tmpfs rw 0 0\n") ||
-	    !strstr(buffer, "proc /proc proc rw 0 0\n"))
+	    !strstr(buffer, " / ext4 rw,noatime 0 0\n") ||
+	    !strstr(buffer, "devfs /dev devfs rw,noatime 0 0\n") ||
+	    !strstr(buffer, "tmpfs /tmp tmpfs rw,relatime 0 0\n") ||
+	    !strstr(buffer, "proc /proc proc rw,noatime 0 0\n"))
 		fail("mount snapshot");
 	if (sysinfo(&information))
 		fail("sysinfo");
@@ -387,7 +387,7 @@ static void test_mount_escaping(void)
 		"/tmp/proc mount\tline\nslash\\path";
 	static const char expected[] =
 		"tmpfs /tmp/proc\\040mount\\011line\\012slash\\134path "
-		"tmpfs rw 0 0\n";
+		"tmpfs rw,relatime 0 0\n";
 	char buffer[BUFFER_SIZE];
 	int found;
 

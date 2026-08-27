@@ -70,7 +70,7 @@ static void make_file(const char *path)
 		fail("automatic creation times");
 }
 
-static void test_filesystem(const char *path)
+static void test_filesystem(const char *path, int updates_atime)
 {
 	struct timespec omitted[2];
 	struct timespec invalid[2] = { { 0, 1000000000 }, { 0, 0 } };
@@ -118,11 +118,17 @@ static void test_filesystem(const char *path)
 	if (utimensat(AT_FDCWD, path, invalid, 0) != -1 || errno != EINVAL)
 		fail("invalid nanoseconds");
 
+	if (stat(path, &before))
+		fail("stat before read");
 	fd = open(path, O_RDONLY);
 	if (fd < 0 || read(fd, &byte, 1) != 1 || close(fd) ||
 	    stat(path, &after))
 		fail("read timestamp update");
-	if (after.st_atim.tv_sec <= TEST_ATIME_SECONDS ||
+	if ((updates_atime &&
+	     after.st_atim.tv_sec <= TEST_ATIME_SECONDS) ||
+	    (!updates_atime &&
+	     !same_time(&before.st_atim, &after.st_atim)) ||
+	    !same_time(&before.st_ctim, &after.st_ctim) ||
 	    after.st_mtim.tv_sec != TEST_MTIME_SECONDS ||
 	    after.st_mtim.tv_nsec != TEST_MTIME_NANOSECONDS)
 		fail("read timestamp values");
@@ -285,8 +291,8 @@ static void test_owner_change_race(void)
 
 int main(void)
 {
-	test_filesystem("/timestamp-runtime");
-	test_filesystem("/tmp/timestamp-runtime");
+	test_filesystem("/timestamp-runtime", 0);
+	test_filesystem("/tmp/timestamp-runtime", 1);
 	test_symlink();
 	test_omit_short_circuit();
 	test_dirfd();

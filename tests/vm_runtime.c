@@ -17,6 +17,8 @@
 
 #define PAGE_SIZE 4096UL
 #define FILE_PATH "/tmp/vm-runtime.bin"
+#define READAHEAD_PATH "/tmp/vm-readahead.bin"
+#define READAHEAD_PAGES 4
 #define SHARED_READ_PATH "/vm-shared-read.bin"
 #define SHARED_READ_START "/tmp/vm-shared-read-start"
 #define SHARED_READ_CHILDREN 8
@@ -123,6 +125,84 @@ static void create_fixture(void)
 	fill_page(buffer, 1);
 	write_all(fd, buffer, sizeof(buffer));
 	CHECK(close(fd) == 0, "close fixture");
+}
+
+struct meminfo_snapshot {
+	unsigned long free;
+	unsigned long available;
+	unsigned long cached;
+};
+
+static struct meminfo_snapshot read_meminfo(void)
+{
+	struct meminfo_snapshot snapshot;
+	char buffer[2048];
+	char *field;
+	ssize_t length;
+	int fd;
+
+	fd = open("/proc/meminfo", O_RDONLY);
+	CHECK(fd >= 0, "open meminfo");
+	length = read(fd, buffer, sizeof(buffer) - 1);
+	CHECK(length > 0, "read meminfo");
+	CHECK(close(fd) == 0, "close meminfo");
+	buffer[length] = 0;
+	field = strstr(buffer, "MemFree:");
+	CHECK(field && sscanf(field, "MemFree: %lu kB", &snapshot.free) == 1,
+	      "parse free memory");
+	field = strstr(buffer, "MemAvailable:");
+	CHECK(field && sscanf(field, "MemAvailable: %lu kB",
+			      &snapshot.available) == 1,
+	      "parse available memory");
+	field = strstr(buffer, "Cached:");
+	CHECK(field && sscanf(field, "Cached: %lu kB",
+			      &snapshot.cached) == 1,
+	      "parse cached memory");
+	return snapshot;
+}
+
+static void test_file_readahead(void)
+{
+	unsigned char buffer[PAGE_SIZE];
+	volatile unsigned char *mapping;
+	struct meminfo_snapshot before, after;
+	unsigned int page;
+	unsigned char replacement = 0xa5;
+	int fd;
+
+	fd = open(READAHEAD_PATH, O_CREAT | O_EXCL | O_RDWR, 0600);
+	CHECK(fd >= 0, "open readahead fixture");
+	for (page = 0; page < READAHEAD_PAGES; page++) {
+		fill_page(buffer, page);
+		write_all(fd, buffer, sizeof(buffer));
+	}
+	before = read_meminfo();
+	mapping = mmap(0, READAHEAD_PAGES * PAGE_SIZE, PROT_READ,
+		       MAP_PRIVATE, fd, 0);
+	CHECK(mapping != MAP_FAILED, "mmap readahead fixture");
+	CHECK(mapping[0] == pattern(0, 0), "readahead demand page");
+	after = read_meminfo();
+	CHECK(after.cached >= before.cached +
+	      READAHEAD_PAGES * PAGE_SIZE / 1024,
+	      "readahead cache population");
+	CHECK(before.available >= before.free &&
+	      after.available >= after.free &&
+	      after.available - after.free >=
+	      before.available - before.free +
+	      READAHEAD_PAGES * PAGE_SIZE / 1024,
+	      "readahead available memory");
+	CHECK(mapping[3 * PAGE_SIZE] == pattern(3, 0),
+	      "readahead final page");
+	CHECK(pwrite(fd, &replacement, 1, 2 * PAGE_SIZE) == 1,
+	      "write readahead page");
+	CHECK(mapping[2 * PAGE_SIZE] == replacement,
+	      "refresh readahead page");
+	CHECK(munmap((void *)mapping, READAHEAD_PAGES * PAGE_SIZE) == 0,
+	      "munmap readahead fixture");
+	CHECK(ftruncate(fd, 0) == 0, "truncate readahead fixture");
+	CHECK(close(fd) == 0, "close readahead fixture");
+	CHECK(unlink(READAHEAD_PATH) == 0, "unlink readahead fixture");
+	puts("VM_READAHEAD_OK");
 }
 
 static void expect_read_fault(int fd, void *destination,
@@ -1386,6 +1466,7 @@ int main(int argc, char **argv)
 	}
 	test_brk_mmap_ceiling();
 	create_fixture();
+	test_file_readahead();
 	test_read_copy_faults();
 	test_shared_file_reads();
 	test_pread();

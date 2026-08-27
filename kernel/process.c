@@ -135,7 +135,8 @@ static uint32 mount_root_device(void)
 	uint32 id;
 
 	for (id = 1; id < BLOCK_DEVICE_MAX; id++) {
-		if (vfs_mount_root(ROOT_FILESYSTEM, id, 0) == VFS_OK)
+		if (vfs_mount_root(ROOT_FILESYSTEM, id,
+				   VFS_MOUNT_NOATIME, 0) == VFS_OK)
 			return id;
 	}
 	return 0;
@@ -149,7 +150,7 @@ static void mount_fat_device(uint32 root_id)
 	for (id = 1; id < BLOCK_DEVICE_MAX; id++) {
 		if (id == root_id)
 			continue;
-		status = vfs_mount("fat", id, "/mnt/fat", 0);
+		status = vfs_mount("fat", id, "/mnt/fat", 0, 0);
 		if (status == VFS_OK)
 			return;
 		if (status != VFS_ERR_NODEV)
@@ -283,17 +284,17 @@ static void proc_first_start(void)
 		if (vfs_get_root(&process->root) < 0)
 			PANIC("process root");
 		vfs_path_copy(&process->cwd, &process->root);
-		status = vfs_mount("devfs", 0, "/dev", 0);
+		status = vfs_mount("devfs", 0, "/dev", 0, 0);
 		if (status < 0) {
 			pr_err("VFS: cannot mount devfs on /dev: %d", status);
 			PANIC("mount devfs");
 		}
-		status = vfs_mount("tmpfs", 0, "/tmp", 0);
+		status = vfs_mount("tmpfs", 0, "/tmp", 0, 0);
 		if (status < 0) {
 			pr_err("VFS: cannot mount tmpfs on /tmp: %d", status);
 			PANIC("mount tmpfs");
 		}
-		status = vfs_mount("proc", 0, "/proc", 0);
+		status = vfs_mount("proc", 0, "/proc", 0, 0);
 		if (status < 0) {
 			pr_err("VFS: cannot mount proc on /proc: %d", status);
 			PANIC("mount proc");
