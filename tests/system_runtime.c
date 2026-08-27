@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <sys/sysinfo.h>
 #include <sys/syscall.h>
 #include <sys/utsname.h>
@@ -127,6 +128,33 @@ static void check_sysinfo(void)
 		fail("sysinfo reap count");
 }
 
+static pid_t spawn_wait_output_child(int status)
+{
+	pid_t child = fork();
+
+	if (child < 0)
+		fail("wait output fork");
+	if (!child)
+		_exit(status);
+	return child;
+}
+
+static void check_wait_lazy_status(void)
+{
+	int *status;
+	pid_t child;
+
+	status = mmap(NULL, 4096, PROT_READ | PROT_WRITE,
+		      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	if (status == MAP_FAILED)
+		fail("lazy wait status mmap");
+	child = spawn_wait_output_child(7);
+	if (waitpid(child, status, 0) != child ||
+	    !WIFEXITED(*status) || WEXITSTATUS(*status) != 7 ||
+	    munmap(status, 4096))
+		fail("lazy wait status");
+}
+
 int main(int argc, char **argv)
 {
 	char *end;
@@ -142,6 +170,7 @@ int main(int argc, char **argv)
 	check_affinity(expected);
 	check_thread_accounting(expected);
 	check_sysinfo();
+	check_wait_lazy_status();
 	puts("SYSTEM_RUNTIME_OK");
 	return 0;
 }
