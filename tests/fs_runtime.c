@@ -149,6 +149,20 @@ out:
 	return result;
 }
 
+static int join_path(char *path, size_t size, const char *parent,
+		     const char *name)
+{
+	size_t parent_length = strlen(parent);
+	size_t name_length = strlen(name);
+
+	if (parent_length + name_length + 2 > size)
+		return -1;
+	memcpy(path, parent, parent_length);
+	path[parent_length] = '/';
+	memcpy(path + parent_length + 1, name, name_length + 1);
+	return 0;
+}
+
 struct test_linux_dirent64 {
 	uint64_t ino;
 	int64_t offset;
@@ -205,6 +219,119 @@ out:
 		result = -1;
 	if (unlink(path) || rmdir(directory))
 		result = -1;
+	return result;
+}
+
+static int test_renamed_cwd(const char *parent)
+{
+	char base[256], source[256], child[256], target[256];
+	char moved[256], expected[256], file[256], cwd[256];
+	struct stat stat_buffer;
+	int result = -1;
+
+	if (join_path(base, sizeof(base), parent, "cwd-rename") ||
+	    join_path(source, sizeof(source), base, "source") ||
+	    join_path(child, sizeof(child), source, "child") ||
+	    join_path(target, sizeof(target), base, "target") ||
+	    join_path(moved, sizeof(moved), target, "moved") ||
+	    join_path(expected, sizeof(expected), moved, "child") ||
+	    join_path(file, sizeof(file), expected, "relative"))
+		return -1;
+	if (mkdir(base, 0700) || mkdir(source, 0700) || mkdir(child, 0700) ||
+	    mkdir(target, 0700) || chdir(child) || rename(source, moved))
+		goto out;
+	if (!getcwd(cwd, sizeof(cwd)) || strcmp(cwd, expected) ||
+	    make_file("relative", "cwd") || chdir("/") ||
+	    stat(file, &stat_buffer) || stat_buffer.st_size != 3)
+		goto out;
+	result = 0;
+out:
+	chdir("/");
+	if (unlink(file) && errno != ENOENT)
+		result = -1;
+	if (rmdir(expected) && errno != ENOENT)
+		result = -1;
+	if (rmdir(moved) && errno != ENOENT)
+		result = -1;
+	if (rmdir(source) && errno != ENOENT)
+		result = -1;
+	if (rmdir(target) && errno != ENOENT)
+		result = -1;
+	if (rmdir(base) && errno != ENOENT)
+		result = -1;
+	return result;
+}
+
+static int test_fat_mapped_rename(void)
+{
+	static const char directory[] = "/mnt/fat/runtime/map-rename";
+	static const char renamed[] = "/mnt/fat/runtime/map-renamed";
+	static const char source[] = "/mnt/fat/runtime/map-rename/source";
+	static const char target[] = "/mnt/fat/runtime/map-renamed/source";
+	struct stat initial, descriptor, path;
+	char buffer[4];
+	char *mapping = MAP_FAILED;
+	int fd = -1, result = 1;
+
+	unlink(target);
+	rmdir(renamed);
+	unlink(source);
+	rmdir(directory);
+	if (mkdir(directory, 0700) || make_file(source, "old!"))
+		goto out;
+	result = 2;
+	fd = open(source, O_RDWR);
+	if (fd < 0 || fstat(fd, &initial))
+		goto out;
+	result = 3;
+	mapping = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED,
+	               fd, 0);
+	if (mapping == MAP_FAILED)
+		goto out;
+	memcpy(mapping, "new!", 4);
+	result = 4;
+	if (rename(directory, renamed))
+		goto out;
+	result = 5;
+	if (fstat(fd, &descriptor))
+		goto out;
+	result = 6;
+	if (stat(target, &path))
+		goto out;
+	result = 7;
+	if (initial.st_ino != descriptor.st_ino ||
+	    descriptor.st_ino != path.st_ino)
+		goto out;
+	result = 8;
+	if (msync(mapping, 4096, MS_SYNC))
+		goto out;
+	result = 9;
+	if (pread(fd, buffer, sizeof(buffer), 0) != sizeof(buffer))
+		goto out;
+	result = 10;
+	if (memcmp(buffer, "new!", sizeof(buffer)))
+		goto out;
+	result = 11;
+	if (munmap(mapping, 4096))
+		goto out;
+	mapping = MAP_FAILED;
+	if (close(fd))
+		goto out;
+	fd = -1;
+	result = 0;
+out:
+	if (mapping != MAP_FAILED)
+		munmap(mapping, 4096);
+	if (fd >= 0)
+		close(fd);
+	if (unlink(target) && errno != ENOENT && !result)
+		result = 12;
+	if (rmdir(renamed) && errno != ENOENT && !result)
+		result = 13;
+	if (unlink(source) && errno != ENOENT && !result)
+		result = 14;
+	if (rmdir(directory) && errno != ENOENT && !result)
+		result = 15;
 	return result;
 }
 
@@ -650,12 +777,16 @@ int main(void)
 		return fail(239);
 	if (test_getdents_boundary("/ext-runtime"))
 		return fail(233);
+	if (test_renamed_cwd("/ext-runtime"))
+		return fail(236);
 	pass("EXT4_OK\n");
 	result = test_tree("/tmp/tmp-runtime");
 	if (result)
 		return fail(result + 100);
 	if (test_getdents_boundary("/tmp/tmp-runtime"))
 		return fail(234);
+	if (test_renamed_cwd("/tmp/tmp-runtime"))
+		return fail(237);
 	pass("TMPFS_OK\n");
 	result = test_fat(&fat_mounted);
 	if (result)
@@ -665,6 +796,11 @@ int main(void)
 		return fail(240 + result);
 	if (fat_mounted && test_getdents_boundary("/mnt/fat/runtime"))
 		return fail(235);
+	if (fat_mounted && test_renamed_cwd("/mnt/fat/runtime"))
+		return fail(238);
+	result = fat_mounted ? test_fat_mapped_rename() : 0;
+	if (result)
+		return fail(260 + result);
 	pass(fat_mounted ? "FAT_OK\n" : "FAT_SKIP\n");
 	write(1, "FS_RUNTIME_OK\n", 14);
 	return 0;
