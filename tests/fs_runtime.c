@@ -7,6 +7,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
 #include <sys/syscall.h>
@@ -16,6 +17,10 @@
 
 #define APPEND_RECORD_SIZE 16
 #define APPEND_RECORDS 64
+#define CREATE_VISIBILITY_ROUNDS 256
+
+#define CREATE_VISIBILITY_FILE "/ext-create-visibility"
+#define CREATE_VISIBILITY_DIR  "/ext-create-visibility-dir"
 
 static char append_truncate_buffer[
 	APPEND_RECORD_SIZE * (APPEND_RECORDS * 3 + 1)];
@@ -65,6 +70,77 @@ static int directory_has(const char *path, const char *name)
 	if (errno || closedir(directory))
 		return -1;
 	return found;
+}
+
+struct create_visibility_state {
+	int start;
+	int stop;
+	int failed;
+};
+
+static int transient_mode_visible(const char *path)
+{
+	struct stat state;
+
+	if (!lstat(path, &state))
+		return (state.st_mode & 0777) != 0;
+	return errno == ENOENT ? 0 : -1;
+}
+
+static int test_ext4_creation_visibility(void)
+{
+	struct create_visibility_state *state;
+	int fd, index, status, result = -1;
+	pid_t child;
+
+	unlink(CREATE_VISIBILITY_FILE);
+	rmdir(CREATE_VISIBILITY_DIR);
+	state = mmap(NULL, 4096, PROT_READ | PROT_WRITE,
+	             MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+	if (state == MAP_FAILED)
+		return -1;
+	memset(state, 0, sizeof(*state));
+	child = fork();
+	if (child < 0)
+		goto out;
+	if (!child) {
+		while (!__atomic_load_n(&state->start, __ATOMIC_ACQUIRE))
+			poll(NULL, 0, 1);
+		while (!__atomic_load_n(&state->stop, __ATOMIC_ACQUIRE)) {
+			if (transient_mode_visible(CREATE_VISIBILITY_FILE) ||
+			    transient_mode_visible(CREATE_VISIBILITY_DIR)) {
+				__atomic_store_n(&state->failed, 1,
+				                 __ATOMIC_RELEASE);
+				break;
+			}
+		}
+		_exit(0);
+	}
+	__atomic_store_n(&state->start, 1, __ATOMIC_RELEASE);
+	for (index = 0; index < CREATE_VISIBILITY_ROUNDS; index++) {
+		fd = open(CREATE_VISIBILITY_FILE,
+		          O_CREAT | O_EXCL | O_WRONLY, 0000);
+		if (fd < 0 || close(fd) || unlink(CREATE_VISIBILITY_FILE) ||
+		    mkdir(CREATE_VISIBILITY_DIR, 0000) ||
+		    rmdir(CREATE_VISIBILITY_DIR)) {
+			__atomic_store_n(&state->failed, 1,
+			                 __ATOMIC_RELEASE);
+			break;
+		}
+		if (__atomic_load_n(&state->failed, __ATOMIC_ACQUIRE))
+			break;
+	}
+	__atomic_store_n(&state->stop, 1, __ATOMIC_RELEASE);
+	if (waitpid(child, &status, 0) != child || !WIFEXITED(status) ||
+	    WEXITSTATUS(status) ||
+	    __atomic_load_n(&state->failed, __ATOMIC_ACQUIRE))
+		goto out;
+	result = 0;
+out:
+	unlink(CREATE_VISIBILITY_FILE);
+	rmdir(CREATE_VISIBILITY_DIR);
+	munmap(state, 4096);
+	return result;
 }
 
 struct test_linux_dirent64 {
@@ -513,6 +589,8 @@ int main(void)
 	result = test_tree("/ext-runtime");
 	if (result)
 		return fail(result);
+	if (test_ext4_creation_visibility())
+		return fail(239);
 	if (test_getdents_boundary("/ext-runtime"))
 		return fail(233);
 	pass("EXT4_OK\n");
