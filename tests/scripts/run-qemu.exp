@@ -440,7 +440,6 @@ expect {
 	timeout { abort_test "background resume timeout" }
 	eof { abort_test "QEMU exited while resuming background job" }
 }
-expect_prompt
 send -- "jobs\r"
 expect {
 	-re {Running[^\r\n]*job-control-runtime stop} {}
