@@ -63,9 +63,10 @@ static struct block_device *devfs_find_block(const char *name)
 	uint32 id;
 
 	for (id = 1; id < BLOCK_DEVICE_MAX; id++) {
-		device = block_device_get(id);
+		device = block_device_open(id);
 		if (device && !strcmp(device->name, name))
 			return device;
+		block_device_close(device);
 	}
 	return 0;
 }
@@ -76,9 +77,10 @@ static struct block_device *devfs_get_block(uint32 index)
 	uint32 current = 0, id;
 
 	for (id = 1; id < BLOCK_DEVICE_MAX; id++) {
-		device = block_device_get(id);
+		device = block_device_open(id);
 		if (device && current++ == index)
 			return device;
+		block_device_close(device);
 	}
 	return 0;
 }
@@ -95,9 +97,10 @@ static int devfs_lookup(struct vfs_inode *directory, const char *name,
 	status = char_device_node_find(name, &node);
 	if (status == VFS_OK)
 		*result = devfs_wrap(directory->superblock, &node);
-	else if ((device = devfs_find_block(name)))
+	else if ((device = devfs_find_block(name))) {
 		*result = devfs_wrap_block(directory->superblock, device);
-	else
+		block_device_close(device);
+	} else
 		return VFS_ERR_NOENT;
 	return *result ? VFS_OK : VFS_ERR_NOMEM;
 }
@@ -139,6 +142,7 @@ static int devfs_readdir(struct vfs_file *file, struct vfs_dirent *result)
 		result->type = VFS_DT_BLOCK;
 		safe_strncpy(result->name, device->name,
 		             sizeof(result->name));
+		block_device_close(device);
 	}
 	result->next_offset = ++file->position;
 	return 1;
