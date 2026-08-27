@@ -418,7 +418,8 @@ static int test_devices(void)
 static int test_tree(const char *directory)
 {
 	char source[128], hard[128], symbolic[128], target[128];
-	char replacement[128], sparse[128], child[128], renamed[128];
+	char replacement[128], sparse[128], child[128], nested[128];
+	char descendant[128], renamed[128];
 	char buffer[16];
 	struct stat statbuf;
 	int fd, i, oldfd;
@@ -431,6 +432,9 @@ static int test_tree(const char *directory)
 	         "%s/replacement", directory);
 	snprintf(sparse, sizeof(sparse), "%s/sparse", directory);
 	snprintf(child, sizeof(child), "%s/child", directory);
+	snprintf(nested, sizeof(nested), "%s/child/nested", directory);
+	snprintf(descendant, sizeof(descendant),
+		 "%s/child/nested/moved", directory);
 	snprintf(renamed, sizeof(renamed), "%s/renamed", directory);
 	if (mkdir(directory, 0755) && errno != EEXIST)
 		return 20;
@@ -523,7 +527,11 @@ static int test_tree(const char *directory)
 		return 40;
 	if (test_append_truncate(directory))
 		return 41;
-	if (mkdir(child, 0755) || rename(child, renamed) || rmdir(renamed))
+	if (mkdir(child, 0755) || mkdir(nested, 0755))
+		return 46;
+	errno = 0;
+	if (rename(child, descendant) != -1 || errno != EINVAL ||
+	    rmdir(nested) || rename(child, renamed) || rmdir(renamed))
 		return 36;
 	return 0;
 }
