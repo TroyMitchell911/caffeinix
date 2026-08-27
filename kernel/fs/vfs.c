@@ -2144,8 +2144,11 @@ int vfs_read(int fd, uint64 address, int length)
 		result = VFS_ERR_INVAL;
 	else if (page_cache_writeback_file(file) < 0)
 		result = VFS_ERR_IO;
-	else
+	else {
+		sleeplock_acquire(&file->position_lock);
 		result = file_read(file, 1, address, length, &file->position);
+		sleeplock_release(&file->position_lock);
+	}
 	vfs_file_put(file);
 	return result > 0x7fffffff ? VFS_ERR_INVAL : result;
 }
