@@ -1,5 +1,6 @@
 #include <block_device.h>
 #include <debug.h>
+#include <mystring.h>
 #include <scheduler.h>
 #include <thread.h>
 
@@ -40,6 +41,11 @@ static void block_test_close(void *argument)
 
 	while (block_device_get(context->id) == context->device)
 		yield();
+	if (strcmp(context->device->name, "block-selftest") ||
+	    context->device->sector_size != 512 ||
+	    context->device->sector_count != 1 ||
+	    context->device->operations != &block_test_operations)
+		PANIC("block selftest held metadata");
 	block_device_close(context->device);
 	__atomic_store_n(&context->close_finished, 1, __ATOMIC_RELEASE);
 }
