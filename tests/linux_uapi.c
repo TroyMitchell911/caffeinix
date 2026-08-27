@@ -8,31 +8,67 @@
 #include <asm/signal.h>
 #include <asm/sigcontext.h>
 #include <asm/stat.h>
+#include <asm/statfs.h>
 #include <asm/termbits.h>
 #include <asm/unistd.h>
 #include <asm/ucontext.h>
 #include <asm-generic/poll.h>
+#include <asm-generic/fcntl.h>
 #include <asm-generic/siginfo.h>
 #include <asm-generic/socket.h>
 #include <asm-generic/termios.h>
 #include <linux/in.h>
 #include <linux/futex.h>
+#include <linux/fs.h>
 #include <linux/mman.h>
+#include <linux/mount.h>
 #include <linux/membarrier.h>
 #include <linux/random.h>
+#include <linux/resource.h>
 #include <linux/sched.h>
+#include <linux/sysinfo.h>
 #include <linux/tcp.h>
+#include <linux/time.h>
 #include <linux/time_types.h>
+#include <linux/utsname.h>
 
 _Static_assert(LINUX_SYS_getcwd == __NR_getcwd, "getcwd number");
 _Static_assert(LINUX_SYS_openat == __NR_openat, "openat number");
+_Static_assert(LINUX_SYS_mknodat == __NR_mknodat, "mknodat number");
+_Static_assert(LINUX_SYS_pipe2 == __NR_pipe2, "pipe2 number");
 _Static_assert(LINUX_SYS_symlinkat == __NR_symlinkat,
 	       "symlinkat number");
 _Static_assert(LINUX_SYS_linkat == __NR_linkat, "linkat number");
+_Static_assert(LINUX_SYS_umount2 == __NR_umount2, "umount2 number");
+_Static_assert(LINUX_SYS_mount == __NR_mount, "mount number");
+_Static_assert(LINUX_MOUNT_SILENT == MS_SILENT, "mount silent flag");
 _Static_assert(LINUX_SYS_ftruncate == __NR_ftruncate,
 	       "ftruncate number");
+_Static_assert(LINUX_SYS_fallocate == __NR_fallocate,
+	       "fallocate number");
+_Static_assert(LINUX_SYS_truncate == __NR_truncate,
+	       "truncate number");
+_Static_assert(LINUX_SYS_statfs == __NR_statfs, "statfs number");
+_Static_assert(LINUX_SYS_fstatfs == __NR_fstatfs, "fstatfs number");
+_Static_assert(LINUX_SYS_fchmodat == __NR_fchmodat,
+	       "fchmodat number");
+_Static_assert(LINUX_SYS_fchmod == __NR_fchmod,
+	       "fchmod number");
+_Static_assert(LINUX_SYS_fchownat == __NR_fchownat,
+	       "fchownat number");
+_Static_assert(LINUX_SYS_fchown == __NR_fchown,
+	       "fchown number");
 _Static_assert(LINUX_SYS_ppoll == __NR_ppoll, "ppoll number");
+_Static_assert(LINUX_SYS_readv == __NR_readv, "readv number");
+_Static_assert(LINUX_SYS_writev == __NR_writev, "writev number");
 _Static_assert(LINUX_SYS_pread64 == __NR_pread64, "pread64 number");
+_Static_assert(LINUX_SYS_pwrite64 == __NR_pwrite64, "pwrite64 number");
+_Static_assert(LINUX_SYS_preadv == __NR_preadv, "preadv number");
+_Static_assert(LINUX_SYS_pwritev == __NR_pwritev, "pwritev number");
+_Static_assert(LINUX_SYS_sendfile == __NR_sendfile, "sendfile number");
+_Static_assert(LINUX_SYS_preadv2 == __NR_preadv2, "preadv2 number");
+_Static_assert(LINUX_SYS_pwritev2 == __NR_pwritev2,
+	       "pwritev2 number");
 _Static_assert(LINUX_SYS_socket == __NR_socket, "socket number");
 _Static_assert(LINUX_SYS_accept4 == __NR_accept4, "accept4 number");
 _Static_assert(LINUX_SYS_getdents64 == __NR_getdents64,
@@ -41,6 +77,8 @@ _Static_assert(LINUX_SYS_readlinkat == __NR_readlinkat,
 	       "readlinkat number");
 _Static_assert(LINUX_SYS_sync == __NR_sync, "sync number");
 _Static_assert(LINUX_SYS_fsync == __NR_fsync, "fsync number");
+_Static_assert(LINUX_SYS_utimensat == __NR_utimensat,
+	       "utimensat number");
 _Static_assert(LINUX_SYS_umask == __NR_umask, "umask number");
 _Static_assert(LINUX_SYS_rt_sigaction == __NR_rt_sigaction,
 	       "rt_sigaction number");
@@ -63,8 +101,46 @@ _Static_assert(LINUX_SYS_setpriority == __NR_setpriority,
 	       "setpriority number");
 _Static_assert(LINUX_SYS_getpriority == __NR_getpriority,
 	       "getpriority number");
+_Static_assert(LINUX_SYS_setregid == __NR_setregid, "setregid number");
+_Static_assert(LINUX_SYS_setgid == __NR_setgid, "setgid number");
+_Static_assert(LINUX_SYS_setreuid == __NR_setreuid, "setreuid number");
+_Static_assert(LINUX_SYS_setuid == __NR_setuid, "setuid number");
+_Static_assert(LINUX_SYS_setresuid == __NR_setresuid,
+	       "setresuid number");
+_Static_assert(LINUX_SYS_getresuid == __NR_getresuid,
+	       "getresuid number");
+_Static_assert(LINUX_SYS_setresgid == __NR_setresgid,
+	       "setresgid number");
+_Static_assert(LINUX_SYS_getresgid == __NR_getresgid,
+	       "getresgid number");
+_Static_assert(LINUX_SYS_setfsuid == __NR_setfsuid, "setfsuid number");
+_Static_assert(LINUX_SYS_setfsgid == __NR_setfsgid, "setfsgid number");
+_Static_assert(LINUX_SYS_setpgid == __NR_setpgid, "setpgid number");
+_Static_assert(LINUX_SYS_getpgid == __NR_getpgid, "getpgid number");
+_Static_assert(LINUX_SYS_getsid == __NR_getsid, "getsid number");
+_Static_assert(LINUX_SYS_setsid == __NR_setsid, "setsid number");
+_Static_assert(LINUX_SYS_getgroups == __NR_getgroups,
+	       "getgroups number");
+_Static_assert(LINUX_SYS_setgroups == __NR_setgroups,
+	       "setgroups number");
 _Static_assert(LINUX_SYS_clock_gettime == __NR_clock_gettime,
 	       "clock_gettime number");
+_Static_assert(LINUX_SYS_clock_getres == __NR_clock_getres,
+	       "clock_getres number");
+_Static_assert(LINUX_SYS_clock_nanosleep == __NR_clock_nanosleep,
+	       "clock_nanosleep number");
+_Static_assert(LINUX_SYS_nanosleep == __NR_nanosleep,
+	       "nanosleep number");
+_Static_assert(LINUX_SYS_getitimer == __NR_getitimer,
+	       "getitimer number");
+_Static_assert(LINUX_SYS_setitimer == __NR_setitimer,
+	       "setitimer number");
+_Static_assert(LINUX_SYS_gettimeofday == __NR_gettimeofday,
+	       "gettimeofday number");
+_Static_assert(LINUX_SYS_sched_getaffinity == __NR_sched_getaffinity,
+	       "sched_getaffinity number");
+_Static_assert(LINUX_SYS_uname == __NR_uname, "uname number");
+_Static_assert(LINUX_SYS_sysinfo == __NR_sysinfo, "sysinfo number");
 _Static_assert(LINUX_SYS_clone == __NR_clone, "clone number");
 _Static_assert(LINUX_SYS_futex == __NR_futex, "futex number");
 _Static_assert(LINUX_SYS_set_robust_list == __NR_set_robust_list,
@@ -83,6 +159,26 @@ _Static_assert(LINUX_SYS_renameat2 == __NR_renameat2,
 	       "renameat2 number");
 _Static_assert(LINUX_SYS_getrandom == __NR_getrandom,
 	       "getrandom number");
+_Static_assert(sizeof(struct linux_statfs) == sizeof(struct statfs),
+	       "statfs size");
+_Static_assert(sizeof(struct linux_rusage) == sizeof(struct rusage),
+	       "rusage size");
+_Static_assert(offsetof(struct linux_rusage, involuntary_context_switches) ==
+	       offsetof(struct rusage, ru_nivcsw), "rusage layout");
+_Static_assert(offsetof(struct linux_statfs, blocks) ==
+	       offsetof(struct statfs, f_blocks), "statfs blocks offset");
+_Static_assert(offsetof(struct linux_statfs, flags) ==
+	       offsetof(struct statfs, f_flags), "statfs flags offset");
+_Static_assert(LINUX_BLKSSZGET == BLKSSZGET, "BLKSSZGET value");
+_Static_assert(LINUX_BLKGETSIZE64 == BLKGETSIZE64,
+	       "BLKGETSIZE64 value");
+#ifdef RWF_NOAPPEND
+_Static_assert(LINUX_RWF_NOAPPEND == RWF_NOAPPEND,
+	       "RWF_NOAPPEND value");
+#endif
+_Static_assert(LINUX_O_NONBLOCK == O_NONBLOCK, "O_NONBLOCK value");
+_Static_assert(LINUX_O_CLOEXEC == O_CLOEXEC, "O_CLOEXEC value");
+_Static_assert(LINUX_O_NOCTTY == O_NOCTTY, "O_NOCTTY value");
 
 _Static_assert(sizeof(struct linux_stat) == sizeof(struct stat),
 	       "stat size");
@@ -90,6 +186,10 @@ _Static_assert(offsetof(struct linux_stat, size) ==
 	       offsetof(struct stat, st_size), "stat size offset");
 _Static_assert(offsetof(struct linux_stat, blocks) ==
 	       offsetof(struct stat, st_blocks), "stat blocks offset");
+_Static_assert(offsetof(struct linux_stat, atime) ==
+	       offsetof(struct stat, st_atime), "stat atime offset");
+_Static_assert(offsetof(struct linux_stat, mtime) ==
+	       offsetof(struct stat, st_mtime), "stat mtime offset");
 _Static_assert(sizeof(struct linux_sigaction) == sizeof(struct sigaction),
 	       "sigaction size");
 _Static_assert(LINUX_SIGSET_SIZE == sizeof(sigset_t), "sigset size");
@@ -110,6 +210,7 @@ _Static_assert(offsetof(struct linux_ucontext, mcontext) ==
 _Static_assert(LINUX_SIGHUP == SIGHUP, "SIGHUP value");
 _Static_assert(LINUX_SIGKILL == SIGKILL, "SIGKILL value");
 _Static_assert(LINUX_SIGCHLD == SIGCHLD, "SIGCHLD value");
+_Static_assert(LINUX_SIGPIPE == SIGPIPE, "SIGPIPE value");
 _Static_assert(LINUX_SIGRTMIN == SIGRTMIN, "SIGRTMIN value");
 _Static_assert(LINUX_SIGRTMAX == SIGRTMAX, "SIGRTMAX value");
 _Static_assert(LINUX_SA_NOCLDSTOP == SA_NOCLDSTOP,
@@ -127,6 +228,25 @@ _Static_assert(sizeof(struct linux_winsize) == sizeof(struct winsize),
 	       "winsize size");
 _Static_assert(sizeof(struct linux_timespec) ==
 	       sizeof(struct __kernel_timespec), "timespec size");
+_Static_assert(sizeof(struct linux_timeval) == sizeof(struct timeval),
+	       "timeval size");
+_Static_assert(sizeof(struct linux_timezone) == sizeof(struct timezone),
+	       "timezone size");
+_Static_assert(sizeof(struct linux_itimerval) == sizeof(struct itimerval),
+	       "itimerval size");
+_Static_assert(offsetof(struct linux_itimerval, value) ==
+	       offsetof(struct itimerval, it_value),
+	       "itimerval value offset");
+_Static_assert(sizeof(struct linux_utsname) == sizeof(struct new_utsname),
+	       "utsname size");
+_Static_assert(sizeof(struct linux_sysinfo) == sizeof(struct sysinfo),
+	       "sysinfo size");
+_Static_assert(offsetof(struct linux_sysinfo, totalram) ==
+	       offsetof(struct sysinfo, totalram), "sysinfo totalram offset");
+_Static_assert(offsetof(struct linux_sysinfo, mem_unit) ==
+	       offsetof(struct sysinfo, mem_unit), "sysinfo mem_unit offset");
+_Static_assert(LINUX_TIMER_ABSTIME == TIMER_ABSTIME,
+	       "absolute timer flag");
 _Static_assert(sizeof(struct linux_pollfd) == sizeof(struct pollfd),
 	       "pollfd size");
 _Static_assert(offsetof(struct linux_pollfd, revents) ==
@@ -147,6 +267,14 @@ _Static_assert(LINUX_TCSETS == TCSETS, "TCSETS value");
 _Static_assert(LINUX_TCSETSW == TCSETSW, "TCSETSW value");
 _Static_assert(LINUX_TCSETSF == TCSETSF, "TCSETSF value");
 _Static_assert(LINUX_TIOCGWINSZ == TIOCGWINSZ, "TIOCGWINSZ value");
+_Static_assert(LINUX_TIOCGPGRP == TIOCGPGRP, "TIOCGPGRP value");
+_Static_assert(LINUX_TIOCSPGRP == TIOCSPGRP, "TIOCSPGRP value");
+_Static_assert(LINUX_TIOCGSID == TIOCGSID, "TIOCGSID value");
+_Static_assert(LINUX_ISIG == ISIG, "ISIG value");
+_Static_assert(LINUX_NOFLSH == NOFLSH, "NOFLSH value");
+_Static_assert(LINUX_TOSTOP == TOSTOP, "TOSTOP value");
+_Static_assert(LINUX_VQUIT == VQUIT, "VQUIT index");
+_Static_assert(LINUX_VSUSP == VSUSP, "VSUSP index");
 _Static_assert(LINUX_PROT_NONE == PROT_NONE, "PROT_NONE value");
 _Static_assert(LINUX_PROT_READ == PROT_READ, "PROT_READ value");
 _Static_assert(LINUX_PROT_WRITE == PROT_WRITE, "PROT_WRITE value");

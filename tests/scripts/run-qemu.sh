@@ -23,7 +23,8 @@ require_command()
 }
 
 for command in \
-	"$make_command" "$qemu" expect e2fsck debugfs fsck.fat mtype python3 rg \
+	"$make_command" "$qemu" expect e2fsck debugfs fdtput fsck.fat mtype \
+	python3 rg \
 	"${CROSS_COMPILE:-riscv64-linux-gnu-}objdump" \
 	"${CROSS_COMPILE:-riscv64-linux-gnu-}readelf"; do
 	require_command "$command"
@@ -92,6 +93,7 @@ normalize_kernel_log()
 	if grep -Eq \
 		-e '^(Caffeinix |OF: machine:|SBI: spec=|memory: )' \
 		-e '^(clocksource: |smp: |irq: PLIC|mmu: |console: )' \
+		-e '^(rtc: )' \
 		-e '^(virtio-mmio: |virtio-blk|eth[0-9]+: virtio-net)' \
 		-e '^(CPU: |random: |lwIP: |VFS: |init: )' \
 		"$timestamped"; then
@@ -116,7 +118,7 @@ check_boot_log()
 	local clean=$1
 	local cpus=$2
 	local block_devices=${3:-1}
-	local fat_mounts=0
+	local fat_mounts=${4:-}
 	local logical
 	local marker_count
 	local random_count
@@ -147,10 +149,12 @@ check_boot_log()
 		"^irq: PLIC configured for $cpus CPUs$" \
 		'^mmu: Sv39 enabled$' \
 		'^console: ttyS0 at 0x[0-9a-f]+ irq=[0-9]+$' \
+		'^rtc: goldfish wall clock initialized$' \
 		"^smp: brought up $cpus CPUs$" \
 		'^VFS: mounted root [(]ext4[)] on virtio-blk[0-9]+$' \
 		'^VFS: mounted devfs on /dev$' \
 		'^VFS: mounted tmpfs on /tmp$' \
+		'^VFS: mounted proc on /proc$' \
 		'^init: starting /bin/sh$'; do
 		marker_count=$(awk -v marker="$marker" \
 			'$0 ~ marker { count++ } END { print count + 0 }' \
@@ -168,8 +172,11 @@ check_boot_log()
 		echo "unexpected block device count: $marker_count" >&2
 		exit 1
 	fi
-	if [ "$block_devices" -gt 1 ]; then
-		fat_mounts=1
+	if [ -z "$fat_mounts" ]; then
+		fat_mounts=0
+		if [ "$block_devices" -gt 1 ]; then
+			fat_mounts=1
+		fi
 	fi
 	marker_count=$(awk '$0 == "VFS: mounted fat on /mnt/fat" { count++ }
 		END { print count + 0 }' "$clean")
@@ -308,6 +315,31 @@ run_boot_smoke()
 		echo "userspace random marker is missing" >&2
 		exit 1
 	fi
+	if [ "$(awk '$0 == "TIME_RUNTIME_OK" { count++ }
+		END { print count + 0 }' "$clean")" -ne 1 ]; then
+		echo "userspace timekeeping marker is missing" >&2
+		exit 1
+	fi
+	if [ "$(awk '$0 == "SYSTEM_RUNTIME_OK" { count++ }
+		END { print count + 0 }' "$clean")" -ne 1 ]; then
+		echo "userspace system identity marker is missing" >&2
+		exit 1
+	fi
+	if [ "$(awk '$0 == "TIMESTAMP_RUNTIME_OK" { count++ }
+		END { print count + 0 }' "$clean")" -ne 1 ]; then
+		echo "inode timestamp marker is missing" >&2
+		exit 1
+	fi
+	if [ "$(awk '$0 == "PROCFS_RUNTIME_OK" { count++ }
+		END { print count + 0 }' "$clean")" -ne 1 ]; then
+		echo "procfs runtime marker is missing" >&2
+		exit 1
+	fi
+	if [ "$(awk '$0 == "CREDENTIAL_RUNTIME_OK" { count++ }
+		END { print count + 0 }' "$clean")" -ne 1 ]; then
+		echo "credential runtime marker is missing" >&2
+		exit 1
+	fi
 	if [ "$(awk '$0 == "ASLR_RUNTIME_OK" { count++ }
 		END { print count + 0 }' "$clean")" -ne 1 ]; then
 		echo "address randomization marker is missing" >&2
@@ -387,6 +419,26 @@ run_boot_smoke 1 "$large_memory"
 check_boot_memory_latency \
 	"$test_output/qemu-smp1-$large_memory.clean.log.timestamped" 10000000
 
+no_rtc_dtb=$test_output/virt-no-rtc.dtb
+"$qemu" -machine "virt,dumpdtb=$no_rtc_dtb" -m 128M -smp 1 \
+	-bios none -nographic >/dev/null 2>&1
+fdtput -r "$no_rtc_dtb" /soc/rtc@101000
+export NO_RTC_DTB=$no_rtc_dtb
+export QEMU_LOG=$test_output/qemu-no-rtc.log
+expect "$script_dir/run-time-fallback.exp"
+no_rtc_clean=$test_output/qemu-no-rtc.clean.log
+normalize_kernel_log "$QEMU_LOG" "$no_rtc_clean"
+if [ "$(awk '$0 == "TIME_FALLBACK_OK" { count++ }
+	END { print count + 0 }' "$no_rtc_clean")" -ne 1 ]; then
+	echo "realtime fallback marker is missing" >&2
+	exit 1
+fi
+if grep -Eq '^rtc: goldfish|\[PANIC\]|TIME_RUNTIME_FAIL' \
+	"$no_rtc_clean"; then
+	echo "RTC-free boot log contains an unexpected result" >&2
+	exit 1
+fi
+
 export QEMU_LOG=$test_output/qemu-debug-state.log
 expect "$script_dir/run-debug-dump.exp"
 
@@ -428,7 +480,7 @@ export QEMU_LOG=$qemu_log
 expect "$script_dir/run-qemu.exp"
 normalize_kernel_log "$qemu_log" "$clean_log"
 check_net_device_log "$clean_log" 1
-check_boot_log "$clean_log" "$QEMU_CPUS" 2
+check_boot_log "$clean_log" "$QEMU_CPUS" 2 4
 
 for marker in \
 	BUSYBOX_SHELL_OK \
@@ -445,6 +497,15 @@ for marker in \
 	DYNAMIC_EXEC_PRESSURE_OK \
 	DYNAMIC_RUNTIME_OK \
 	DYNAMIC_DESTRUCTOR_OK \
+	BUSYBOX_MANIFEST_OK \
+	BUSYBOX_ASH_LANGUAGE_OK \
+	BUSYBOX_TEXT_TOOLS_OK \
+	BUSYBOX_ARCHIVE_TOOLS_OK \
+	BUSYBOX_FILE_TOOLS_OK \
+	BUSYBOX_ACCOUNT_TOOLS_OK \
+	BUSYBOX_PROCESS_TOOLS_OK \
+	BUSYBOX_SYSTEM_TOOLS_OK \
+	BUSYBOX_RUNTIME_OK \
 	DYNAMIC_BUSYBOX_OK \
 	DYNAMIC_BUSYBOX_APPLETS_OK \
 	DYNAMIC_BUSYBOX_PRESSURE_OK \
@@ -458,10 +519,49 @@ for marker in \
 	ELF_GUARD_OK \
 	ELF_INTERP_REJECT_OK \
 	ELF_SHARED_PAGE_OK \
+	PROCESS_GROUP_OK \
+	TIME_RUNTIME_OK \
+	SYSTEM_RUNTIME_OK \
+	TIMESTAMP_RUNTIME_OK \
+	PROCFS_RUNTIME_OK \
+	CREDENTIAL_RUNTIME_OK \
+	FILE_ADMIN_RUNTIME_OK \
+	MOUNT_RUNTIME_OK \
+	BUSYBOX_METADATA_OK \
+	BUSYBOX_ADMIN_TOOLS_OK \
+	BUSYBOX_FILE_ADMIN_OK \
+	BUSYBOX_TMPFS_MOUNT_OK \
+	BUSYBOX_FAT_MOUNT_OK \
+	BUSYBOX_PS_OK \
+	BUSYBOX_FREE_OK \
+	BUSYBOX_UPTIME_OK \
+	BUSYBOX_PIDOF_OK \
+	BUSYBOX_TOP_OK \
+	BUSYBOX_NETSTAT_OK \
+	JOB_FOREGROUND_STATUS=130 \
+	JOB_STOPPED_OK \
+	JOB_BACKGROUND_OK \
+	JOB_FG_STATUS=130 \
+	JOB_BACKGROUND_READ_OK \
+	JOB_PIPELINE_STATUS=130 \
 	BUSYBOX_TAB_OK \
 	BUSYBOX_ARROW_ABCD \
 	BUSYBOX_CTRL_C_STATUS=130 \
 	BUSYBOX_CTRL_C_OK \
+	BUSYBOX_PATH_TAB_OK \
+	BUSYBOX_COMMAND_TAB_OK \
+	BUSYBOX_DOUBLE_TAB_OK \
+	BUSYBOX_UTF8_TAB_OK \
+	BUSYBOX_CTRL_A_OK \
+	BUSYBOX_CTRL_E_OK \
+	BUSYBOX_CTRL_U_OK \
+	BUSYBOX_HOME_OK \
+	BUSYBOX_DELETE_OK \
+	BUSYBOX_BACKSPACE_OK \
+	BUSYBOX_CTRL_L_OK \
+	BUSYBOX_LONG_LINE_OK \
+	BUSYBOX_CTRL_D_OK \
+	BUSYBOX_VI_OK \
 	VM_READ_FAULT_OK \
 	VM_SHARED_READ_OK \
 	VM_PREAD_OK \
@@ -479,10 +579,21 @@ for marker in \
 	SCHED_RUNTIME_OK \
 	SCHED_TTY_WAIT_OK \
 	NETWORK_RUNTIME_OK \
+	BUSYBOX_IFCONFIG_OK \
+	BUSYBOX_ROUTE_OK \
+	BUSYBOX_PING_OK \
+	DNS_RUNTIME_OK \
+	BUSYBOX_NSLOOKUP_OK \
+	BUSYBOX_DNS_WGET_OK \
+	BUSYBOX_HTTPD_OK \
 	PRESSURE_RUNTIME_OK \
 	TTY_METADATA_OK \
 	TTY_NONBLOCK_OK \
 	TTY_CANONICAL_OK \
+	TTY_SIGNAL_FLUSH_OK \
+	TTY_NOFLSH_OK \
+	TTY_QUIT_OK \
+	TTY_SUSPEND_OK \
 	TTY_RAW_OK \
 	TTY_LONG_BEGIN \
 	TTY_LONG_END \
@@ -504,6 +615,13 @@ marker_count=$(awk '$0 == "BUSYBOX_HISTORY_OK" { count++ }
 	END { print count + 0 }' "$clean_log")
 if [ "$marker_count" -ne 2 ]; then
 	echo "unexpected QEMU history marker count: $marker_count" >&2
+	exit 1
+fi
+
+marker_count=$(awk '$0 == "BUSYBOX_REVERSE_SEARCH_OK" { count++ }
+	END { print count + 0 }' "$clean_log")
+if [ "$marker_count" -ne 2 ]; then
+	echo "unexpected reverse-search marker count: $marker_count" >&2
 	exit 1
 fi
 

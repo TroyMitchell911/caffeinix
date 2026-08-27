@@ -22,6 +22,9 @@
 #include <linux_uapi.h>
 #include <futex.h>
 #include <mmap.h>
+#include <tty.h>
+#include <ktime.h>
+#include <cpu.h>
 
 #define PROCESS_CHILD_EVENT_NONE       0
 #define PROCESS_CHILD_EVENT_STOPPED    1
@@ -37,9 +40,51 @@ static struct spinlock wait_lock;
 // struct process proc[NPROC];
 struct list proc;
 static process_t first;
+static volatile uint64 retired_process_user_time_ns;
+static volatile uint64 retired_process_system_time_ns;
+static volatile uint64 total_user_tasks;
+
+struct process_vfork {
+	struct sleeplock lock;
+	uint32 references;
+	process_t parent;
+	process_t child;
+	thread_t parent_thread;
+	pagedir_t shared_pagetable;
+	uint8 detached;
+	uint8 child_owns_shared;
+	uint8 released;
+};
 
 static void process_notify_parent_locked(process_t child, int code,
 					 int status);
+static int process_signal_group_locked(
+	int pgid, int signal, const struct signal_info *information);
+static int process_group_orphaned_locked(int pgid, int sid);
+static int process_group_stopped_locked(int pgid, int sid);
+
+static void process_vfork_state_get(struct process_vfork *state)
+{
+	if (!state || __atomic_fetch_add(&state->references, 1,
+					__ATOMIC_ACQUIRE) < 1)
+		PANIC("get inactive vfork state");
+}
+
+static void process_vfork_state_put(struct process_vfork *state)
+{
+	uint32 references;
+
+	if (!state)
+		return;
+	references = __atomic_fetch_sub(&state->references, 1,
+					__ATOMIC_RELEASE);
+	if (!references)
+		PANIC("put inactive vfork state");
+	if (references == 1) {
+		__atomic_thread_fence(__ATOMIC_ACQUIRE);
+		free(state);
+	}
+}
 
 static int process_parent_auto_reaps_locked(process_t child)
 {
@@ -85,58 +130,72 @@ static int setup_stdio(void)
 	return 0;
 }
 
-static struct block_device *mount_root_device(void)
+static uint32 mount_root_device(void)
 {
-	struct block_device *device;
 	uint32 id;
 
 	for (id = 1; id < BLOCK_DEVICE_MAX; id++) {
-		device = block_device_get(id);
-		if (device &&
-		    vfs_mount_root(ROOT_FILESYSTEM, device, 0) == VFS_OK)
-			return device;
+		if (vfs_mount_root(ROOT_FILESYSTEM, id, 0) == VFS_OK)
+			return id;
 	}
 	return 0;
 }
 
-static void mount_fat_device(struct block_device *root)
+static void mount_fat_device(uint32 root_id)
 {
-	struct block_device *device;
 	int status;
 	uint32 id;
 
 	for (id = 1; id < BLOCK_DEVICE_MAX; id++) {
-		device = block_device_get(id);
-		if (!device || device == root)
+		if (id == root_id)
 			continue;
-		status = vfs_mount("fat", device, "/mnt/fat", 0);
+		status = vfs_mount("fat", id, "/mnt/fat", 0);
 		if (status == VFS_OK)
 			return;
-		pr_warn("VFS: cannot mount %s as fat: %d", device->name,
-			status);
+		if (status != VFS_ERR_NODEV)
+			pr_warn("VFS: cannot mount block device %u as fat: %d",
+				id, status);
 	}
 }
 
 static void reparent(process_t p)
 {
-        process_t pp;
-        list_t l;
+	process_t child;
+	list_t entry;
 
-        for(l = proc.next; l != &proc; l = l->next) {
-                pp = list_entry(l, struct process, all_tag);
-                if(!pp)
-                        continue;
-                if(pp != p) {
-                        spinlock_acquire(&pp->lock);
-                        if(pp->parent == p) {
-                                pp->parent = first;
-                                spinlock_release(&pp->lock);
-                                wait_queue_wake_all(&first->child_wait);
-                                continue;
-                        }  
-                        spinlock_release(&pp->lock);
-                }
-        }
+	for (entry = proc.next; entry != &proc; entry = entry->next) {
+		struct signal_info information = {
+			.signal = LINUX_SIGHUP,
+			.code = LINUX_SI_KERNEL,
+		};
+		int orphaned, pgid, reparented = 0, sid;
+
+		child = list_entry(entry, struct process, all_tag);
+		if (!child || child == p || child->parent != p)
+			continue;
+		pgid = child->pgid;
+		sid = child->sid;
+		orphaned = process_group_orphaned_locked(pgid, sid);
+		spinlock_acquire(&child->lock);
+		if (child->parent == p) {
+			child->parent = first;
+			child->adopted_by_init = 1;
+			reparented = 1;
+		}
+		spinlock_release(&child->lock);
+		if (!reparented)
+			continue;
+		wait_queue_wake_all(&first->child_wait);
+		if (orphaned ||
+		    !process_group_orphaned_locked(pgid, sid) ||
+		    !process_group_stopped_locked(pgid, sid))
+			continue;
+		(void)process_signal_group_locked(pgid, LINUX_SIGHUP,
+					  &information);
+		information.signal = LINUX_SIGCONT;
+		(void)process_signal_group_locked(pgid, LINUX_SIGCONT,
+					  &information);
+	}
 }
 
 pagedir_t process_pagedir(process_t p, thread_t thread)
@@ -199,7 +258,7 @@ void process_freepagedir(pagedir_t pgdir, uint64 sz)
 static void proc_first_start(void)
 {
 	static uint8 fs_started;
-	struct block_device *root_device;
+	uint32 root_device;
 	char *argv[] = { INIT_PATH, 0 };
 	char *envp[] = {
 		"HOME=/",
@@ -233,6 +292,11 @@ static void proc_first_start(void)
 		if (status < 0) {
 			pr_err("VFS: cannot mount tmpfs on /tmp: %d", status);
 			PANIC("mount tmpfs");
+		}
+		status = vfs_mount("proc", 0, "/proc", 0);
+		if (status < 0) {
+			pr_err("VFS: cannot mount proc on /proc: %d", status);
+			PANIC("mount proc");
 		}
 		mount_fat_device(root_device);
 		status = setup_stdio();
@@ -273,11 +337,16 @@ static process_t process_alloc(void)
 		return 0;
 	}
 	signal_process_init(p);
+	memset(&p->credentials, 0, sizeof(p->credentials));
 	p->umask = 0022;
+	p->start_time_ns = ktime_get_boot_ns();
 	p->state = PROCESS_EMBRYO;
 	wait_queue_init(&p->child_wait, "child wait");
 	wait_queue_init(&p->thread_reap_wait, "thread reap");
 	wait_queue_init(&p->signal_wait, "signal wait");
+	spinlock_init(&p->sleep_lock, "process sleep");
+	wait_queue_init(&p->sleep_wait, "process sleep");
+	wait_queue_init(&p->vfork_wait, "vfork");
 	sleeplock_init(&p->mmap_lock, "process mmap");
 	spinlock_init(&p->files_lock, "process files");
 	vma_set_init(&p->vmas);
@@ -304,6 +373,8 @@ static process_t process_alloc(void)
         
 	/* Linux thread-group leaders share their PID and TID. */
 	p->pid = t->tid;
+	p->pgid = p->pid;
+	p->sid = p->pid;
         
         /* Set the context of return address */
         t->context.ra = (uint64)(proc_first_start);
@@ -337,10 +408,17 @@ static void process_free(process_t p)
 		PANIC("free process with thread reaper");
 	if (!wait_queue_empty(&p->signal_wait))
 		PANIC("free process with signal waiter");
+	if (!wait_queue_empty(&p->sleep_wait))
+		PANIC("free process with sleep waiter");
+	if (!wait_queue_empty(&p->vfork_wait))
+		PANIC("free process with vfork waiter");
 	vma_set_destroy(&p->vmas);
 	signal_process_destroy(p);
 	pfree(p->signal_pending);
 	p->signal_pending = 0;
+	if (p->cmdline)
+		pfree(p->cmdline);
+	p->cmdline = 0;
         if(p->pagetable) {
                 process_freepagedir(p->pagetable, p->sz);
         }
@@ -352,6 +430,10 @@ static void process_free(process_t p)
                 thread_free(thread);
                 spinlock_release(&thread->lock);
         }
+	__atomic_add_fetch(&retired_process_user_time_ns,
+			   p->retired_user_time_ns, __ATOMIC_RELAXED);
+	__atomic_add_fetch(&retired_process_system_time_ns,
+			   p->retired_system_time_ns, __ATOMIC_RELAXED);
         list_remove(&p->all_tag);
         spinlock_release(&p->lock);
         free(p);
@@ -367,6 +449,9 @@ void process_init(void)
 	/* Init the spinlock */
 	spinlock_init(&wait_lock, "wait_lock");
 	list_init(&proc);
+	retired_process_user_time_ns = 0;
+	retired_process_system_time_ns = 0;
+	total_user_tasks = 0;
 }
 
 void userinit(void)
@@ -394,6 +479,7 @@ void userinit(void)
 	p->state = PROCESS_LIVE;
 	spinlock_release(&p->lock);
 	spinlock_acquire(&t->lock);
+	__atomic_add_fetch(&total_user_tasks, 1, __ATOMIC_RELAXED);
 	scheduler_make_runnable(t);
 	spinlock_release(&t->lock);
 }
@@ -422,9 +508,428 @@ int either_copyin(void *dst, int user_src, uint64 src, uint64 len)
         }
 }
 
-int process_fork(uint64 child_stack)
+void process_expire_timers(uint64 now)
+{
+	struct signal_info information = {
+		.signal = LINUX_SIGALRM,
+		.code = LINUX_SI_KERNEL,
+	};
+	process_t process;
+	list_t entry;
+
+	spinlock_acquire(&wait_lock);
+	for (entry = proc.next; entry != &proc; entry = entry->next) {
+		uint64 interval, missed, next;
+
+		process = list_entry(entry, struct process, all_tag);
+		spinlock_acquire(&process->lock);
+		if (process->state != PROCESS_LIVE ||
+		    !process->real_timer_deadline ||
+		    process->real_timer_deadline > now) {
+			spinlock_release(&process->lock);
+			continue;
+		}
+		interval = process->real_timer_interval;
+		if (!interval) {
+			process->real_timer_deadline = 0;
+		} else {
+			missed = (now - process->real_timer_deadline) /
+				 interval + 1;
+			if (missed > (~(uint64)0 -
+			    process->real_timer_deadline) / interval) {
+				process->real_timer_deadline = 0;
+				process->real_timer_interval = 0;
+			} else {
+				next = process->real_timer_deadline +
+				       missed * interval;
+				process->real_timer_deadline = next;
+			}
+		}
+		(void)signal_queue_process_locked(process, LINUX_SIGALRM,
+		                                  &information);
+		spinlock_release(&process->lock);
+	}
+	spinlock_release(&wait_lock);
+}
+
+int process_task_exists(int tid)
+{
+	process_t process;
+	list_t entry;
+	int found = 0, index;
+
+	if (tid <= 0)
+		return 0;
+	spinlock_acquire(&wait_lock);
+	for (entry = proc.next; entry != &proc; entry = entry->next) {
+		process = list_entry(entry, struct process, all_tag);
+		spinlock_acquire(&process->lock);
+		if (process->state == PROCESS_LIVE) {
+			for (index = 0; index < PROC_MAXTHREAD; index++) {
+				thread_t thread = process->thread[index];
+
+				if (thread && thread->tid == tid &&
+				    thread->state != THREAD_UNUSED &&
+				    thread->state != THREAD_EXITED) {
+					found = 1;
+					break;
+				}
+			}
+		}
+		spinlock_release(&process->lock);
+		if (found)
+			break;
+	}
+	spinlock_release(&wait_lock);
+	return found;
+}
+
+uint32 process_task_count(void)
+{
+	process_t process;
+	list_t entry;
+	uint64 count = 0;
+
+	spinlock_acquire(&wait_lock);
+	for (entry = proc.next; entry != &proc; entry = entry->next) {
+		process = list_entry(entry, struct process, all_tag);
+		spinlock_acquire(&process->lock);
+		if (process->state == PROCESS_LIVE)
+			count += process->live_threads;
+		else if (process->state == PROCESS_ZOMBIE)
+			count++;
+		spinlock_release(&process->lock);
+	}
+	spinlock_release(&wait_lock);
+	return count > 0xffffffffU ? 0xffffffffU : count;
+}
+
+static void process_snapshot_locked(process_t process,
+				    struct process_snapshot *snapshot,
+				    uint64 now)
+{
+	uint64 caught = 0, ignored = 0;
+	uint64 system_runtime = process->retired_system_time_ns;
+	uint64 user_runtime = process->retired_user_time_ns;
+	thread_t thread;
+	int index;
+
+	memset(snapshot, 0, sizeof(*snapshot));
+	safe_strncpy(snapshot->name, process->name, sizeof(snapshot->name));
+	snapshot->pid = process->pid;
+	snapshot->ppid = process->parent ? process->parent->pid : 0;
+	snapshot->pgid = process->pgid;
+	snapshot->sid = process->sid;
+	snapshot->uid = process->credentials.uid;
+	snapshot->euid = process->credentials.euid;
+	snapshot->suid = process->credentials.suid;
+	snapshot->fsuid = process->credentials.fsuid;
+	snapshot->gid = process->credentials.gid;
+	snapshot->egid = process->credentials.egid;
+	snapshot->sgid = process->credentials.sgid;
+	snapshot->fsgid = process->credentials.fsgid;
+	snapshot->group_count = process->credentials.group_count;
+	memmove(snapshot->groups, process->credentials.groups,
+		snapshot->group_count * sizeof(snapshot->groups[0]));
+	snapshot->tty = tty_device_number(process->controlling_tty);
+	snapshot->tty_pgid = process->controlling_tty ?
+		process->controlling_tty->foreground_pgid : -1;
+	snapshot->threads = process->live_threads;
+	snapshot->start_time_ns = process->start_time_ns;
+	snapshot->children_user_time_ns = process->children_user_time_ns;
+	snapshot->children_system_time_ns =
+		process->children_system_time_ns;
+	snapshot->virtual_size = process->sz;
+	snapshot->signal_shared_pending = process->signal_pending ?
+		process->signal_pending->bits : 0;
+	for (index = 0; index < 64; index++) {
+		if (process->signal_actions[index].handler == LINUX_SIG_IGN)
+			ignored |= 1ULL << index;
+		else if (process->signal_actions[index].handler != LINUX_SIG_DFL)
+			caught |= 1ULL << index;
+	}
+	snapshot->signal_ignored = ignored;
+	snapshot->signal_caught = caught;
+	for (index = 0; index < PROC_MAXTHREAD; index++) {
+		thread = process->thread[index];
+		if (!thread)
+			continue;
+		spinlock_acquire(&thread->lock);
+		if (thread->tid == process->pid)
+			snapshot->nice = thread->sched.nice;
+		{
+			uint64 system, user;
+
+			scheduler_thread_times(thread, now, &user, &system);
+			user_runtime += user;
+			system_runtime += system;
+		}
+		if (thread->tid == process->pid) {
+			snapshot->signal_pending = thread->signal_pending.bits;
+			snapshot->signal_blocked = thread->signal_mask;
+		}
+		if (thread->state == THREAD_RUNNING ||
+		    thread->state == THREAD_RUNNABLE)
+			snapshot->runnable_threads++;
+		else if (thread->state == THREAD_SLEEPING &&
+			 !thread->wait_interruptible)
+			snapshot->blocked_threads++;
+		spinlock_release(&thread->lock);
+	}
+	if (process->state == PROCESS_ZOMBIE)
+		snapshot->state = 'Z';
+	else if (process->stopped)
+		snapshot->state = 'T';
+	else if (snapshot->runnable_threads)
+		snapshot->state = 'R';
+	else if (snapshot->blocked_threads)
+		snapshot->state = 'D';
+	else
+		snapshot->state = 'S';
+	snapshot->user_time_ns = user_runtime;
+	snapshot->system_time_ns = system_runtime;
+}
+
+int process_snapshot_pid(int pid, struct process_snapshot *snapshot,
+			 char *cmdline, uint32 cmdline_size,
+			 uint32 *cmdline_length)
+{
+	process_t process;
+	list_t entry;
+	int found = 0;
+
+	if (pid <= 0 || !snapshot)
+		return -1;
+	if (cmdline_length)
+		*cmdline_length = 0;
+	spinlock_acquire(&wait_lock);
+	for (entry = proc.next; entry != &proc; entry = entry->next) {
+		process = list_entry(entry, struct process, all_tag);
+		spinlock_acquire(&process->lock);
+		if (process->pid != pid ||
+		    process->state == PROCESS_EMBRYO) {
+			spinlock_release(&process->lock);
+			continue;
+		}
+		process_snapshot_locked(process, snapshot, ktime_get_ns());
+		if (process->state != PROCESS_ZOMBIE && cmdline &&
+		    cmdline_size && process->cmdline) {
+			uint32 length = process->cmdline_length;
+
+			if (length > cmdline_size)
+				length = cmdline_size;
+			memmove(cmdline, process->cmdline, length);
+			if (cmdline_length)
+				*cmdline_length = length;
+		}
+		spinlock_release(&process->lock);
+		found = 1;
+		break;
+	}
+	spinlock_release(&wait_lock);
+	if (found)
+		(void)mmap_process_usage(pid, &snapshot->virtual_size,
+					 &snapshot->resident_pages);
+	return found ? 0 : -1;
+}
+
+uint32 process_snapshot_pids(int *pids, uint32 capacity)
+{
+	process_t process;
+	list_t entry;
+	uint32 count = 0;
+
+	if (!pids || !capacity)
+		return 0;
+	spinlock_acquire(&wait_lock);
+	for (entry = proc.next;
+	     entry != &proc && count < capacity; entry = entry->next) {
+		process = list_entry(entry, struct process, all_tag);
+		spinlock_acquire(&process->lock);
+		if (process->state != PROCESS_EMBRYO)
+			pids[count++] = process->pid;
+		spinlock_release(&process->lock);
+	}
+	spinlock_release(&wait_lock);
+	return count;
+}
+
+void process_snapshot_system(struct process_system_snapshot *snapshot)
+{
+	struct process_snapshot process_snapshot;
+	process_t process;
+	list_t entry;
+	uint64 now = ktime_get_ns();
+
+	if (!snapshot)
+		return;
+	memset(snapshot, 0, sizeof(*snapshot));
+	spinlock_acquire(&wait_lock);
+	snapshot->user_time_ns = __atomic_load_n(
+		&retired_process_user_time_ns, __ATOMIC_RELAXED);
+	snapshot->system_time_ns = __atomic_load_n(
+		&retired_process_system_time_ns, __ATOMIC_RELAXED);
+	for (entry = proc.next; entry != &proc; entry = entry->next) {
+		process = list_entry(entry, struct process, all_tag);
+		spinlock_acquire(&process->lock);
+		if (process->state == PROCESS_EMBRYO) {
+			spinlock_release(&process->lock);
+			continue;
+		}
+		process_snapshot_locked(process, &process_snapshot, now);
+		snapshot->processes += process_snapshot.threads;
+		snapshot->running += process_snapshot.runnable_threads;
+		snapshot->blocked += process_snapshot.blocked_threads;
+		snapshot->user_time_ns += process_snapshot.user_time_ns;
+		snapshot->system_time_ns += process_snapshot.system_time_ns;
+		spinlock_release(&process->lock);
+	}
+	spinlock_release(&wait_lock);
+	snapshot->last_pid = thread_last_user_tid();
+	snapshot->total_forks = __atomic_load_n(&total_user_tasks,
+						 __ATOMIC_RELAXED);
+	snapshot->context_switches = scheduler_context_switches();
+	snapshot->idle_time_ns = scheduler_idle_time_ns();
+}
+
+void process_set_cmdline(process_t process, void *cmdline, uint32 length)
+{
+	void *old;
+
+	if (!process || !cmdline || length > PROCESS_CMDLINE_MAX)
+		PANIC("invalid process command line");
+	spinlock_acquire(&process->lock);
+	old = process->cmdline;
+	process->cmdline = cmdline;
+	process->cmdline_length = length;
+	spinlock_release(&process->lock);
+	if (old)
+		pfree(old);
+}
+
+void process_credentials_get(struct process_credentials *credentials)
+{
+	process_t process = cur_proc();
+
+	if (!credentials)
+		return;
+	memset(credentials, 0, sizeof(*credentials));
+	if (!process)
+		return;
+	spinlock_acquire(&process->lock);
+	*credentials = process->credentials;
+	spinlock_release(&process->lock);
+}
+
+uint32 process_umask_get(void)
+{
+	process_t process = cur_proc();
+	uint32 mask = 0;
+
+	if (!process)
+		return 0;
+	spinlock_acquire(&process->lock);
+	mask = process->umask;
+	spinlock_release(&process->lock);
+	return mask;
+}
+
+uint32 process_umask_set(uint32 mask)
+{
+	process_t process = cur_proc();
+	uint32 old_mask;
+
+	if (!process)
+		return 0;
+	spinlock_acquire(&process->lock);
+	old_mask = process->umask;
+	process->umask = mask & 0777;
+	spinlock_release(&process->lock);
+	return old_mask;
+}
+
+static int process_vfork_map_child(process_t parent, process_t child,
+				   thread_t parent_thread,
+				   thread_t child_thread)
+{
+	struct process_vfork *state;
+	int result = -1;
+
+	state = malloc(sizeof(*state));
+	if (!state)
+		return -1;
+	memset(state, 0, sizeof(*state));
+	sleeplock_init(&state->lock, "vfork state");
+	state->references = 1;
+	state->parent = parent;
+	state->child = child;
+	state->parent_thread = parent_thread;
+	state->shared_pagetable = parent->pagetable;
+
+	sleeplock_acquire(&parent->mmap_lock);
+	if (!vm_mapped(parent->pagetable, TRAPFRAME(0)))
+		goto out;
+	vm_unmap(parent->pagetable, TRAPFRAME(0), 1, 0);
+	if (vm_map(parent->pagetable, TRAPFRAME(0),
+	           (uint64)child_thread->trapframe, PGSIZE,
+	           PTE_R | PTE_W) < 0) {
+		if (vm_map(parent->pagetable, TRAPFRAME(0),
+		           (uint64)parent_thread->trapframe, PGSIZE,
+		           PTE_R | PTE_W) < 0)
+			PANIC("restore vfork trapframe");
+		goto out;
+	}
+	child->vfork = state;
+	result = 0;
+out:
+	cpu_tlb_flush_all();
+	sleeplock_release(&parent->mmap_lock);
+	if (result < 0)
+		process_vfork_state_put(state);
+	return result;
+}
+
+static void process_vfork_detach_parent(process_t parent,
+					thread_t parent_thread,
+					process_t child)
+{
+	struct process_vfork *state;
+
+	if (!spinlock_holding(&parent->lock) ||
+	    parent_thread->vfork_child != child)
+		PANIC("detach invalid vfork parent");
+	state = child->vfork;
+	if (!state)
+		PANIC("detach missing vfork state");
+	process_vfork_state_get(state);
+	spinlock_release(&parent->lock);
+	sleeplock_acquire(&state->lock);
+	if (!state->released) {
+		if (state->detached || state->parent != parent ||
+		    state->parent_thread != parent_thread ||
+		    state->child != child || child->vfork != state)
+			PANIC("detach mismatched vfork state");
+		state->child_owns_shared = mmap_process_vfork_detach(
+			parent, child, state->shared_pagetable);
+		state->detached = 1;
+		spinlock_acquire(&parent->lock);
+		if (parent_thread->vfork_child != child)
+			PANIC("detach changed vfork parent");
+		parent_thread->vfork_child = 0;
+		state->parent = 0;
+		state->parent_thread = 0;
+		wait_queue_wake_all(&parent->vfork_wait);
+		spinlock_release(&parent->lock);
+	}
+	sleeplock_release(&state->lock);
+	process_vfork_state_put(state);
+	spinlock_acquire(&parent->lock);
+}
+
+static int process_fork_common(uint64 child_stack, int vfork)
 {
         int pid, i;
+	int had_cmdline;
         process_t oldp, newp;
         thread_t oldt, newt;
 
@@ -439,20 +944,48 @@ int process_fork(uint64 child_stack)
 	spinlock_release(&newt->lock);
 	spinlock_release(&newp->lock);
 
-	if (mmap_process_fork(oldp, newp) < 0) {
+	if ((vfork ? mmap_process_vfork(oldp, newp) :
+	     mmap_process_fork(oldp, newp)) < 0) {
 		spinlock_acquire(&wait_lock);
 		process_free(newp);
 		spinlock_release(&wait_lock);
 		return -1;
 	}
 
+	spinlock_acquire(&oldp->lock);
+	newp->credentials = oldp->credentials;
 	newp->umask = oldp->umask;
+	had_cmdline = oldp->cmdline != 0;
+	if (had_cmdline) {
+		newp->cmdline = palloc_zero();
+		if (newp->cmdline) {
+			newp->cmdline_length = oldp->cmdline_length;
+			memmove(newp->cmdline, oldp->cmdline,
+				newp->cmdline_length);
+		}
+	}
+	spinlock_release(&oldp->lock);
+	if (had_cmdline && !newp->cmdline) {
+		if (vfork)
+			newp->pagetable = 0;
+		spinlock_acquire(&wait_lock);
+		process_free(newp);
+		spinlock_release(&wait_lock);
+		return -1;
+	}
 	newp->membarrier_private_expedited =
 		__atomic_load_n(&oldp->membarrier_private_expedited,
 		                __ATOMIC_ACQUIRE);
 	*newt->trapframe = *oldt->trapframe;
 	if (child_stack)
 		newt->trapframe->sp = child_stack;
+	if (vfork && process_vfork_map_child(oldp, newp, oldt, newt) < 0) {
+		newp->pagetable = 0;
+		spinlock_acquire(&wait_lock);
+		process_free(newp);
+		spinlock_release(&wait_lock);
+		return -1;
+	}
 
         pid = newp->pid;
         newt->trapframe->a0 = 0;
@@ -474,19 +1007,124 @@ int process_fork(uint64 child_stack)
 	signal_process_fork(newp, oldp);
 	spinlock_release(&oldp->lock);
 	spinlock_release(&newp->lock);
+	if (vfork) {
+		spinlock_acquire(&oldp->lock);
+		if (oldt->vfork_child)
+			PANIC("nested vfork parent");
+		oldt->vfork_child = newp;
+		spinlock_release(&oldp->lock);
+	}
 
 	spinlock_acquire(&wait_lock);
 	spinlock_acquire(&newp->lock);
 	newp->parent = oldp;
+	newp->adopted_by_init = 0;
+	newp->pgid = oldp->pgid;
+	newp->sid = oldp->sid;
+	newp->controlling_tty = oldp->controlling_tty;
+	newp->did_exec = 0;
 	newp->state = PROCESS_LIVE;
 	spinlock_release(&newp->lock);
 	spinlock_acquire(&newt->lock);
+	__atomic_add_fetch(&total_user_tasks, 1, __ATOMIC_RELAXED);
 	scheduler_make_runnable(newt);
 	spinlock_release(&newt->lock);
 	spinlock_release(&wait_lock);
+	if (vfork) {
+		spinlock_acquire(&oldp->lock);
+		while (oldt->vfork_child == newp) {
+			if (wait_queue_sleep_killable(&oldp->vfork_wait,
+						      &oldp->lock) ==
+			    WAIT_QUEUE_INTERRUPTED)
+				process_vfork_detach_parent(oldp, oldt, newp);
+		}
+		spinlock_release(&oldp->lock);
+	}
 
         /* Return for parent process */
         return pid;
+}
+
+int process_fork(uint64 child_stack)
+{
+	return process_fork_common(child_stack, 0);
+}
+
+int process_vfork(uint64 child_stack)
+{
+	process_t process = cur_proc();
+	thread_t current = cur_thread();
+	int supported, result;
+
+	spinlock_acquire(&process->lock);
+	supported = process->state == PROCESS_LIVE &&
+		    !process->group_exiting && process->live_threads == 1 &&
+		    process->tnums == 1 &&
+		    current->id_p == 0 && !current->vfork_child;
+	spinlock_release(&process->lock);
+	if (!supported)
+		return -LINUX_EINVAL;
+	result = process_fork_common(child_stack, 1);
+	return result < 0 ? -LINUX_ENOMEM : result;
+}
+
+static void process_vfork_release_normal_locked(
+	process_t process, struct process_vfork *state, int register_mmap)
+{
+	thread_t parent_thread = state->parent_thread;
+	process_t parent = state->parent;
+	pagedir_t shared = state->shared_pagetable;
+
+	if (state->released || state->detached || state->child != process ||
+	    process->vfork != state || !parent_thread ||
+	    parent_thread->home != parent || !shared ||
+	    shared != parent->pagetable)
+		PANIC("invalid vfork parent");
+	if (register_mmap)
+		mmap_process_register(process);
+	sleeplock_acquire(&parent->mmap_lock);
+	if (!vm_mapped(shared, TRAPFRAME(0)))
+		PANIC("missing vfork trapframe");
+	vm_unmap(shared, TRAPFRAME(0), 1, 0);
+	if (vm_map(shared, TRAPFRAME(0), (uint64)parent_thread->trapframe,
+	           PGSIZE, PTE_R | PTE_W) < 0)
+		PANIC("restore vfork parent");
+	cpu_tlb_flush_all();
+	sleeplock_release(&parent->mmap_lock);
+	spinlock_acquire(&parent->lock);
+	if (parent_thread->vfork_child != process)
+		PANIC("vfork parent mismatch");
+	process->vfork = 0;
+	state->released = 1;
+	state->parent = 0;
+	state->parent_thread = 0;
+	parent_thread->vfork_child = 0;
+	wait_queue_wake_all(&parent->vfork_wait);
+	spinlock_release(&parent->lock);
+}
+
+int process_vfork_exec(process_t process)
+{
+	struct process_vfork *state;
+	int parent_owns_shared;
+
+	if (!process || !(state = process->vfork))
+		return 0;
+	sleeplock_acquire(&state->lock);
+	if (state->released || state->child != process ||
+	    process->vfork != state)
+		PANIC("exec invalid vfork state");
+	if (state->detached) {
+		parent_owns_shared = !state->child_owns_shared;
+		process->vfork = 0;
+		state->released = 1;
+	} else {
+		process_vfork_release_normal_locked(process, state, 1);
+		parent_owns_shared = 1;
+	}
+	sleeplock_release(&state->lock);
+	process_vfork_state_put(state);
+	return parent_owns_shared;
 }
 
 static int process_prefault_write(process_t process, uint64 address,
@@ -560,6 +1198,7 @@ int process_clone_thread(uint64 flags, uint64 child_stack,
 		goto fail_mapped;
 	}
 	spinlock_release(&p->lock);
+	__atomic_add_fetch(&total_user_tasks, 1, __ATOMIC_RELAXED);
 	scheduler_make_runnable(child);
 	spinlock_release(&child->lock);
 	return tid;
@@ -640,8 +1279,13 @@ int process_exec_quiesce(process_t p, thread_t current)
 	return 0;
 }
 
-void process_exec_end(process_t p)
+void process_exec_end(process_t p, int committed)
 {
+	if (committed) {
+		spinlock_acquire(&wait_lock);
+		p->did_exec = 1;
+		spinlock_release(&wait_lock);
+	}
 	spinlock_acquire(&p->lock);
 	if (!p->execing)
 		PANIC("finish inactive exec");
@@ -661,18 +1305,58 @@ int process_group_exiting(process_t p, int *status)
 	return exiting;
 }
 
+static int process_vfork_exit(process_t process)
+{
+	struct process_vfork *state = process->vfork;
+	int shared_with_parent = 0;
+
+	if (!state)
+		return 0;
+	sleeplock_acquire(&state->lock);
+	if (state->released || state->child != process ||
+	    process->vfork != state)
+		PANIC("exit invalid vfork state");
+	if (state->detached) {
+		process->vfork = 0;
+		state->released = 1;
+	} else {
+		if (process->mmap_registered)
+			PANIC("registered vfork address space");
+		sleeplock_acquire(&process->mmap_lock);
+		vma_set_destroy(&process->vmas);
+		process->pagetable = 0;
+		sleeplock_release(&process->mmap_lock);
+		process_vfork_release_normal_locked(process, state, 0);
+		shared_with_parent = 1;
+	}
+	sleeplock_release(&state->lock);
+	process_vfork_state_put(state);
+	return shared_with_parent;
+}
+
 static void process_release_resources(process_t p)
 {
 	file_t files[NOFILE];
+	int shared_with_parent;
 	int count = 0, fd;
 
-	mmap_process_unregister(p);
-	sleeplock_acquire(&p->mmap_lock);
-	vma_set_destroy(&p->vmas);
-	if (vm_mapped(p->pagetable, USER_SIGRETURN))
-		vm_unmap(p->pagetable, USER_SIGRETURN, 1, 0);
-	vm_free_user(p->pagetable);
-	sleeplock_release(&p->mmap_lock);
+	shared_with_parent = process_vfork_exit(p);
+	if (!shared_with_parent && p->vfork_mmap_transferred) {
+		if (p->mmap_registered)
+			PANIC("registered transferred vfork mmap");
+		sleeplock_acquire(&p->mmap_lock);
+		vma_set_destroy(&p->vmas);
+		p->pagetable = 0;
+		sleeplock_release(&p->mmap_lock);
+	} else if (!shared_with_parent) {
+		mmap_process_unregister(p);
+		sleeplock_acquire(&p->mmap_lock);
+		vma_set_destroy(&p->vmas);
+		if (vm_mapped(p->pagetable, USER_SIGRETURN))
+			vm_unmap(p->pagetable, USER_SIGRETURN, 1, 0);
+		vm_free_user(p->pagetable);
+		sleeplock_release(&p->mmap_lock);
+	}
 	spinlock_acquire(&p->files_lock);
 	for (fd = 0; fd < NOFILE; fd++) {
 		if (!p->ofile[fd])
@@ -733,6 +1417,32 @@ void process_thread_exit(int cause, int group)
 
 	process_release_resources(p);
 	spinlock_acquire(&wait_lock);
+	if (p->sid == p->pid && p->controlling_tty) {
+		process_t member;
+		list_t entry;
+		struct tty *tty = p->controlling_tty;
+		struct signal_info information = {
+			.signal = LINUX_SIGHUP,
+			.code = LINUX_SI_KERNEL,
+		};
+		int foreground_pgid = tty->foreground_pgid;
+
+		if (foreground_pgid) {
+			(void)process_signal_group_locked(
+				foreground_pgid, LINUX_SIGHUP, &information);
+			information.signal = LINUX_SIGCONT;
+			(void)process_signal_group_locked(
+				foreground_pgid, LINUX_SIGCONT, &information);
+		}
+		tty->session_id = 0;
+		tty->foreground_pgid = 0;
+		for (entry = proc.next; entry != &proc; entry = entry->next) {
+			member = list_entry(entry, struct process, all_tag);
+			if (member->sid == p->sid &&
+			    member->controlling_tty == tty)
+				member->controlling_tty = 0;
+		}
+	}
 	reparent(p);
 	auto_reap = process_parent_auto_reaps_locked(p);
 	spinlock_acquire(&p->lock);
@@ -756,13 +1466,87 @@ void process_thread_exit(int cause, int group)
 	scheduler_exit_locked();
 }
 
-int process_wait(int target, uint64 status_address, int options)
+static int process_wait_matches(process_t parent, process_t child,
+				int target)
+{
+	if (target > 0)
+		return child->pid == target;
+	if (target == -1)
+		return 1;
+	if (!target)
+		return child->pgid == parent->pgid;
+	return (int64)child->pgid == -(int64)target;
+}
+
+static void process_usage_ns_locked(process_t process, uint64 *user_ns,
+				    uint64 *system_ns)
+{
+	uint64 now = ktime_get_ns();
+	thread_t thread;
+	int index;
+
+	*user_ns = process->retired_user_time_ns +
+		process->children_user_time_ns;
+	*system_ns = process->retired_system_time_ns +
+		process->children_system_time_ns;
+	for (index = 0; index < PROC_MAXTHREAD; index++) {
+		thread = process->thread[index];
+		if (!thread)
+			continue;
+		spinlock_acquire(&thread->lock);
+		{
+			uint64 system, user;
+
+			scheduler_thread_times(thread, now, &user, &system);
+			*user_ns += user;
+			*system_ns += system;
+		}
+		spinlock_release(&thread->lock);
+	}
+}
+
+static void process_rusage_locked(process_t process,
+				  struct linux_rusage *usage)
+{
+	uint64 system_ns, user_ns;
+
+	memset(usage, 0, sizeof(*usage));
+	process_usage_ns_locked(process, &user_ns, &system_ns);
+	usage->user_time.seconds = user_ns / 1000000000ULL;
+	usage->user_time.microseconds =
+		(user_ns % 1000000000ULL) / 1000;
+	usage->system_time.seconds = system_ns / 1000000000ULL;
+	usage->system_time.microseconds =
+		(system_ns % 1000000000ULL) / 1000;
+}
+
+static int process_copy_rusage_locked(process_t process,
+				      process_t destination, uint64 address)
+{
+	struct linux_rusage usage;
+
+	if (!address)
+		return 0;
+	process_rusage_locked(process, &usage);
+	return copyout_nofault(destination->pagetable, address,
+			       (char *)&usage, sizeof(usage));
+}
+
+int process_wait(int target, uint64 status_address, uint64 usage_address,
+		 int options)
 {
         process_t p, pp;
 	int exit_status, kids, pid;
         list_t l;
 
         p = cur_proc();
+	if ((status_address &&
+	     process_prefault_write(p, status_address,
+				    sizeof(exit_status)) < 0) ||
+	    (usage_address &&
+	     process_prefault_write(p, usage_address,
+				    sizeof(struct linux_rusage)) < 0))
+		return PROCESS_WAIT_FAULT;
 
         spinlock_acquire(&wait_lock);
 
@@ -772,8 +1556,8 @@ int process_wait(int target, uint64 status_address, int options)
                         pp = list_entry(l, struct process, all_tag);
                         if(!pp)
                                 continue;
-			if(pp->parent == p &&
-			   (target == -1 || target == pp->pid)) {
+			if (pp->parent == p &&
+			    process_wait_matches(p, pp, target)) {
                                 spinlock_acquire(&pp->lock);
 				if (pp->auto_reap) {
 					spinlock_release(&pp->lock);
@@ -781,6 +1565,9 @@ int process_wait(int target, uint64 status_address, int options)
 				}
                                 kids = 1;
 				if(pp->state == PROCESS_ZOMBIE) {
+					uint64 child_system_ns;
+					uint64 child_user_ns;
+
                                         pid = pp->pid;
 
 					if (pp->group_exit_signal)
@@ -790,14 +1577,26 @@ int process_wait(int target, uint64 status_address, int options)
 					else
 						exit_status =
 							(pp->exit_state & 0xff) << 8;
-					if(status_address &&
-					   either_copyout(1, status_address,
-					                  &exit_status,
-					                  sizeof(exit_status)) < 0) {
+					if (status_address &&
+					    copyout_nofault(
+						    p->pagetable, status_address,
+						    (char *)&exit_status,
+						    sizeof(exit_status)) < 0) {
 						spinlock_release(&pp->lock);
 						spinlock_release(&wait_lock);
 						return PROCESS_WAIT_FAULT;
 					}
+					if (process_copy_rusage_locked(
+						    pp, p, usage_address) < 0) {
+						spinlock_release(&pp->lock);
+						spinlock_release(&wait_lock);
+						return PROCESS_WAIT_FAULT;
+					}
+					process_usage_ns_locked(pp, &child_user_ns,
+								&child_system_ns);
+					p->children_user_time_ns += child_user_ns;
+					p->children_system_time_ns +=
+						child_system_ns;
 
 					spinlock_release(&pp->lock);
 					process_free(pp);
@@ -820,9 +1619,16 @@ int process_wait(int target, uint64 status_address, int options)
 					else
 						exit_status = 0xffff;
 					if (status_address &&
-					    either_copyout(1, status_address,
-					                   &exit_status,
-					                   sizeof(exit_status)) < 0) {
+					    copyout_nofault(
+						    p->pagetable, status_address,
+						    (char *)&exit_status,
+						    sizeof(exit_status)) < 0) {
+						spinlock_release(&pp->lock);
+						spinlock_release(&wait_lock);
+						return PROCESS_WAIT_FAULT;
+					}
+					if (process_copy_rusage_locked(
+						    pp, p, usage_address) < 0) {
 						spinlock_release(&pp->lock);
 						spinlock_release(&wait_lock);
 						return PROCESS_WAIT_FAULT;
@@ -889,6 +1695,348 @@ static process_t process_find_locked(int pid)
 	return 0;
 }
 
+static process_t process_find_existing_locked(int pid)
+{
+	process_t process;
+	list_t entry;
+
+	if (!spinlock_holding(&wait_lock))
+		PANIC("process lookup unlocked");
+	for (entry = proc.next; entry != &proc; entry = entry->next) {
+		process = list_entry(entry, struct process, all_tag);
+		if (process->pid == pid && process->state != PROCESS_EMBRYO)
+			return process;
+	}
+	return 0;
+}
+
+static int process_group_exists_locked(int pgid, int sid)
+{
+	process_t process;
+	list_t entry;
+
+	if (!spinlock_holding(&wait_lock))
+		PANIC("process group lookup unlocked");
+	for (entry = proc.next; entry != &proc; entry = entry->next) {
+		process = list_entry(entry, struct process, all_tag);
+		if (process->state != PROCESS_EMBRYO && process->pgid == pgid &&
+		    process->sid == sid)
+			return 1;
+	}
+	return 0;
+}
+
+int process_setpgid(int pid, int pgid)
+{
+	process_t caller = cur_proc();
+	process_t target;
+	int result = 0;
+
+	if (pid < 0 || pgid < 0)
+		return -LINUX_EINVAL;
+	if (!pid)
+		pid = caller->pid;
+	spinlock_acquire(&wait_lock);
+	target = process_find_locked(pid);
+	if (!target || (target != caller && target->parent != caller)) {
+		result = -LINUX_ESRCH;
+		goto out;
+	}
+	if (target != caller && target->did_exec) {
+		result = -LINUX_EACCES;
+		goto out;
+	}
+	if (target->sid != caller->sid || target->pid == target->sid) {
+		result = -LINUX_EPERM;
+		goto out;
+	}
+	if (!pgid)
+		pgid = target->pid;
+	if (pgid != target->pid &&
+	    !process_group_exists_locked(pgid, caller->sid)) {
+		result = -LINUX_EPERM;
+		goto out;
+	}
+	target->pgid = pgid;
+out:
+	spinlock_release(&wait_lock);
+	return result;
+}
+
+int process_getpgid(int pid)
+{
+	process_t process;
+	int result;
+
+	if (pid < 0)
+		return -LINUX_ESRCH;
+	if (!pid)
+		pid = cur_proc()->pid;
+	spinlock_acquire(&wait_lock);
+	process = process_find_existing_locked(pid);
+	if (!process)
+		result = -LINUX_ESRCH;
+	else
+		result = process->pgid;
+	spinlock_release(&wait_lock);
+	return result;
+}
+
+int process_getsid(int pid)
+{
+	process_t process;
+	int result;
+
+	if (pid < 0)
+		return -LINUX_ESRCH;
+	if (!pid)
+		pid = cur_proc()->pid;
+	spinlock_acquire(&wait_lock);
+	process = process_find_existing_locked(pid);
+	if (!process)
+		result = -LINUX_ESRCH;
+	else
+		result = process->sid;
+	spinlock_release(&wait_lock);
+	return result;
+}
+
+int process_setsid(void)
+{
+	process_t caller = cur_proc();
+	int result;
+
+	spinlock_acquire(&wait_lock);
+	if (process_group_exists_locked(caller->pid, caller->sid)) {
+		result = -LINUX_EPERM;
+	} else {
+		caller->sid = caller->pid;
+		caller->pgid = caller->pid;
+		caller->controlling_tty = 0;
+		result = caller->sid;
+	}
+	spinlock_release(&wait_lock);
+	return result;
+}
+
+struct tty *process_controlling_tty(void)
+{
+	struct tty *tty;
+
+	spinlock_acquire(&wait_lock);
+	tty = cur_proc()->controlling_tty;
+	spinlock_release(&wait_lock);
+	return tty;
+}
+
+int process_tty_open(struct tty *tty, int no_ctty)
+{
+	process_t caller = cur_proc();
+	process_t member;
+	list_t entry;
+
+	if (!tty)
+		return VFS_ERR_NODEV;
+	spinlock_acquire(&wait_lock);
+	if (!no_ctty && caller->sid == caller->pid &&
+	    !caller->controlling_tty && !tty->session_id) {
+		tty->session_id = caller->sid;
+		tty->foreground_pgid = caller->pgid;
+		for (entry = proc.next; entry != &proc; entry = entry->next) {
+			member = list_entry(entry, struct process, all_tag);
+			if (member->sid == caller->sid)
+				member->controlling_tty = tty;
+		}
+	} else if (tty->session_id == caller->sid &&
+		   !caller->controlling_tty) {
+		caller->controlling_tty = tty;
+	}
+	spinlock_release(&wait_lock);
+	return VFS_OK;
+}
+
+int process_tty_busy(struct tty *tty)
+{
+	int busy;
+
+	spinlock_acquire(&wait_lock);
+	busy = tty && tty->session_id;
+	spinlock_release(&wait_lock);
+	return busy;
+}
+
+static int process_tty_owned_locked(process_t process, struct tty *tty)
+{
+	return tty && process->controlling_tty == tty && tty->session_id &&
+	       tty->session_id == process->sid;
+}
+
+static int process_signal_suppressed_locked(process_t process, int signal)
+{
+	thread_t thread = cur_thread();
+	uint64 bit = 1ULL << (signal - 1);
+	int suppressed;
+
+	spinlock_acquire(&process->lock);
+	suppressed = (thread->signal_mask & bit) ||
+		process->signal_actions[signal - 1].handler == LINUX_SIG_IGN;
+	spinlock_release(&process->lock);
+	return suppressed;
+}
+
+static int process_group_orphaned_locked(int pgid, int sid)
+{
+	process_t member;
+	list_t entry;
+
+	if (!spinlock_holding(&wait_lock))
+		PANIC("orphan group check unlocked");
+	for (entry = proc.next; entry != &proc; entry = entry->next) {
+		member = list_entry(entry, struct process, all_tag);
+		if (member->state == PROCESS_EMBRYO || member->pgid != pgid ||
+		    member->sid != sid || !member->parent ||
+		    (member->parent == first && member->adopted_by_init))
+			continue;
+		if (member->parent->sid == sid && member->parent->pgid != pgid)
+			return 0;
+	}
+	return 1;
+}
+
+static int process_group_stopped_locked(int pgid, int sid)
+{
+	process_t member;
+	list_t entry;
+	int stopped;
+
+	if (!spinlock_holding(&wait_lock))
+		PANIC("stopped group check unlocked");
+	for (entry = proc.next; entry != &proc; entry = entry->next) {
+		member = list_entry(entry, struct process, all_tag);
+		if (member->state != PROCESS_LIVE || member->pgid != pgid ||
+		    member->sid != sid)
+			continue;
+		spinlock_acquire(&member->lock);
+		stopped = member->stopped;
+		spinlock_release(&member->lock);
+		if (stopped)
+			return 1;
+	}
+	return 0;
+}
+
+static int process_tty_background_signal_locked(struct tty *tty,
+						 int signal, int blocked_error)
+{
+	process_t caller = cur_proc();
+	struct signal_info information = {
+		.signal = signal,
+		.code = LINUX_SI_KERNEL,
+	};
+
+	if (!process_tty_owned_locked(caller, tty) ||
+	    caller->pgid == tty->foreground_pgid)
+		return VFS_OK;
+	if (process_group_orphaned_locked(caller->pgid, caller->sid))
+		return blocked_error;
+	if (process_signal_suppressed_locked(caller, signal))
+		return blocked_error;
+	(void)process_signal_group_locked(caller->pgid, signal,
+	                                  &information);
+	return VFS_ERR_INTR;
+}
+
+int process_tty_get_foreground(struct tty *tty, int *pgid)
+{
+	process_t caller = cur_proc();
+	int result = VFS_OK;
+
+	spinlock_acquire(&wait_lock);
+	if (!process_tty_owned_locked(caller, tty))
+		result = VFS_ERR_NOTTY;
+	else
+		*pgid = tty->foreground_pgid;
+	spinlock_release(&wait_lock);
+	return result;
+}
+
+int process_tty_set_foreground(struct tty *tty, int pgid)
+{
+	process_t caller = cur_proc();
+	int result = VFS_OK;
+
+	spinlock_acquire(&wait_lock);
+	if (!process_tty_owned_locked(caller, tty)) {
+		result = VFS_ERR_NOTTY;
+		goto out;
+	}
+	if (pgid <= 0 || !process_group_exists_locked(pgid, caller->sid)) {
+		result = VFS_ERR_PERM;
+		goto out;
+	}
+	result = process_tty_background_signal_locked(
+		tty, LINUX_SIGTTOU, VFS_OK);
+	if (result == VFS_OK)
+		tty->foreground_pgid = pgid;
+out:
+	spinlock_release(&wait_lock);
+	return result;
+}
+
+int process_tty_get_session(struct tty *tty, int *sid)
+{
+	process_t caller = cur_proc();
+	int result = VFS_OK;
+
+	spinlock_acquire(&wait_lock);
+	if (!process_tty_owned_locked(caller, tty))
+		result = VFS_ERR_NOTTY;
+	else
+		*sid = tty->session_id;
+	spinlock_release(&wait_lock);
+	return result;
+}
+
+int process_tty_check_read(struct tty *tty)
+{
+	int result;
+
+	spinlock_acquire(&wait_lock);
+	result = process_tty_background_signal_locked(
+		tty, LINUX_SIGTTIN, VFS_ERR_IO);
+	spinlock_release(&wait_lock);
+	return result;
+}
+
+int process_tty_check_write(struct tty *tty, int force)
+{
+	int result;
+
+	if (!force)
+		return VFS_OK;
+	spinlock_acquire(&wait_lock);
+	result = process_tty_background_signal_locked(
+		tty, LINUX_SIGTTOU, VFS_ERR_IO);
+	spinlock_release(&wait_lock);
+	return result;
+}
+
+int process_tty_signal_foreground(struct tty *tty, int signal)
+{
+	struct signal_info information = {
+		.signal = signal,
+		.code = LINUX_SI_KERNEL,
+	};
+	int result = 0;
+
+	spinlock_acquire(&wait_lock);
+	if (tty && tty->session_id && tty->foreground_pgid)
+		result = process_signal_group_locked(
+			tty->foreground_pgid, signal, &information);
+	spinlock_release(&wait_lock);
+	return result;
+}
+
 static void process_notify_parent_locked(process_t child, int code,
 					 int status)
 {
@@ -897,13 +2045,15 @@ static void process_notify_parent_locked(process_t child, int code,
 		.signal = LINUX_SIGCHLD,
 		.code = code,
 		.sender_pid = child->pid,
-		.sender_uid = 0,
 		.status = status,
 	};
 	int suppress;
 
 	if (!spinlock_holding(&wait_lock) || !parent)
 		return;
+	spinlock_acquire(&child->lock);
+	information.sender_uid = child->credentials.uid;
+	spinlock_release(&child->lock);
 	spinlock_acquire(&parent->lock);
 	suppress = (code == LINUX_CLD_STOPPED ||
 	            code == LINUX_CLD_CONTINUED) &&
@@ -928,6 +2078,66 @@ static void process_continue_event_locked(process_t process, int resumed)
 	                             LINUX_SIGCONT);
 }
 
+static int process_signal_permitted_locked(
+	process_t process, int signal, const struct signal_info *information)
+{
+	const struct process_credentials *credentials = &process->credentials;
+
+	if (!information ||
+	    (information->code != LINUX_SI_USER &&
+	     information->code != LINUX_SI_TKILL))
+		return 1;
+	if (!information->sender_euid ||
+	    information->sender_uid == credentials->uid ||
+	    information->sender_uid == credentials->suid ||
+	    information->sender_euid == credentials->uid ||
+	    information->sender_euid == credentials->suid)
+		return 1;
+	return signal == LINUX_SIGCONT &&
+	       information->sender_sid == process->sid;
+}
+
+static int process_signal_group_locked(
+	int pgid, int signal, const struct signal_info *information)
+{
+	process_t process;
+	list_t entry;
+	int delivered = 0, denied = 0, full = 0;
+
+	if (!spinlock_holding(&wait_lock))
+		PANIC("process group signal unlocked");
+	for (entry = proc.next; entry != &proc; entry = entry->next) {
+		int result, resumed = 0;
+
+		process = list_entry(entry, struct process, all_tag);
+		if (process->state != PROCESS_LIVE || process->pgid != pgid)
+			continue;
+		spinlock_acquire(&process->lock);
+		if (!process_signal_permitted_locked(process, signal,
+					     information)) {
+			result = SIGNAL_QUEUE_DENIED;
+			denied = 1;
+		} else if (!signal)
+			result = 0;
+		else
+			result = resumed = signal_queue_process_locked(
+				process, signal, information);
+		spinlock_release(&process->lock);
+		if (result == SIGNAL_QUEUE_FULL) {
+			full = 1;
+			continue;
+		}
+		if (result < 0)
+			continue;
+		delivered = 1;
+		process_continue_event_locked(process, resumed);
+	}
+	if (delivered)
+		return 0;
+	return full ? SIGNAL_QUEUE_FULL :
+		denied ? SIGNAL_QUEUE_DENIED : -1;
+}
+
 int signal_send_process(int pid, int signal,
 			const struct signal_info *information)
 {
@@ -938,7 +2148,10 @@ int signal_send_process(int pid, int signal,
 	process = process_find_locked(pid);
 	if (process) {
 		spinlock_acquire(&process->lock);
-		if (!signal)
+		if (!process_signal_permitted_locked(process, signal,
+					     information))
+			result = SIGNAL_QUEUE_DENIED;
+		else if (!signal)
 			result = 0;
 		else
 			result = resumed = signal_queue_process_locked(
@@ -949,6 +2162,63 @@ int signal_send_process(int pid, int signal,
 	}
 	spinlock_release(&wait_lock);
 	return result < 0 ? result : 0;
+}
+
+int signal_send_processes(int selector, int signal,
+			  const struct signal_info *information)
+{
+	process_t caller = cur_proc();
+	process_t process;
+	list_t entry;
+	int delivered = 0, denied = 0, full = 0;
+	int result;
+
+	if (selector > 0)
+		return signal_send_process(selector, signal, information);
+	spinlock_acquire(&wait_lock);
+	if (selector < -1) {
+		int64 group = -(int64)selector;
+
+		result = group <= 0x7fffffff ?
+			process_signal_group_locked(group, signal, information) : -1;
+		spinlock_release(&wait_lock);
+		return result;
+	}
+	for (entry = proc.next; entry != &proc; entry = entry->next) {
+		int resumed = 0;
+
+		process = list_entry(entry, struct process, all_tag);
+		if (process->state != PROCESS_LIVE)
+			continue;
+		if (!selector && process->pgid != caller->pgid)
+			continue;
+		if (selector == -1 && (process == first || process == caller))
+			continue;
+		spinlock_acquire(&process->lock);
+		if (!process_signal_permitted_locked(process, signal,
+					     information)) {
+			result = SIGNAL_QUEUE_DENIED;
+			denied = 1;
+		} else if (!signal)
+			result = 0;
+		else
+			result = resumed = signal_queue_process_locked(
+				process, signal, information);
+		spinlock_release(&process->lock);
+		if (result == SIGNAL_QUEUE_FULL) {
+			full = 1;
+			continue;
+		}
+		if (result < 0)
+			continue;
+		delivered = 1;
+		process_continue_event_locked(process, resumed);
+	}
+	spinlock_release(&wait_lock);
+	if (delivered)
+		return 0;
+	return full ? SIGNAL_QUEUE_FULL :
+		denied ? SIGNAL_QUEUE_DENIED : -1;
 }
 
 int signal_send_thread(int thread_group, int tid, int signal,
@@ -977,7 +2247,10 @@ int signal_send_thread(int thread_group, int tid, int signal,
 			spinlock_release(&process->lock);
 			continue;
 		}
-		if (!signal)
+		if (!process_signal_permitted_locked(process, signal,
+					     information))
+			result = SIGNAL_QUEUE_DENIED;
+		else if (!signal)
 			result = 0;
 		else
 			result = resumed = signal_queue_thread_locked(
@@ -1064,18 +2337,36 @@ static thread_t process_find_thread_locked(int tid, process_t *owner)
 
 int process_set_nice(int tid, int nice)
 {
+	struct process_credentials caller;
 	process_t process = 0;
 	thread_t thread;
-	int result = -LINUX_ESRCH;
+	int old_nice, result = -LINUX_ESRCH;
 
-	if (!tid)
-		return scheduler_set_nice(cur_thread(), nice) < 0 ?
+	process_credentials_get(&caller);
+	if (!tid) {
+		thread = cur_thread();
+		old_nice = scheduler_get_nice(thread);
+		if (nice < old_nice && caller.euid)
+			return -LINUX_EACCES;
+		return scheduler_set_nice(thread, nice) < 0 ?
 			-LINUX_EINVAL : 0;
+	}
 	spinlock_acquire(&wait_lock);
 	thread = process_find_thread_locked(tid, &process);
-	if (thread)
-		result = scheduler_set_nice(thread, nice) < 0 ?
-			-LINUX_EINVAL : 0;
+	if (thread) {
+		if (caller.euid && caller.euid != process->credentials.uid &&
+		    caller.euid != process->credentials.euid) {
+			result = -LINUX_EPERM;
+		} else {
+			old_nice = scheduler_get_nice(thread);
+			if (nice < old_nice && caller.euid)
+				result = -LINUX_EACCES;
+			else if (scheduler_set_nice(thread, nice) < 0)
+				result = -LINUX_EINVAL;
+			else
+				result = 0;
+		}
+	}
 	if (process)
 		spinlock_release(&process->lock);
 	spinlock_release(&wait_lock);

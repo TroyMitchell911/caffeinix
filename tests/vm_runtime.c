@@ -35,6 +35,8 @@
 #define ZOMBIE_RELEASE_CHILDREN 32
 #define SHARED_MAP_PATH "/vm-shared-map.bin"
 #define SHARED_SPARSE_PATH "/vm-shared-sparse.bin"
+#define MAPPING_SIZE_PATH "/vm-mapping-size.bin"
+#define MAPPING_SIZE_RENAMED "/vm-mapping-size-renamed.bin"
 #define SHARED_TRUNCATE_START "/tmp/vm-shared-truncate-start"
 #define OPEN_TRUNCATE_PATH "/tmp/vm-open-truncate.bin"
 #define EXEC_REFRESH_PATH "/tmp/vm-exec-refresh.bin"
@@ -42,8 +44,10 @@
 #define SHARED_ANON_PARENT "/tmp/vm-shared-anon-parent"
 #define SHARED_ANON_SPLIT "/tmp/vm-shared-anon-split"
 #define RECLAIM_FILE_PATH "/lib/libc.so"
+#define RECLAIM_FILE_LENGTH (64 * PAGE_SIZE)
 #define RECLAIM_CLEAN_LENGTH (24 * 1024 * 1024UL)
-#define RECLAIM_DIRTY_LENGTH (36 * 1024 * 1024UL)
+#define RECLAIM_DIRTY_LENGTH \
+	(36 * 1024 * 1024UL + 128 * 1024UL)
 #define HINT_ADDRESS ((void *)0x20000000UL)
 
 #define CHECK(condition, name) do { \
@@ -733,7 +737,8 @@ static void test_shared_file_mapping(void)
 {
 	unsigned char buffer[PAGE_SIZE];
 	unsigned char value, original;
-	unsigned char *first, *private, *readonly_private, *second;
+	unsigned char *first, *private, *readonly_private, *readonly_shared;
+	unsigned char *second;
 	struct iovec iovecs[2];
 	int barrier, fd, readonly_fd, status;
 	pid_t child;
@@ -766,6 +771,15 @@ static void test_shared_file_mapping(void)
 	CHECK(mmap(0, PAGE_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED,
 		   readonly_fd, 0) == MAP_FAILED && errno == EACCES,
 	      "shared writable access");
+	readonly_shared = mmap(0, PAGE_SIZE, PROT_READ, MAP_SHARED,
+			       readonly_fd, 0);
+	CHECK(readonly_shared != MAP_FAILED, "shared readonly fd mmap");
+	errno = 0;
+	CHECK(mprotect(readonly_shared, PAGE_SIZE,
+		       PROT_READ | PROT_WRITE) < 0 && errno == EACCES,
+	      "shared readonly fd mprotect");
+	CHECK(munmap(readonly_shared, PAGE_SIZE) == 0,
+	      "shared readonly fd munmap");
 	readonly_private = mmap(0, PAGE_SIZE, PROT_READ | PROT_WRITE,
 				MAP_PRIVATE, readonly_fd, 0);
 	CHECK(readonly_private != MAP_FAILED, "private readonly fd mmap");
@@ -902,6 +916,44 @@ static void test_open_truncate_mapping(void)
 	      "open truncate munmap");
 	CHECK(close(fd) == 0, "open truncate source close");
 	CHECK(unlink(OPEN_TRUNCATE_PATH) == 0, "open truncate unlink");
+}
+
+static void test_mapping_size_refresh(void)
+{
+	unsigned char buffer[PAGE_SIZE];
+	volatile unsigned char *mapping;
+	unsigned char value = 0x71;
+	int fd, resized, status;
+	pid_t child;
+
+	unlink(MAPPING_SIZE_PATH);
+	unlink(MAPPING_SIZE_RENAMED);
+	fd = open(MAPPING_SIZE_PATH, O_CREAT | O_EXCL | O_RDWR, 0600);
+	CHECK(fd >= 0, "mapping size open");
+	memset(buffer, 0, sizeof(buffer));
+	write_all(fd, buffer, sizeof(buffer));
+	mapping = mmap(0, 2 * PAGE_SIZE, PROT_READ, MAP_SHARED, fd, 0);
+	CHECK(mapping != MAP_FAILED, "mapping size mmap");
+	CHECK(!mapping[0], "mapping size initial fault");
+	CHECK(rename(MAPPING_SIZE_PATH, MAPPING_SIZE_RENAMED) == 0,
+	      "mapping size rename");
+	resized = open(MAPPING_SIZE_RENAMED, O_RDWR);
+	CHECK(resized >= 0, "mapping size reopen");
+	CHECK(ftruncate(resized, 2 * PAGE_SIZE) == 0,
+	      "mapping size extend");
+	CHECK(pwrite(resized, &value, 1, PAGE_SIZE + 7) == 1,
+	      "mapping size write");
+	child = fork();
+	CHECK(child >= 0, "mapping size fork");
+	if (!child)
+		_exit(mapping[PAGE_SIZE + 7] == value ? 0 : 1);
+	CHECK(waitpid(child, &status, 0) == child && WIFEXITED(status) &&
+	      !WEXITSTATUS(status), "mapping size refreshed fault");
+	CHECK(munmap((void *)mapping, 2 * PAGE_SIZE) == 0,
+	      "mapping size munmap");
+	CHECK(close(resized) == 0, "mapping size resized close");
+	CHECK(close(fd) == 0, "mapping size close");
+	CHECK(unlink(MAPPING_SIZE_RENAMED) == 0, "mapping size unlink");
 }
 
 static int create_barrier(const char *path)
@@ -1285,12 +1337,14 @@ static void test_clean_reclaim(void)
 
 	fd = open(RECLAIM_FILE_PATH, O_RDONLY);
 	CHECK(fd >= 0, "reclaim file open");
-	CHECK(fstat(fd, &status) == 0 && status.st_size > 0,
+	CHECK(fstat(fd, &status) == 0 &&
+	      status.st_size >= (off_t)RECLAIM_FILE_LENGTH,
 	      "reclaim file stat");
-	file_mapping = mmap(0, status.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+	file_mapping = mmap(0, RECLAIM_FILE_LENGTH, PROT_READ,
+			    MAP_PRIVATE, fd, 0);
 	CHECK(file_mapping != MAP_FAILED, "reclaim file mmap");
 	CHECK(close(fd) == 0, "reclaim file close");
-	file_hash = reclaim_hash(file_mapping, status.st_size);
+	file_hash = reclaim_hash(file_mapping, RECLAIM_FILE_LENGTH);
 
 	clean = mmap(0, RECLAIM_CLEAN_LENGTH, PROT_READ,
 		     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -1304,7 +1358,7 @@ static void test_clean_reclaim(void)
 	for (page = 0; page < RECLAIM_DIRTY_LENGTH / PAGE_SIZE; page++)
 		dirty[page * PAGE_SIZE] = (unsigned char)(page * 17 + 3);
 
-	CHECK(reclaim_hash(file_mapping, status.st_size) == file_hash,
+	CHECK(reclaim_hash(file_mapping, RECLAIM_FILE_LENGTH) == file_hash,
 	      "reclaim file reload");
 	for (page = 0; page < RECLAIM_CLEAN_LENGTH / PAGE_SIZE; page++)
 		CHECK(clean[page * PAGE_SIZE] == 0, "reclaim clean reload");
@@ -1317,7 +1371,7 @@ static void test_clean_reclaim(void)
 	      "reclaim dirty munmap");
 	CHECK(munmap((void *)clean, RECLAIM_CLEAN_LENGTH) == 0,
 	      "reclaim clean munmap");
-	CHECK(munmap((void *)file_mapping, status.st_size) == 0,
+	CHECK(munmap((void *)file_mapping, RECLAIM_FILE_LENGTH) == 0,
 	      "reclaim file munmap");
 	puts("VM_RECLAIM_OK");
 }
@@ -1347,6 +1401,7 @@ int main(int argc, char **argv)
 	test_shared_sparse_write();
 	test_shared_file_mapping();
 	test_open_truncate_mapping();
+	test_mapping_size_refresh();
 	puts("VM_SHARED_MAP_OK");
 	test_cow_memory_pressure();
 	puts("VM_COW_OK");

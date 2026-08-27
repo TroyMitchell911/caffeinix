@@ -73,9 +73,17 @@ set command [list \
 spawn -noecho {*}$command
 expect {
 	-re {\[PANIC\]} { abort_test "kernel panic before shell startup" }
-	-re {\r?\n# $} {}
+	-re {\r?\n[^\r\n]*# $} {}
 	timeout { abort_test "shell prompt timeout" }
 	eof { abort_test "QEMU exited before shell startup" }
+}
+
+send -- "PS1='# '\r"
+expect {
+	-re {\r?\n# $} {}
+	-re {\[PANIC\]} { abort_test "kernel panic while setting prompt" }
+	timeout { abort_test "shell prompt setup timeout" }
+	eof { abort_test "QEMU exited while setting prompt" }
 }
 
 send -- "/bin/dynamic-hello\r"
@@ -114,6 +122,132 @@ expect {
 	}
 	timeout { abort_test "shell prompt timeout" }
 	eof { abort_test "QEMU exited after userspace random test" }
+}
+
+send -- "/bin/time-runtime\r"
+expect {
+	-re {\r?\nTIME_RUNTIME_OK} {}
+	-re {TIME_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "timekeeping test reported failure"
+	}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic in timekeeping test"
+	}
+	timeout { abort_with_dump "timekeeping test timeout" }
+	eof { abort_test "QEMU exited during timekeeping test" }
+}
+expect {
+	-re {\r?\n# $} {}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic after timekeeping test"
+	}
+	timeout { abort_test "shell prompt timeout" }
+	eof { abort_test "QEMU exited after timekeeping test" }
+}
+
+send -- "/bin/system-runtime $env(QEMU_CPUS)\r"
+expect {
+	-re {\r?\nSYSTEM_RUNTIME_OK} {}
+	-re {SYSTEM_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "system identity test reported failure"
+	}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic in system identity test"
+	}
+	timeout { abort_with_dump "system identity test timeout" }
+	eof { abort_test "QEMU exited during system identity test" }
+}
+expect {
+	-re {\r?\n# $} {}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic after system identity test"
+	}
+	timeout { abort_test "shell prompt timeout" }
+	eof { abort_test "QEMU exited after system identity test" }
+}
+
+send -- "/bin/timestamp-runtime\r"
+expect {
+	-re {\r?\nTIMESTAMP_RUNTIME_OK} {}
+	-re {TIMESTAMP_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "inode timestamp test reported failure"
+	}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic in inode timestamp test"
+	}
+	timeout { abort_with_dump "inode timestamp test timeout" }
+	eof { abort_test "QEMU exited during inode timestamp test" }
+}
+expect {
+	-re {\r?\n# $} {}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic after inode timestamp test"
+	}
+	timeout { abort_test "shell prompt timeout" }
+	eof { abort_test "QEMU exited after inode timestamp test" }
+}
+
+send -- "/bin/procfs-runtime alpha beta\r"
+expect {
+	-re {\r?\nPROCFS_RUNTIME_OK} {}
+	-re {PROCFS_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "procfs test reported failure"
+	}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic in procfs test"
+	}
+	timeout { abort_with_dump "procfs test timeout" }
+	eof { abort_test "QEMU exited during procfs test" }
+}
+expect {
+	-re {\r?\n# $} {}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic after procfs test"
+	}
+	timeout { abort_test "shell prompt timeout" }
+	eof { abort_test "QEMU exited after procfs test" }
+}
+
+send -- "/bin/credential-runtime\r"
+expect {
+	-re {\r?\nCREDENTIAL_RUNTIME_OK} {}
+	-re {CREDENTIAL_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "credential test reported failure"
+	}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic in credential test"
+	}
+	timeout { abort_with_dump "credential test timeout" }
+	eof { abort_test "QEMU exited during credential test" }
+}
+expect {
+	-re {\r?\n# $} {}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic after credential test"
+	}
+	timeout { abort_test "shell prompt timeout" }
+	eof { abort_test "QEMU exited after credential test" }
+}
+
+send -- "/bin/file-admin-runtime\r"
+expect {
+	-re {\r?\nFILE_ADMIN_RUNTIME_OK} {}
+	-re {FILE_ADMIN_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "file administration test reported failure"
+	}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic in file administration test"
+	}
+	timeout { abort_with_dump "file administration test timeout" }
+	eof { abort_test "QEMU exited during file administration test" }
+}
+expect {
+	-re {\r?\n# $} {}
+	-re {\[PANIC\]} {
+		abort_test "kernel panic after file administration test"
+	}
+	timeout { abort_test "shell prompt timeout" }
+	eof { abort_test "QEMU exited after file administration test" }
 }
 
 send -- "/bin/aslr-runtime\r"

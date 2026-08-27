@@ -1,0 +1,87 @@
+#!/usr/bin/expect -f
+
+proc abort_test {message} {
+	puts stderr "RTC fallback test failed: $message"
+	catch {send -- "\001x"}
+	set saved_timeout $::timeout
+	set ::timeout 5
+	catch {expect eof}
+	set ::timeout $saved_timeout
+	catch {close}
+	exit 1
+}
+
+foreach variable {
+	MAKE_COMMAND TEST_TOPDIR QEMU SBI_FIRMWARE ROOT_IMAGE QEMU_LOG
+	NO_RTC_DTB
+} {
+	if {![info exists env($variable)] || $env($variable) eq ""} {
+		puts stderr "missing environment variable: $variable"
+		exit 1
+	}
+}
+
+set timeout 60
+if {[info exists env(QEMU_TIMEOUT)] && $env(QEMU_TIMEOUT) ne ""} {
+	set timeout $env(QEMU_TIMEOUT)
+}
+
+log_file -noappend $env(QEMU_LOG)
+set extra_options "QEMU_EXTRA_OPTS=-dtb $env(NO_RTC_DTB)"
+set command [list \
+	$env(MAKE_COMMAND) \
+	--silent \
+	--no-print-directory \
+	-C $env(TEST_TOPDIR) \
+	QEMU=$env(QEMU) \
+	SBI_FIRMWARE=$env(SBI_FIRMWARE) \
+	FS_IMG=$env(ROOT_IMAGE) \
+	FAT_IMG= \
+	CPUS=1 \
+	MEMORY=128M \
+	ROOT_BUS=virtio-mmio-bus.0 \
+	NET_BACKEND= \
+	RNG_BACKEND= \
+	QEMU_SNAPSHOT=1 \
+	$extra_options \
+	QEMU_PREBUILT=1 \
+	qemu]
+
+spawn -noecho {*}$command
+expect {
+	-re {\[PANIC\]} { abort_test "kernel panic before shell startup" }
+	-re {\r?\n[^\r\n]*# $} {}
+	timeout { abort_test "shell prompt timeout" }
+	eof { abort_test "QEMU exited before shell startup" }
+}
+
+send -- "PS1='# '\r"
+expect {
+	-re {\r?\n# $} {}
+	-re {\[PANIC\]} { abort_test "kernel panic while setting prompt" }
+	timeout { abort_test "shell prompt setup timeout" }
+	eof { abort_test "QEMU exited while setting prompt" }
+}
+
+send -- "/bin/time-runtime fallback\r"
+expect {
+	-re {\r?\nTIME_FALLBACK_OK} {}
+	-re {TIME_RUNTIME_FAIL[^\r\n]*} {
+		abort_test "timekeeping test reported failure"
+	}
+	-re {\[PANIC\]} { abort_test "kernel panic in timekeeping test" }
+	timeout { abort_test "timekeeping test timeout" }
+	eof { abort_test "QEMU exited during timekeeping test" }
+}
+expect {
+	-re {\r?\n# $} {}
+	-re {\[PANIC\]} { abort_test "kernel panic after timekeeping test" }
+	timeout { abort_test "shell prompt timeout" }
+	eof { abort_test "QEMU exited after timekeeping test" }
+}
+
+send -- "\001x"
+expect {
+	eof {}
+	timeout { abort_test "QEMU exit timeout" }
+}

@@ -64,6 +64,8 @@ all : $(TARGET)
 check-uapi:
 	$(CC) -std=gnu17 -fsyntax-only -I arch/riscv/include \
 		-I kernel/include tests/linux_uapi.c
+	$(CC) -std=gnu17 -fsyntax-only -I arch/riscv/include \
+		-I kernel/include tests/linux_network_uapi.c
 
 .PHONY: check-opensbi
 check-opensbi: all

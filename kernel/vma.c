@@ -24,6 +24,10 @@ static struct vm_area *vma_allocate(uint64 start, uint64 end,
 
 	if (!area)
 		return 0;
+	if (file && usage == VMA_ELF && vfs_exec_mapping_get(file) < 0) {
+		free(area);
+		return 0;
+	}
 	list_init(&area->node);
 	area->start = start;
 	area->end = end;
@@ -33,7 +37,8 @@ static struct vm_area *vma_allocate(uint64 start, uint64 end,
 	area->flags = flags;
 	area->origin = origin;
 	area->usage = usage;
-	area->file = file ? vfs_file_get(file) : 0;
+	area->file = file ? (usage == VMA_ELF ?
+		vfs_file_hold(file) : vfs_file_get(file)) : 0;
 	area->backing = backing;
 	if (backing)
 		backing->get(backing);
@@ -61,8 +66,14 @@ static struct vm_area *vma_allocate_split(const struct vm_area *area,
 
 static void vma_release(struct vm_area *area)
 {
-	if (area->file)
-		vfs_file_put(area->file);
+	if (area->file) {
+		if (area->usage == VMA_ELF) {
+			vfs_exec_mapping_put(area->file);
+			vfs_file_unhold(area->file);
+		} else {
+			vfs_file_put(area->file);
+		}
+	}
 	if (area->backing)
 		area->backing->put(area->backing);
 	free(area);
@@ -289,7 +300,8 @@ int vma_insert_elf_file(struct vma_set *set, uint64 start, uint64 end,
 		overlap->protection |= protection;
 		if (overlap->origin == VMA_FILE_BACKED &&
 		    (overlap->file != file || overlap->offset != offset)) {
-			vfs_file_put(overlap->file);
+			vfs_exec_mapping_put(overlap->file);
+			vfs_file_unhold(overlap->file);
 			overlap->file = 0;
 			overlap->origin = VMA_ANONYMOUS;
 			overlap->offset = 0;

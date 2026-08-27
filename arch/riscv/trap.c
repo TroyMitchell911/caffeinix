@@ -22,6 +22,12 @@ void user_trap_ret(void);
 struct spinlock tick_lock;
 /* For test */
 volatile uint64 tick_count = 0;
+static volatile uint64 interrupt_count;
+
+uint64 trap_interrupt_count(void)
+{
+	return __atomic_load_n(&interrupt_count, __ATOMIC_RELAXED);
+}
 
 static void tick_intr(void)
 {
@@ -39,6 +45,7 @@ static int dev_intr(uint64 scause)
            (scause & 0xff) == 1) {
                 sip_clear_ssip();
 		cpu_membarrier_interrupt();
+		__atomic_add_fetch(&interrupt_count, 1, __ATOMIC_RELAXED);
                 return 3;
         }
         /* This is a supervisor external interrupt via PLIC */
@@ -52,14 +59,17 @@ static int dev_intr(uint64 scause)
                         /* Clear the interrupt flag */
                         plic_complete(irq);
                 }
+		__atomic_add_fetch(&interrupt_count, 1, __ATOMIC_RELAXED);
                 return 1;
         } else if(scause == 0x8000000000000005L) {
 		/* Supervisor timer interrupt delivered through SBI TIME. */
 		timer_interrupt();
 		wait_queue_expire(time_r());
                 if(cpuid() == 0) {
+			process_expire_timers(time_r());
                         tick_intr();
 		}
+		__atomic_add_fetch(&interrupt_count, 1, __ATOMIC_RELAXED);
                 return 2;
         }   
         return 0;
@@ -117,6 +127,8 @@ void user_trap_entry(void)
 	thread_t current = cur_thread();
         uint64 cause = scause_r();
 	uint64 trap_value = stval_r();
+
+	scheduler_account_kernel_enter();
 
         if((sstatus_r() & SSTATUS_SPP)) {
                 PANIC("Not from user mode");
@@ -234,7 +246,8 @@ void user_trap_ret(void)
 
         satp = MAKE_SATP(p->pagetable);
 
-        trampoline_userret = TRAMPOLINE + (user_ret - trampoline);
+	trampoline_userret = TRAMPOLINE + (user_ret - trampoline);
+	scheduler_account_user_enter();
 	/* Call user_ret with this hart's current user trapframe mapping. */
 	((void (*)(uint64, uint64))trampoline_userret)(
 		satp, TRAPFRAME(cur_thread()->id_p));
@@ -244,6 +257,7 @@ void user_trap_ret(void)
 void trap_init_lock(void)
 {
         spinlock_init(&tick_lock, "trap_tick");
+	interrupt_count = 0;
 }
 
 /* This function for any hart */

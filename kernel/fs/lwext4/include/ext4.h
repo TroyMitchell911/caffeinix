@@ -322,6 +322,17 @@ int ext4_fopen(ext4_file *file, const char *path, const char *flags);
  * @return  Standard error code.*/
 int ext4_fopen2(ext4_file *file, const char *path, int flags);
 
+/**@brief Open a file by inode number.
+ *
+ * @param file  File handle.
+ * @param path  Path used to select the mount point.
+ * @param ino   Inode number.
+ * @param flags File open flags.
+ *
+ * @return Standard error code. */
+int ext4_fopen_by_number(ext4_file *file, const char *path, uint32_t ino,
+			 int flags);
+
 /**@brief   File close function.
  *
  * @param   file File handle.
@@ -429,6 +440,15 @@ int ext4_inode_exist(const char *path, int type);
  * @return  Standard error code.*/
 int ext4_mode_set(const char *path, uint32_t mode);
 
+/**@brief Change mode bits by inode number.
+ *
+ * @param path Path used to select the mount point.
+ * @param ino  Inode number.
+ * @param mode New mode bits.
+ *
+ * @return Standard error code. */
+int ext4_mode_set_by_number(const char *path, uint32_t ino, uint32_t mode);
+
 
 /**@brief Get file/directory/link mode bits.
  *
@@ -446,6 +466,17 @@ int ext4_mode_get(const char *path, uint32_t *mode);
  *
  * @return  Standard error code.*/
 int ext4_owner_set(const char *path, uint32_t uid, uint32_t gid);
+
+/**@brief Change owner and group by inode number.
+ *
+ * @param path Path used to select the mount point.
+ * @param ino  Inode number.
+ * @param uid  User id.
+ * @param gid  Group id.
+ *
+ * @return Standard error code. */
+int ext4_owner_set_by_number(const char *path, uint32_t ino, uint32_t uid,
+			     uint32_t gid);
 
 /**@brief Get file/directory/link owner and group.
  *
@@ -479,6 +510,25 @@ int ext4_mtime_set(const char *path, uint32_t mtime);
  *
  * @return  Standard error code.*/
 int ext4_ctime_set(const char *path, uint32_t ctime);
+
+#define EXT4_TIME_ATIME (1U << 0)
+#define EXT4_TIME_MTIME (1U << 1)
+#define EXT4_TIME_CTIME (1U << 2)
+
+int ext4_times_set(const char *path, const struct ext4_timespec times[3],
+		   uint32_t mask);
+
+/**@brief Set timestamps by inode number.
+ *
+ * @param path  Path used to select the mount point.
+ * @param ino   Inode number.
+ * @param times Access, modification, and change timestamps.
+ * @param mask  Timestamps to update.
+ *
+ * @return Standard error code. */
+int ext4_times_set_by_number(const char *path, uint32_t ino,
+			     const struct ext4_timespec times[3],
+			     uint32_t mask);
 
 /**@brief Get file/directory/link access time.
  *

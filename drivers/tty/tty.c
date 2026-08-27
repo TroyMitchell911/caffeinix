@@ -24,12 +24,14 @@ static void tty_default_termios(struct tty *tty)
 	tty->termios.iflag = LINUX_ICRNL;
 	tty->termios.cflag = LINUX_B38400 | LINUX_CS8 |
 	                     LINUX_CREAD | LINUX_CLOCAL;
-	tty->termios.lflag = LINUX_ICANON | LINUX_ECHO |
+	tty->termios.lflag = LINUX_ISIG | LINUX_ICANON | LINUX_ECHO |
 	                     LINUX_ECHOE | LINUX_ECHOK;
 	tty->termios.control[LINUX_VINTR] = 3;
+	tty->termios.control[LINUX_VQUIT] = 28;
 	tty->termios.control[LINUX_VERASE] = 0x7f;
 	tty->termios.control[LINUX_VEOF] = 4;
 	tty->termios.control[LINUX_VMIN] = 1;
+	tty->termios.control[LINUX_VSUSP] = 26;
 	memset(&tty->winsize, 0, sizeof(tty->winsize));
 	tty->winsize.rows = 24;
 	tty->winsize.columns = 80;
@@ -41,6 +43,8 @@ static struct tty *tty_from_device(struct char_device *device,
 	uint64 number = file->path.dentry->inode->device;
 	uint32 minor = VFS_DEVICE_MINOR(number);
 
+	if (file->device_private)
+		return file->device_private;
 	if (device == &tty_core.console_device)
 		return tty_get_console();
 	if (device != &tty_core.serial_device ||
@@ -54,19 +58,34 @@ static struct tty *tty_from_device(struct char_device *device,
 static int tty_device_open(struct char_device *device,
 			   struct vfs_file *file)
 {
-	if (device == &tty_core.tty_device)
-		return VFS_ERR_NXIO;
-	return tty_from_device(device, file) ? VFS_OK : VFS_ERR_NODEV;
+	struct tty *tty;
+
+	if (device == &tty_core.tty_device) {
+		tty = process_controlling_tty();
+		if (!tty)
+			return VFS_ERR_NXIO;
+	} else {
+		tty = tty_from_device(device, file);
+		if (!tty)
+			return VFS_ERR_NODEV;
+		if (process_tty_open(tty, file->flags & VFS_OPEN_NOCTTY) < 0)
+			return VFS_ERR_NODEV;
+	}
+	file->device_private = tty;
+	return VFS_OK;
 }
 
 static int64 tty_read(struct tty *tty, int user_destination,
 		      uint64 destination, uint64 count, int nonblock)
 {
 	uint64 total = 0;
-	int canonical;
+	int canonical, status;
 
 	if (!count)
 		return 0;
+	status = process_tty_check_read(tty);
+	if (status < 0)
+		return status;
 	spinlock_acquire(&tty->lock);
 	canonical = tty->termios.lflag & LINUX_ICANON;
 	while (total < count) {
@@ -86,6 +105,11 @@ static int64 tty_read(struct tty *tty, int user_destination,
 				spinlock_release(&tty->lock);
 				return total ? total : VFS_ERR_INTR;
 			}
+			spinlock_release(&tty->lock);
+			status = process_tty_check_read(tty);
+			if (status < 0)
+				return total ? total : status;
+			spinlock_acquire(&tty->lock);
 		}
 		if (tty->read_position == tty->commit_position &&
 		    tty->eof_pending) {
@@ -122,9 +146,16 @@ static int64 tty_write(struct tty *tty, int user_source, uint64 source,
 {
 	char buffer[64];
 	uint64 total = 0;
+	int stop_output, status;
 
 	if (!tty->operations || !tty->operations->write)
 		return VFS_ERR_NODEV;
+	spinlock_acquire(&tty->lock);
+	stop_output = tty->termios.lflag & LINUX_TOSTOP;
+	spinlock_release(&tty->lock);
+	status = process_tty_check_write(tty, stop_output);
+	if (status < 0)
+		return status;
 	while (total < count) {
 		uint64 remaining = count - total;
 		uint64 chunk = remaining > sizeof(buffer) ?
@@ -171,6 +202,7 @@ static int64 tty_device_ioctl(struct char_device *device,
 	struct linux_termios termios;
 	struct linux_winsize winsize;
 	struct tty *tty = tty_from_device(device, file);
+	int pgid, sid, status;
 
 	if (!tty)
 		return VFS_ERR_NODEV;
@@ -184,6 +216,9 @@ static int64 tty_device_ioctl(struct char_device *device,
 	}
 	if (request == LINUX_TCSETS || request == LINUX_TCSETSW ||
 	    request == LINUX_TCSETSF) {
+		status = process_tty_check_write(tty, 1);
+		if (status < 0)
+			return status;
 		if (either_copyin(&termios, 1, argument, sizeof(termios)) < 0)
 			return VFS_ERR_FAULT;
 		spinlock_acquire(&tty->lock);
@@ -202,6 +237,25 @@ static int64 tty_device_ioctl(struct char_device *device,
 		spinlock_release(&tty->lock);
 		return either_copyout(1, argument, &winsize,
 		                      sizeof(winsize)) < 0 ?
+			VFS_ERR_FAULT : VFS_OK;
+	}
+	if (request == LINUX_TIOCGPGRP) {
+		status = process_tty_get_foreground(tty, &pgid);
+		if (status < 0)
+			return status;
+		return either_copyout(1, argument, &pgid, sizeof(pgid)) < 0 ?
+			VFS_ERR_FAULT : VFS_OK;
+	}
+	if (request == LINUX_TIOCSPGRP) {
+		if (either_copyin(&pgid, 1, argument, sizeof(pgid)) < 0)
+			return VFS_ERR_FAULT;
+		return process_tty_set_foreground(tty, pgid);
+	}
+	if (request == LINUX_TIOCGSID) {
+		status = process_tty_get_session(tty, &sid);
+		if (status < 0)
+			return status;
+		return either_copyout(1, argument, &sid, sizeof(sid)) < 0 ?
 			VFS_ERR_FAULT : VFS_OK;
 	}
 	return VFS_ERR_NOTTY;
@@ -250,7 +304,7 @@ static void tty_echo(struct tty *tty, int character)
 
 void tty_receive_char(struct tty *tty, int character)
 {
-	int canonical, echo, notify = 0;
+	int canonical, echo, notify = 0, signal = 0;
 
 	if (!tty || !tty->registered)
 		return;
@@ -259,6 +313,27 @@ void tty_receive_char(struct tty *tty, int character)
 	echo = tty->termios.lflag & LINUX_ECHO;
 	if (character == '\r' && (tty->termios.iflag & LINUX_ICRNL))
 		character = '\n';
+	if ((tty->termios.lflag & LINUX_ISIG) && character &&
+	    character == tty->termios.control[LINUX_VINTR])
+		signal = LINUX_SIGINT;
+	else if ((tty->termios.lflag & LINUX_ISIG) && character &&
+		 character == tty->termios.control[LINUX_VQUIT])
+		signal = LINUX_SIGQUIT;
+	else if ((tty->termios.lflag & LINUX_ISIG) && character &&
+		 character == tty->termios.control[LINUX_VSUSP])
+		signal = LINUX_SIGTSTP;
+	if (signal) {
+		if (!(tty->termios.lflag & LINUX_NOFLSH)) {
+			tty->read_position = tty->edit_position;
+			tty->commit_position = tty->edit_position;
+			tty->eof_pending = 0;
+		}
+		wait_queue_wake_all(&tty->read_wait);
+		spinlock_release(&tty->lock);
+		(void)process_tty_signal_foreground(tty, signal);
+		vfs_poll_notify();
+		return;
+	}
 	if (canonical &&
 	    character == tty->termios.control[LINUX_VERASE]) {
 		if (tty->edit_position != tty->commit_position) {
@@ -338,6 +413,8 @@ int tty_register(struct tty *tty, const char *prefix, int line,
 	tty->line = selected;
 	tty->operations = operations;
 	tty->driver_data = driver_data;
+	tty->session_id = 0;
+	tty->foreground_pgid = 0;
 	tty_default_termios(tty);
 	spinlock_init(&tty->lock, tty->name);
 	wait_queue_init(&tty->read_wait, tty->name);
@@ -366,6 +443,8 @@ int tty_unregister(struct tty *tty)
 
 	if (!tty || !tty->registered)
 		return VFS_ERR_NOENT;
+	if (process_tty_busy(tty))
+		return VFS_ERR_BUSY;
 	spinlock_acquire(&tty->lock);
 	if (!wait_queue_empty(&tty->read_wait)) {
 		spinlock_release(&tty->lock);
@@ -413,6 +492,13 @@ struct tty *tty_get(int line)
 	tty = tty_core.devices[line];
 	spinlock_release(&tty_core.lock);
 	return tty;
+}
+
+uint32 tty_device_number(const struct tty *tty)
+{
+	if (!tty || tty->line < 0 || tty->line >= TTY_MAX_DEVICES)
+		return 0;
+	return (TTY_SERIAL_MAJOR << 8) | (TTY_SERIAL_MINOR + tty->line);
 }
 
 void tty_init(void)

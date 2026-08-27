@@ -1,4 +1,5 @@
 #include <file.h>
+#include <ktime.h>
 #include <linux_uapi.h>
 #include <mystring.h>
 #include <palloc.h>
@@ -23,17 +24,17 @@ static int copy_user_vector(uint64 user_vector, char **vector)
 	for (i = 0; i < MAXARG; i++) {
 		if (fetch_addr_from_user(user_vector + i * sizeof(uint64),
 		                         &user_string) < 0)
-			return -1;
+			return -LINUX_EFAULT;
 		if (!user_string)
 			return 0;
 
-		vector[i] = palloc();
+		vector[i] = alloc_pages(0, 0);
 		if (!vector[i])
-			return -1;
+			return -LINUX_ENOMEM;
 		if (fetch_str_from_user(user_string, vector[i], PGSIZE) < 0)
-			return -1;
+			return -LINUX_EFAULT;
 	}
-	return -1;
+	return -LINUX_E2BIG;
 }
 
 static void free_user_vector(char **vector)
@@ -42,112 +43,6 @@ static void free_user_vector(char **vector)
 
 	for (i = 0; i < MAXARG && vector[i]; i++)
 		pfree(vector[i]);
-}
-
-static uint64 linux_error(int result)
-{
-	switch (result) {
-	case VFS_ERR_PERM:
-		return -LINUX_EPERM;
-	case VFS_ERR_NOENT:
-		return -LINUX_ENOENT;
-	case VFS_ERR_BADF:
-		return -LINUX_EBADF;
-	case VFS_ERR_EXIST:
-		return -LINUX_EEXIST;
-	case VFS_ERR_NOTDIR:
-		return -LINUX_ENOTDIR;
-	case VFS_ERR_ISDIR:
-		return -LINUX_EISDIR;
-	case VFS_ERR_INVAL:
-		return -LINUX_EINVAL;
-	case VFS_ERR_MFILE:
-		return -LINUX_EMFILE;
-	case VFS_ERR_NOSPC:
-		return -LINUX_ENOSPC;
-	case VFS_ERR_NOTEMPTY:
-		return -LINUX_ENOTEMPTY;
-	case VFS_ERR_NODEV:
-		return -LINUX_ENODEV;
-	case VFS_ERR_NOMEM:
-		return -LINUX_ENOMEM;
-	case VFS_ERR_NOTSUPP:
-		return -LINUX_EOPNOTSUPP;
-	case VFS_ERR_NAMETOOLONG:
-		return -LINUX_ENAMETOOLONG;
-	case VFS_ERR_BUSY:
-		return -LINUX_EBUSY;
-	case VFS_ERR_LOOP:
-		return -LINUX_ELOOP;
-	case VFS_ERR_XDEV:
-		return -LINUX_EXDEV;
-	case VFS_ERR_MLINK:
-		return -LINUX_EMLINK;
-	case VFS_ERR_NOTTY:
-		return -LINUX_ENOTTY;
-	case VFS_ERR_NXIO:
-		return -LINUX_ENXIO;
-	case VFS_ERR_FAULT:
-		return -LINUX_EFAULT;
-	case VFS_ERR_IO:
-		return -LINUX_EIO;
-	case VFS_ERR_SPIPE:
-		return -LINUX_ESPIPE;
-	case VFS_ERR_AGAIN:
-		return -LINUX_EAGAIN;
-	case VFS_ERR_NOTSOCK:
-		return -LINUX_ENOTSOCK;
-	case VFS_ERR_DESTADDRREQ:
-		return -LINUX_EDESTADDRREQ;
-	case VFS_ERR_MSGSIZE:
-		return -LINUX_EMSGSIZE;
-	case VFS_ERR_PROTOTYPE:
-		return -LINUX_EPROTOTYPE;
-	case VFS_ERR_NOPROTOOPT:
-		return -LINUX_ENOPROTOOPT;
-	case VFS_ERR_PROTONOSUPPORT:
-		return -LINUX_EPROTONOSUPPORT;
-	case VFS_ERR_SOCKTNOSUPPORT:
-		return -LINUX_ESOCKTNOSUPPORT;
-	case VFS_ERR_AFNOSUPPORT:
-		return -LINUX_EAFNOSUPPORT;
-	case VFS_ERR_ADDRINUSE:
-		return -LINUX_EADDRINUSE;
-	case VFS_ERR_ADDRNOTAVAIL:
-		return -LINUX_EADDRNOTAVAIL;
-	case VFS_ERR_NETDOWN:
-		return -LINUX_ENETDOWN;
-	case VFS_ERR_NETUNREACH:
-		return -LINUX_ENETUNREACH;
-	case VFS_ERR_CONNABORTED:
-		return -LINUX_ECONNABORTED;
-	case VFS_ERR_CONNRESET:
-		return -LINUX_ECONNRESET;
-	case VFS_ERR_NOBUFS:
-		return -LINUX_ENOBUFS;
-	case VFS_ERR_ISCONN:
-		return -LINUX_EISCONN;
-	case VFS_ERR_NOTCONN:
-		return -LINUX_ENOTCONN;
-	case VFS_ERR_SHUTDOWN:
-		return -LINUX_ESHUTDOWN;
-	case VFS_ERR_TIMEDOUT:
-		return -LINUX_ETIMEDOUT;
-	case VFS_ERR_CONNREFUSED:
-		return -LINUX_ECONNREFUSED;
-	case VFS_ERR_HOSTUNREACH:
-		return -LINUX_EHOSTUNREACH;
-	case VFS_ERR_ALREADY:
-		return -LINUX_EALREADY;
-	case VFS_ERR_INPROGRESS:
-		return -LINUX_EINPROGRESS;
-	case VFS_ERR_PIPE:
-		return -LINUX_EPIPE;
-	case VFS_ERR_INTR:
-		return -LINUX_EINTR;
-	default:
-		return -LINUX_EIO;
-	}
 }
 
 static int linux_open_flags(int linux_flags, uint32 *vfs_flags)
@@ -171,6 +66,8 @@ static int linux_open_flags(int linux_flags, uint32 *vfs_flags)
 		flags |= VFS_OPEN_CREATE;
 	if (linux_flags & LINUX_O_EXCL)
 		flags |= VFS_OPEN_EXCLUSIVE;
+	if (linux_flags & LINUX_O_NOCTTY)
+		flags |= VFS_OPEN_NOCTTY;
 	if (linux_flags & LINUX_O_TRUNC)
 		flags |= VFS_OPEN_TRUNCATE;
 	if (linux_flags & LINUX_O_APPEND)
@@ -206,6 +103,12 @@ static void make_linux_stat(struct linux_stat *linux_stat,
 	linux_stat->size = vfs_stat->size;
 	linux_stat->blksize = vfs_stat->block_size;
 	linux_stat->blocks = vfs_stat->blocks;
+	linux_stat->atime = vfs_stat->atime.seconds;
+	linux_stat->atime_nsec = vfs_stat->atime.nanoseconds;
+	linux_stat->mtime = vfs_stat->mtime.seconds;
+	linux_stat->mtime_nsec = vfs_stat->mtime.nanoseconds;
+	linux_stat->ctime = vfs_stat->ctime.seconds;
+	linux_stat->ctime_nsec = vfs_stat->ctime.nanoseconds;
 	linux_stat->mode = vfs_stat->mode & VFS_MODE_PERMISSIONS;
 	if (vfs_stat->type == VFS_INODE_DIRECTORY)
 		linux_stat->mode |= LINUX_S_IFDIR;
@@ -221,6 +124,80 @@ static void make_linux_stat(struct linux_stat *linux_stat,
 		linux_stat->mode |= LINUX_S_IFSOCK;
 	else
 		linux_stat->mode |= LINUX_S_IFREG;
+}
+
+static void make_linux_statfs(struct linux_statfs *linux_stat,
+			      const struct vfs_statfs *vfs_stat)
+{
+	memset(linux_stat, 0, sizeof(*linux_stat));
+	linux_stat->type = vfs_stat->type;
+	linux_stat->block_size = vfs_stat->block_size;
+	linux_stat->blocks = vfs_stat->blocks;
+	linux_stat->blocks_free = vfs_stat->blocks_free;
+	linux_stat->blocks_available = vfs_stat->blocks_available;
+	linux_stat->files = vfs_stat->files;
+	linux_stat->files_free = vfs_stat->files_free;
+	linux_stat->name_length = vfs_stat->name_length;
+	linux_stat->fragment_size = vfs_stat->fragment_size;
+	linux_stat->flags = vfs_stat->flags;
+}
+
+static int linux_mount_allowed(void)
+{
+	struct process_credentials credentials;
+
+	process_credentials_get(&credentials);
+	return credentials.euid == 0;
+}
+
+uint64 sys_linux_mount(void)
+{
+	char source[VFS_PATH_MAX];
+	char target[VFS_PATH_MAX];
+	char filesystem[32];
+	char options[128];
+	const char *source_path = 0;
+	uint64 source_address, flags, data;
+	int result;
+
+	argaddr(0, &source_address);
+	argaddr(3, &flags);
+	argaddr(4, &data);
+	if (!linux_mount_allowed())
+		return -LINUX_EPERM;
+	if (flags & ~LINUX_MOUNT_SILENT)
+		return -LINUX_EOPNOTSUPP;
+	if (source_address) {
+		if (fetch_str_from_user(source_address, source,
+					sizeof(source)) < 0)
+			return -LINUX_EFAULT;
+		source_path = source;
+	}
+	if (data) {
+		if (fetch_str_from_user(data, options, sizeof(options)) < 0)
+			return -LINUX_EFAULT;
+		if (options[0])
+			return -LINUX_EOPNOTSUPP;
+	}
+	if (argstr(1, target, sizeof(target)) < 0 ||
+	    argstr(2, filesystem, sizeof(filesystem)) < 0)
+		return -LINUX_EFAULT;
+	result = vfs_mount_path(filesystem, source_path, target, 0);
+	return result < 0 ? linux_error(result) : 0;
+}
+
+uint64 sys_linux_umount2(void)
+{
+	char target[VFS_PATH_MAX];
+	int flags, result;
+
+	argint(1, &flags);
+	if (!linux_mount_allowed())
+		return -LINUX_EPERM;
+	if (argstr(0, target, sizeof(target)) < 0)
+		return -LINUX_EFAULT;
+	result = vfs_unmount(target, flags);
+	return result < 0 ? linux_error(result) : 0;
 }
 
 uint64 sys_linux_openat(void)
@@ -239,7 +216,7 @@ uint64 sys_linux_openat(void)
 	if (linux_open_flags(linux_flags, &flags) < 0)
 		return -LINUX_EINVAL;
 	mode &= VFS_MODE_PERMISSIONS;
-	mode &= ~cur_proc()->umask;
+	mode &= ~process_umask_get();
 	result = vfs_open(path, flags, mode, &fd);
 	if (result < 0)
 		return linux_error(result);
@@ -263,6 +240,41 @@ uint64 sys_linux_ftruncate(void)
 	return result < 0 ? linux_error(result) : 0;
 }
 
+uint64 sys_linux_truncate(void)
+{
+	char path[MAXPATH];
+	uint64 length;
+	int64 signed_length;
+	int result;
+
+	argaddr(1, &length);
+	signed_length = (int64)length;
+	if (signed_length < 0)
+		return -LINUX_EINVAL;
+	if (argstr(0, path, sizeof(path)) < 0)
+		return -LINUX_EFAULT;
+	result = vfs_truncate(path, signed_length);
+	return result < 0 ? linux_error(result) : 0;
+}
+
+uint64 sys_linux_fallocate(void)
+{
+	uint64 offset, length;
+	int fd, mode, result;
+
+	argint(0, &fd);
+	argint(1, &mode);
+	argaddr(2, &offset);
+	argaddr(3, &length);
+	if (mode)
+		return -LINUX_EOPNOTSUPP;
+	if ((int64)offset < 0 || (int64)length <= 0 ||
+	    offset > 0x7fffffffffffffffULL - length)
+		return -LINUX_EINVAL;
+	result = vfs_fallocate(fd, offset, length);
+	return result < 0 ? linux_error(result) : 0;
+}
+
 uint64 sys_linux_close(void)
 {
 	int fd, result;
@@ -270,6 +282,34 @@ uint64 sys_linux_close(void)
 	argint(0, &fd);
 	result = vfs_close(fd);
 	return result < 0 ? linux_error(result) : 0;
+}
+
+uint64 sys_linux_pipe2(void)
+{
+	process_t process = cur_proc();
+	uint64 address;
+	uint32 file_flags = 0;
+	uint8 fd_flags = 0;
+	int descriptors[2], flags, result;
+
+	argaddr(0, &address);
+	argint(1, &flags);
+	if (flags & ~(LINUX_O_CLOEXEC | LINUX_O_NONBLOCK))
+		return -LINUX_EINVAL;
+	if (flags & LINUX_O_NONBLOCK)
+		file_flags |= VFS_OPEN_NONBLOCK;
+	if (flags & LINUX_O_CLOEXEC)
+		fd_flags |= VFS_FD_CLOEXEC;
+	result = vfs_pipe(file_flags, fd_flags, descriptors);
+	if (result < 0)
+		return linux_error(result);
+	if (copyout(process->pagetable, address, (char *)descriptors,
+	            sizeof(descriptors)) < 0) {
+		vfs_close(descriptors[0]);
+		vfs_close(descriptors[1]);
+		return -LINUX_EFAULT;
+	}
+	return 0;
 }
 
 uint64 sys_linux_read(void)
@@ -295,6 +335,8 @@ uint64 sys_linux_write(void)
 	argaddr(1, &address);
 	argint(2, &length);
 	result = vfs_write(fd, address, length);
+	if (result == VFS_ERR_INTR)
+		return -SIGNAL_RESTART_SYS;
 	return result < 0 ? linux_error(result) : result;
 }
 
@@ -314,6 +356,26 @@ uint64 sys_linux_pread64(void)
 	if (vfs_get_file_fd(fd, &file) < 0)
 		return -LINUX_EBADF;
 	result = vfs_file_pread(file, 1, address, count, offset);
+	vfs_file_put(file);
+	return result < 0 ? linux_error(result) : result;
+}
+
+uint64 sys_linux_pwrite64(void)
+{
+	struct vfs_file *file;
+	uint64 address, count, offset;
+	int fd;
+	int64 result;
+
+	argint(0, &fd);
+	argaddr(1, &address);
+	argaddr(2, &count);
+	argaddr(3, &offset);
+	if ((int64)offset < 0 || count > 0x7fffffff)
+		return -LINUX_EINVAL;
+	if (vfs_get_file_fd(fd, &file) < 0)
+		return -LINUX_EBADF;
+	result = vfs_file_pwrite(file, 1, address, count, offset, 0);
 	vfs_file_put(file);
 	return result < 0 ? linux_error(result) : result;
 }
@@ -351,6 +413,48 @@ uint64 sys_linux_fstat(void)
 	return 0;
 }
 
+uint64 sys_linux_statfs(void)
+{
+	struct linux_statfs linux_stat;
+	struct vfs_statfs stat;
+	process_t process = cur_proc();
+	char path[MAXPATH];
+	uint64 address;
+	int result;
+
+	argaddr(1, &address);
+	if (argstr(0, path, sizeof(path)) < 0)
+		return -LINUX_EFAULT;
+	result = vfs_statfs_path(path, &stat);
+	if (result < 0)
+		return linux_error(result);
+	make_linux_statfs(&linux_stat, &stat);
+	if (copyout(process->pagetable, address, (char *)&linux_stat,
+	            sizeof(linux_stat)) < 0)
+		return -LINUX_EFAULT;
+	return 0;
+}
+
+uint64 sys_linux_fstatfs(void)
+{
+	struct linux_statfs linux_stat;
+	struct vfs_statfs stat;
+	process_t process = cur_proc();
+	uint64 address;
+	int fd, result;
+
+	argint(0, &fd);
+	argaddr(1, &address);
+	result = vfs_statfs_fd(fd, &stat);
+	if (result < 0)
+		return linux_error(result);
+	make_linux_statfs(&linux_stat, &stat);
+	if (copyout(process->pagetable, address, (char *)&linux_stat,
+	            sizeof(linux_stat)) < 0)
+		return -LINUX_EFAULT;
+	return 0;
+}
+
 uint64 sys_linux_newfstatat(void)
 {
 	struct linux_stat linux_stat;
@@ -381,7 +485,14 @@ uint64 sys_linux_newfstatat(void)
 	return 0;
 }
 
-uint64 sys_linux_getdents64(void)
+struct linux_getdents_context {
+	process_t process;
+	uint64 address;
+	int length;
+	int used;
+};
+
+static int linux_emit_dirent(const struct vfs_dirent *dirent, void *opaque)
 {
 	struct {
 		uint64 ino;
@@ -390,38 +501,49 @@ uint64 sys_linux_getdents64(void)
 		uint8 type;
 		char name[VFS_NAME_MAX + 1];
 	} linux_dirent;
-	struct vfs_dirent dirent;
-	process_t process = cur_proc();
-	uint64 address;
-	int fd, length, result = 0, used = 0;
+	struct linux_getdents_context *context = opaque;
 	int name_length, record_length;
 
+	name_length = strlen(dirent->name);
+	record_length = (19 + name_length + 1 + 7) & ~7;
+	if (context->used + record_length > context->length)
+		return VFS_ERR_NOSPC;
+	memset(&linux_dirent, 0, sizeof(linux_dirent));
+	linux_dirent.ino = dirent->ino;
+	linux_dirent.offset = dirent->next_offset;
+	linux_dirent.reclen = record_length;
+	linux_dirent.type = dirent->type;
+	safe_strncpy(linux_dirent.name, dirent->name,
+	             sizeof(linux_dirent.name));
+	if (copyout(context->process->pagetable,
+	            context->address + context->used,
+	            (char *)&linux_dirent, record_length) < 0)
+		return VFS_ERR_FAULT;
+	context->used += record_length;
+	return VFS_OK;
+}
+
+uint64 sys_linux_getdents64(void)
+{
+	struct linux_getdents_context context = {
+		.process = cur_proc(),
+	};
+	int fd, result = 0;
+
 	argint(0, &fd);
-	argaddr(1, &address);
-	argint(2, &length);
-	if (length < 24)
+	argaddr(1, &context.address);
+	argint(2, &context.length);
+	if (context.length < 24)
 		return -LINUX_EINVAL;
-	while (length - used >= 24 &&
-	       (result = vfs_next_dirent(fd, &dirent)) > 0) {
-		name_length = strlen(dirent.name);
-		record_length = (19 + name_length + 1 + 7) & ~7;
-		if (used + record_length > length)
-			return used ? used : -LINUX_EINVAL;
-		memset(&linux_dirent, 0, sizeof(linux_dirent));
-		linux_dirent.ino = dirent.ino;
-		linux_dirent.offset = dirent.next_offset;
-		linux_dirent.reclen = record_length;
-		linux_dirent.type = dirent.type;
-		safe_strncpy(linux_dirent.name, dirent.name,
-		             sizeof(linux_dirent.name));
-		if (copyout(process->pagetable, address + used,
-		            (char *)&linux_dirent, record_length) < 0)
-			return used ? used : -LINUX_EFAULT;
-		used += record_length;
-	}
+	while (context.length - context.used >= 24 &&
+	       (result = vfs_next_dirent(fd, linux_emit_dirent,
+	                                 &context)) > 0)
+		;
+	if (result == VFS_ERR_NOSPC)
+		return context.used ? context.used : -LINUX_EINVAL;
 	if (result < 0)
-		return used ? used : linux_error(result);
-	return used;
+		return context.used ? context.used : linux_error(result);
+	return context.used;
 }
 
 uint64 sys_linux_fcntl(void)
@@ -489,8 +611,170 @@ uint64 sys_linux_mkdirat(void)
 	if (path[0] != '/' && dirfd != LINUX_AT_FDCWD)
 		return -LINUX_EBADF;
 	mode &= VFS_MODE_PERMISSIONS;
-	mode &= ~cur_proc()->umask;
+	mode &= ~process_umask_get();
 	result = vfs_mkdir(path, mode);
+	return result < 0 ? linux_error(result) : 0;
+}
+
+static uint64 linux_decode_device(uint64 device)
+{
+	uint32 major = ((device >> 8) & 0xfff) |
+		((device >> 32) & ~0xfffULL);
+	uint32 minor = (device & 0xff) | ((device >> 12) & 0xffffff00ULL);
+
+	return VFS_MAKE_DEVICE(major, minor);
+}
+
+static int linux_mknod_allowed(void)
+{
+	struct process_credentials credentials;
+
+	process_credentials_get(&credentials);
+	return credentials.euid == 0;
+}
+
+uint64 sys_linux_mknodat(void)
+{
+	char path[MAXPATH];
+	enum vfs_inode_type type;
+	uint64 device;
+	uint32 permissions;
+	int dirfd, mode, result;
+
+	argint(0, &dirfd);
+	argint(2, &mode);
+	argaddr(3, &device);
+	if (argstr(1, path, sizeof(path)) < 0)
+		return -LINUX_EFAULT;
+	permissions = (mode & VFS_MODE_PERMISSIONS) & ~process_umask_get();
+	switch (mode & LINUX_S_IFMT) {
+	case 0:
+	case LINUX_S_IFREG:
+		type = VFS_INODE_REGULAR;
+		break;
+	case LINUX_S_IFCHR:
+		if (!linux_mknod_allowed())
+			return -LINUX_EPERM;
+		type = VFS_INODE_CHAR_DEVICE;
+		break;
+	case LINUX_S_IFBLK:
+		if (!linux_mknod_allowed())
+			return -LINUX_EPERM;
+		type = VFS_INODE_BLOCK_DEVICE;
+		break;
+	case LINUX_S_IFIFO:
+		return -LINUX_EOPNOTSUPP;
+	case LINUX_S_IFSOCK:
+		type = VFS_INODE_SOCKET;
+		break;
+	default:
+		return -LINUX_EINVAL;
+	}
+	if (path[0] == '/' || dirfd == LINUX_AT_FDCWD)
+		result = vfs_mknod(path, type, permissions,
+				   linux_decode_device(device));
+	else
+		result = vfs_mknod_at(dirfd, path, type, permissions,
+				      linux_decode_device(device));
+	return result < 0 ? linux_error(result) : 0;
+}
+
+uint64 sys_linux_fchmodat(void)
+{
+	struct vfs_iattr attributes = { .mask = VFS_ATTR_MODE };
+	char path[MAXPATH];
+	int dirfd, mode, result;
+
+	argint(0, &dirfd);
+	argint(2, &mode);
+	if (argstr(1, path, sizeof(path)) < 0)
+		return -LINUX_EFAULT;
+	attributes.mode = mode & VFS_MODE_PERMISSIONS;
+	if (path[0] == '/' || dirfd == LINUX_AT_FDCWD)
+		result = vfs_setattr_path(path, 1, &attributes);
+	else
+		result = vfs_setattr_at(dirfd, path, 1, &attributes);
+	return result < 0 ? linux_error(result) : 0;
+}
+
+uint64 sys_linux_fchmod(void)
+{
+	struct vfs_iattr attributes = { .mask = VFS_ATTR_MODE };
+	int fd, mode, result;
+
+	argint(0, &fd);
+	argint(1, &mode);
+	attributes.mode = mode & VFS_MODE_PERMISSIONS;
+	result = vfs_setattr_fd(fd, &attributes);
+	return result < 0 ? linux_error(result) : 0;
+}
+
+uint64 sys_linux_fchownat(void)
+{
+	struct vfs_iattr attributes = { 0 };
+	struct vfs_stat stat;
+	char path[MAXPATH];
+	int dirfd, flags, group, owner, result;
+
+	argint(0, &dirfd);
+	argint(2, &owner);
+	argint(3, &group);
+	argint(4, &flags);
+	if (argstr(1, path, sizeof(path)) < 0)
+		return -LINUX_EFAULT;
+	if (flags & ~LINUX_AT_SYMLINK_NOFOLLOW)
+		return -LINUX_EINVAL;
+	if (owner != -1) {
+		attributes.mask |= VFS_ATTR_UID;
+		attributes.uid = owner;
+	}
+	if (group != -1) {
+		attributes.mask |= VFS_ATTR_GID;
+		attributes.gid = group;
+	}
+	if (!attributes.mask) {
+		if (path[0] == '/' || dirfd == LINUX_AT_FDCWD)
+			result = vfs_stat_path(
+				path, !(flags & LINUX_AT_SYMLINK_NOFOLLOW),
+				&stat);
+		else
+			result = vfs_stat_at(
+				dirfd, path,
+				!(flags & LINUX_AT_SYMLINK_NOFOLLOW), &stat);
+		return result < 0 ? linux_error(result) : 0;
+	}
+	if (path[0] == '/' || dirfd == LINUX_AT_FDCWD)
+		result = vfs_setattr_path(
+			path, !(flags & LINUX_AT_SYMLINK_NOFOLLOW), &attributes);
+	else
+		result = vfs_setattr_at(
+			dirfd, path, !(flags & LINUX_AT_SYMLINK_NOFOLLOW),
+			&attributes);
+	return result < 0 ? linux_error(result) : 0;
+}
+
+uint64 sys_linux_fchown(void)
+{
+	struct vfs_iattr attributes = { 0 };
+	struct vfs_stat stat;
+	int fd, group, owner, result;
+
+	argint(0, &fd);
+	argint(1, &owner);
+	argint(2, &group);
+	if (owner != -1) {
+		attributes.mask |= VFS_ATTR_UID;
+		attributes.uid = owner;
+	}
+	if (group != -1) {
+		attributes.mask |= VFS_ATTR_GID;
+		attributes.gid = group;
+	}
+	if (!attributes.mask) {
+		result = vfs_stat_fd(fd, &stat);
+		return result < 0 ? linux_error(result) : 0;
+	}
+	result = vfs_setattr_fd(fd, &attributes);
 	return result < 0 ? linux_error(result) : 0;
 }
 
@@ -630,29 +914,98 @@ uint64 sys_linux_fdatasync(void)
 uint64 sys_linux_faccessat(void)
 {
 	char path[MAXPATH];
-	int dirfd, result;
+	uint32 access = 0;
+	int dirfd, mode, result;
 
 	argint(0, &dirfd);
+	argint(2, &mode);
 	if (argstr(1, path, sizeof(path)) < 0)
 		return -LINUX_EFAULT;
 	if (path[0] != '/' && dirfd != LINUX_AT_FDCWD)
 		return -LINUX_EBADF;
-	result = vfs_access(path);
+	if (mode & ~(LINUX_R_OK | LINUX_W_OK | LINUX_X_OK))
+		return -LINUX_EINVAL;
+	if (mode & LINUX_R_OK)
+		access |= VFS_ACCESS_READ;
+	if (mode & LINUX_W_OK)
+		access |= VFS_ACCESS_WRITE;
+	if (mode & LINUX_X_OK)
+		access |= VFS_ACCESS_EXEC;
+	result = vfs_access(path, access, 0);
 	return result < 0 ? linux_error(result) : 0;
 }
 
 uint64 sys_linux_utimensat(void)
 {
+	struct linux_timespec linux_times[2];
+	struct vfs_timespec times[2], now;
+	process_t process = cur_proc();
 	char path[MAXPATH];
-	int dirfd, result;
+	uint64 address, path_address;
+	uint32 mask = 0;
+	int owner_only = 0, use_fd = 0;
+	int dirfd, flags, i, result;
 
 	argint(0, &dirfd);
-	if (argstr(1, path, sizeof(path)) < 0)
-		return -LINUX_EFAULT;
-	if (path[0] != '/' && dirfd != LINUX_AT_FDCWD)
-		return -LINUX_EBADF;
-	/* Caffeinix does not persist inode timestamps yet. */
-	result = vfs_access(path);
+	argaddr(1, &path_address);
+	argaddr(2, &address);
+	argint(3, &flags);
+	if (flags & ~(LINUX_AT_SYMLINK_NOFOLLOW | LINUX_AT_EMPTY_PATH))
+		return -LINUX_EINVAL;
+	if (!address) {
+		if (vfs_current_time(&now) < 0)
+			return -LINUX_EIO;
+		times[0] = now;
+		times[1] = now;
+		mask = VFS_TIME_ATIME | VFS_TIME_MTIME;
+	} else {
+		if (copyin(process->pagetable, (char *)linux_times, address,
+		           sizeof(linux_times)) < 0)
+			return -LINUX_EFAULT;
+		owner_only = linux_times[0].nanoseconds != LINUX_UTIME_NOW ||
+			     linux_times[1].nanoseconds != LINUX_UTIME_NOW;
+		for (i = 0; i < 2; i++) {
+			if (linux_times[i].nanoseconds == LINUX_UTIME_OMIT)
+				continue;
+			if (linux_times[i].nanoseconds == LINUX_UTIME_NOW) {
+				if (vfs_current_time(&times[i]) < 0)
+					return -LINUX_EIO;
+			} else {
+				if (linux_times[i].nanoseconds < 0 ||
+				    linux_times[i].nanoseconds >= NSEC_PER_SEC)
+					return -LINUX_EINVAL;
+				times[i].seconds = linux_times[i].seconds;
+				times[i].nanoseconds =
+					linux_times[i].nanoseconds;
+			}
+			mask |= i ? VFS_TIME_MTIME : VFS_TIME_ATIME;
+		}
+		if (!mask)
+			return 0;
+	}
+	if (!path_address) {
+		if (flags)
+			return -LINUX_EINVAL;
+		use_fd = 1;
+	} else {
+		if (fetch_str_from_user(path_address, path, sizeof(path)) < 0)
+			return -LINUX_EFAULT;
+		if (!path[0]) {
+			if (!(flags & LINUX_AT_EMPTY_PATH))
+				return -LINUX_ENOENT;
+			use_fd = 1;
+		}
+	}
+	if (use_fd)
+		result = vfs_set_times_fd(dirfd, times, mask, owner_only);
+	else if (path[0] != '/' && dirfd != LINUX_AT_FDCWD)
+		result = vfs_set_times_at(dirfd, path,
+				!(flags & LINUX_AT_SYMLINK_NOFOLLOW),
+				times, mask, owner_only);
+	else
+		result = vfs_set_times_path(path,
+				!(flags & LINUX_AT_SYMLINK_NOFOLLOW),
+				times, mask, owner_only);
 	return result < 0 ? linux_error(result) : 0;
 }
 
@@ -715,55 +1068,232 @@ uint64 sys_linux_dup3(void)
 
 uint64 sys_linux_ioctl(void)
 {
-	uint64 address;
-	int fd, request;
+	uint64 address, request;
+	int fd;
 	int64 result;
 
 	argint(0, &fd);
-	argint(1, &request);
+	argaddr(1, &request);
 	argaddr(2, &address);
-	result = vfs_ioctl(fd, request, address);
+	result = vfs_ioctl(fd, (uint32)request, address);
+	if (result == VFS_ERR_INTR)
+		return -SIGNAL_RESTART_SYS;
+	return result < 0 ? linux_error(result) : result;
+}
+
+static uint64 linux_positioned_iov(int write_operation, int version_two)
+{
+	struct vfs_iovec *iovecs;
+	file_t file;
+	uint64 address, offset, offset_high, offset_low;
+	unsigned int order;
+	int count, error, fd, flags = 0;
+	uint32 vfs_flags = 0;
+	int64 result;
+
+	argint(0, &fd);
+	argaddr(1, &address);
+	argint(2, &count);
+	argaddr(3, &offset_low);
+	argaddr(4, &offset_high);
+	offset = (uint32)offset_low | ((uint64)(uint32)offset_high << 32);
+	if (version_two)
+		argint(5, &flags);
+	if ((!write_operation && flags) ||
+	    (write_operation && flags & ~LINUX_RWF_NOAPPEND))
+		return -LINUX_EOPNOTSUPP;
+	if (flags & LINUX_RWF_NOAPPEND)
+		vfs_flags |= VFS_WRITE_NOAPPEND;
+	error = copy_user_iov(address, count, &iovecs, &order);
+	if (error < 0)
+		return error;
+	if (version_two && offset == (uint64)-1) {
+		result = write_operation ?
+			vfs_writev(fd, 1, iovecs, count, vfs_flags) :
+			vfs_readv(fd, 1, iovecs, count);
+		goto translate;
+	}
+	if ((int64)offset < 0) {
+		result = -LINUX_EINVAL;
+		goto out_iov;
+	}
+	if (vfs_get_file_fd(fd, &file) < 0) {
+		result = -LINUX_EBADF;
+		goto out_iov;
+	}
+	result = write_operation ?
+		vfs_file_pwritev(file, 1, iovecs, count, offset, vfs_flags) :
+		vfs_file_preadv(file, 1, iovecs, count, offset);
+	vfs_file_put(file);
+translate:
+	if (result == VFS_ERR_INTR)
+		result = -SIGNAL_RESTART_SYS;
+	else if (result < 0)
+		result = linux_error(result);
+out_iov:
+	if (iovecs)
+		free_pages(iovecs, order);
+	return result;
+}
+
+uint64 sys_linux_preadv(void)
+{
+	return linux_positioned_iov(0, 0);
+}
+
+uint64 sys_linux_pwritev(void)
+{
+	return linux_positioned_iov(1, 0);
+}
+
+uint64 sys_linux_preadv2(void)
+{
+	return linux_positioned_iov(0, 1);
+}
+
+uint64 sys_linux_pwritev2(void)
+{
+	return linux_positioned_iov(1, 1);
+}
+
+uint64 sys_linux_readv(void)
+{
+	struct vfs_iovec *iovecs;
+	uint64 address;
+	unsigned int order;
+	int count, error, fd;
+	int64 result;
+
+	argint(0, &fd);
+	argaddr(1, &address);
+	argint(2, &count);
+	error = copy_user_iov(address, count, &iovecs, &order);
+	if (error < 0)
+		return error;
+	result = vfs_readv(fd, 1, iovecs, count);
+	if (iovecs)
+		free_pages(iovecs, order);
+	if (result == VFS_ERR_INTR)
+		return -SIGNAL_RESTART_SYS;
 	return result < 0 ? linux_error(result) : result;
 }
 
 uint64 sys_linux_writev(void)
 {
-	process_t p = cur_proc();
-	struct linux_iovec linux_iov;
-	struct vfs_iovec iovecs[LINUX_IOV_MAX];
-	uint64 iov_address;
-	file_t f;
-	int fd, count, i;
-	int64 written;
+	struct vfs_iovec *iovecs;
+	uint64 address;
+	unsigned int order;
+	int count, error, fd;
+	int64 result;
 
 	argint(0, &fd);
-	argaddr(1, &iov_address);
+	argaddr(1, &address);
 	argint(2, &count);
+	error = copy_user_iov(address, count, &iovecs, &order);
+	if (error < 0)
+		return error;
+	result = vfs_writev(fd, 1, iovecs, count, 0);
+	if (iovecs)
+		free_pages(iovecs, order);
+	if (result == VFS_ERR_INTR)
+		return -SIGNAL_RESTART_SYS;
+	return result < 0 ? linux_error(result) : result;
+}
 
-	if (fd < 0 || fd >= NOFILE || !(f = p->ofile[fd]))
-		return -LINUX_EBADF;
-	if (count < 0 || count > LINUX_IOV_MAX)
-		return -LINUX_EINVAL;
+uint64 sys_linux_sendfile(void)
+{
+	process_t process = cur_proc();
+	file_t input = 0, output = 0;
+	uint64 buffer_address, count, offset_address;
+	uint64 chunk, offset, total = 0;
+	char *buffer;
+	int input_fd, output_fd, position_locked = 0;
+	int64 read_result = 0, write_result;
 
-	for (i = 0; i < count; i++) {
-		if (copyin(p->pagetable, (char *)&linux_iov,
-		           iov_address + i * sizeof(linux_iov),
-			   sizeof(linux_iov)) < 0)
-			return -LINUX_EFAULT;
-		if (linux_iov.len > 0x7fffffff)
-			return -LINUX_EINVAL;
-		iovecs[i].base = linux_iov.base;
-		iovecs[i].length = linux_iov.len;
+	argint(0, &output_fd);
+	argint(1, &input_fd);
+	argaddr(2, &offset_address);
+	argaddr(3, &count);
+	if (count > 0x7fffffff)
+		count = 0x7fffffff;
+	if (vfs_get_file_fd(input_fd, &input) < 0 ||
+	    vfs_get_file_fd(output_fd, &output) < 0) {
+		read_result = -LINUX_EBADF;
+		goto out;
 	}
-	written = vfs_writev(fd, 1, iovecs, count);
-	return written < 0 ? linux_error(written) : written;
+	if (offset_address) {
+		if (copyin(process->pagetable, (char *)&offset,
+		           offset_address, sizeof(offset)) < 0) {
+			read_result = -LINUX_EFAULT;
+			goto out;
+		}
+		if ((int64)offset < 0) {
+			read_result = -LINUX_EINVAL;
+			goto out;
+		}
+	} else {
+		sleeplock_acquire(&input->position_lock);
+		position_locked = 1;
+		offset = input->position;
+	}
+	if (output->flags & VFS_OPEN_APPEND) {
+		read_result = -LINUX_EINVAL;
+		goto out;
+	}
+	buffer = alloc_pages(0, 0);
+	if (!buffer) {
+		read_result = -LINUX_ENOMEM;
+		goto out;
+	}
+	buffer_address = (uint64)buffer;
+	while (total < count) {
+		chunk = count - total;
+		if (chunk > PGSIZE)
+			chunk = PGSIZE;
+		read_result = vfs_file_pread(input, 0, buffer_address,
+					chunk, offset);
+		if (read_result <= 0)
+			break;
+		write_result = vfs_file_write_current(output, 0,
+					      buffer_address, read_result);
+		if (write_result <= 0) {
+			read_result = write_result;
+			break;
+		}
+		offset += write_result;
+		total += write_result;
+		if (write_result != read_result)
+			break;
+	}
+	free_pages(buffer, 0);
+	if (!offset_address)
+		input->position = offset;
+	else if (copyout(process->pagetable, offset_address,
+	                 (char *)&offset, sizeof(offset)) < 0) {
+		read_result = -LINUX_EFAULT;
+		goto out;
+	}
+	if (total)
+		read_result = total;
+	else if (read_result == VFS_ERR_INTR)
+		read_result = -SIGNAL_RESTART_SYS;
+	else if (read_result < 0)
+		read_result = linux_error(read_result);
+out:
+	if (position_locked)
+		sleeplock_release(&input->position_lock);
+	if (output)
+		vfs_file_put(output);
+	if (input)
+		vfs_file_put(input);
+	return read_result;
 }
 
 uint64 sys_linux_execve(void)
 {
 	char path[MAXPATH], *argv[MAXARG], *envp[MAXARG];
 	uint64 user_argv, user_envp;
-	int ret;
+	int env_error, argv_error, ret;
 
 	argaddr(1, &user_argv);
 	argaddr(2, &user_envp);
@@ -772,19 +1302,19 @@ uint64 sys_linux_execve(void)
 
 	memset(argv, 0, sizeof(argv));
 	memset(envp, 0, sizeof(envp));
-	if (copy_user_vector(user_argv, argv) < 0 ||
-	    copy_user_vector(user_envp, envp) < 0)
-		goto fault;
+	argv_error = copy_user_vector(user_argv, argv);
+	env_error = argv_error < 0 ? 0 :
+		copy_user_vector(user_envp, envp);
+	if (argv_error < 0 || env_error < 0) {
+		ret = argv_error < 0 ? argv_error : env_error;
+		goto out;
+	}
 
 	ret = exec_linux(path, argv, envp);
 	if (ret >= 0)
 		vfs_close_on_exec();
+out:
 	free_user_vector(argv);
 	free_user_vector(envp);
-	return ret < 0 ? -LINUX_EFAULT : 0;
-
-fault:
-	free_user_vector(argv);
-	free_user_vector(envp);
-	return -LINUX_EFAULT;
+	return ret < 0 ? ret : 0;
 }

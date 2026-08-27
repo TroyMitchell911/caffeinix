@@ -1,9 +1,13 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <net/if.h>
+#include <net/if_arp.h>
 #include <netinet/tcp.h>
 #include <poll.h>
+#include <signal.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
@@ -25,9 +29,11 @@
 #define TCP_LINGER_PORT 18086
 #define TCP_BULK_SIZE 32768
 #define LARGE_RECEIVE_SIZE 8192
+#define UDP_READV_SIZE 8192
 #define UDP_OVERSIZE_SIZE 4097
 #define DEFAULT_IP_TTL 255
 #define MAX_LWIP_LINGER 32767
+#define TEST_IOV_MAX 1024
 
 struct icmp_echo {
 	unsigned char type;
@@ -41,7 +47,15 @@ struct icmp_echo {
 static unsigned char bulk_send[TCP_BULK_SIZE];
 static unsigned char bulk_receive[TCP_BULK_SIZE];
 static unsigned char large_receive[LARGE_RECEIVE_SIZE];
+static unsigned char udp_readv_receive[UDP_READV_SIZE];
 static unsigned char udp_oversize[UDP_OVERSIZE_SIZE];
+static volatile sig_atomic_t sigpipe_seen;
+
+static void sigpipe_handler(int signal)
+{
+	(void)signal;
+	sigpipe_seen++;
+}
 
 static unsigned short internet_checksum(const void *buffer, size_t length)
 {
@@ -152,10 +166,11 @@ static int read_all(int fd, void *buffer, size_t length)
 
 static int udp_test(const struct sockaddr_in *host)
 {
+	struct iovec iovecs[2];
 	struct sockaddr_in peer;
 	socklen_t peer_length = sizeof(peer);
 	char reply[32];
-	int fd, flags;
+	int fd, flags, index;
 	ssize_t length;
 
 	fd = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
@@ -176,6 +191,20 @@ static int udp_test(const struct sockaddr_in *host)
 	if (peer.sin_family != AF_INET ||
 	    ntohs(peer.sin_port) != UDP_PORT)
 		return fail("udp peer");
+	if (sendto(fd, "udp-readv-large", 15, 0,
+		   (const struct sockaddr *)host, sizeof(*host)) != 15 ||
+	    wait_readable(fd) < 0)
+		return fail("large UDP readv setup");
+	iovecs[0].iov_base = udp_readv_receive;
+	iovecs[0].iov_len = 3072;
+	iovecs[1].iov_base = udp_readv_receive + 3072;
+	iovecs[1].iov_len = sizeof(udp_readv_receive) - 3072;
+	if (readv(fd, iovecs, 2) != sizeof(udp_readv_receive))
+		return fail("large UDP readv length");
+	for (index = 0; index < (int)sizeof(udp_readv_receive); index++) {
+		if (udp_readv_receive[index] != (unsigned char)index)
+			return fail("large UDP readv contents");
+	}
 	if (close(fd) < 0)
 		return fail("udp close");
 	return 0;
@@ -199,6 +228,7 @@ static int loopback_test(void)
 	char reply[32];
 	struct iovec iovecs[2];
 	struct msghdr message;
+	struct iovec *maximum_iovecs;
 	struct pollfd pollfd;
 	socklen_t peer_length;
 	struct sockaddr_in peer;
@@ -339,6 +369,30 @@ static int loopback_test(void)
 	if (connect(transmit, (const struct sockaddr *)&address,
 		    sizeof(address)) < 0)
 		return fail("UDP connect");
+	if (write(transmit, "scatter", 7) != 7 ||
+	    write(transmit, "next", 4) != 4 || wait_readable(receive) < 0)
+		return fail("UDP readv setup");
+	memset(reply, 0, sizeof(reply));
+	iovecs[0].iov_base = reply;
+	iovecs[0].iov_len = 4;
+	iovecs[1].iov_base = reply + 4;
+	iovecs[1].iov_len = 5;
+	if (readv(receive, iovecs, 2) != 7 ||
+	    memcmp(reply, "scatter", 7) ||
+	    recv(receive, reply, sizeof(reply), 0) != 4 ||
+	    memcmp(reply, "next", 4))
+		return fail("UDP readv datagram");
+	maximum_iovecs = calloc(TEST_IOV_MAX, sizeof(*maximum_iovecs));
+	if (!maximum_iovecs)
+		return fail("maximum iovec allocation");
+	memset(&message, 0, sizeof(message));
+	message.msg_iov = maximum_iovecs;
+	message.msg_iovlen = TEST_IOV_MAX;
+	if (sendmsg(transmit, &message, 0) != 0 ||
+	    wait_readable(receive) < 0 ||
+	    recvmsg(receive, &message, 0) != 0)
+		return fail("maximum iovec message");
+	free(maximum_iovecs);
 	memset(&message, 0, sizeof(message));
 	iovecs[0].iov_base = reply;
 	iovecs[0].iov_len = 0;
@@ -476,6 +530,56 @@ static int protocol_test(void)
 	return 0;
 }
 
+static int sigpipe_test(void)
+{
+	struct sigaction action;
+	struct iovec iovec = {
+		.iov_base = (void *)"x",
+		.iov_len = 1,
+	};
+	struct msghdr message = {
+		.msg_iov = &iovec,
+		.msg_iovlen = 1,
+	};
+	int fd;
+
+	memset(&action, 0, sizeof(action));
+	action.sa_handler = sigpipe_handler;
+	sigemptyset(&action.sa_mask);
+	if (sigaction(SIGPIPE, &action, NULL))
+		return fail("SIGPIPE action");
+	fd = socket(AF_INET, SOCK_STREAM, 0);
+	if (fd < 0)
+		return fail("SIGPIPE socket");
+	sigpipe_seen = 0;
+	errno = 0;
+	if (send(fd, "x", 1, 0) != -1 || errno != EPIPE ||
+	    sigpipe_seen != 1)
+		return fail("send SIGPIPE");
+	sigpipe_seen = 0;
+	errno = 0;
+	if (send(fd, "x", 1, MSG_NOSIGNAL) != -1 || errno != EPIPE ||
+	    sigpipe_seen)
+		return fail("MSG_NOSIGNAL");
+	sigpipe_seen = 0;
+	errno = 0;
+	if (write(fd, "x", 1) != -1 || errno != EPIPE || sigpipe_seen != 1)
+		return fail("write SIGPIPE");
+	sigpipe_seen = 0;
+	errno = 0;
+	if (writev(fd, &iovec, 1) != -1 || errno != EPIPE ||
+	    sigpipe_seen != 1)
+		return fail("writev SIGPIPE");
+	sigpipe_seen = 0;
+	errno = 0;
+	if (sendmsg(fd, &message, 0) != -1 || errno != EPIPE ||
+	    sigpipe_seen != 1)
+		return fail("sendmsg SIGPIPE");
+	if (close(fd))
+		return fail("SIGPIPE close");
+	return 0;
+}
+
 static int broadcast_permission_test(void)
 {
 	struct sockaddr_in broadcast = {
@@ -603,6 +707,88 @@ static int icmp_test(const struct sockaddr_in *host)
 	return 0;
 }
 
+static int interface_test(void)
+{
+	struct ifreq requests[4], request;
+	struct ifconf configuration = {
+		.ifc_len = sizeof(requests),
+		.ifc_req = requests,
+	};
+	char route[2048];
+	int count, eth_index = 0, fd, index, route_fd;
+	ssize_t length;
+
+	fd = socket(AF_INET, SOCK_DGRAM, 0);
+	if (fd < 0 || ioctl(fd, SIOCGIFCONF, &configuration) < 0 ||
+	    configuration.ifc_len < 2 * (int)sizeof(struct ifreq) ||
+	    configuration.ifc_len % sizeof(struct ifreq))
+		return fail("interface list");
+	count = configuration.ifc_len / sizeof(struct ifreq);
+	for (index = 0; index < count; index++) {
+		if (strcmp(requests[index].ifr_name, "eth0"))
+			continue;
+		memset(&request, 0, sizeof(request));
+		strcpy(request.ifr_name, "eth0");
+		if (ioctl(fd, SIOCGIFFLAGS, &request) < 0 ||
+		    (request.ifr_flags & (IFF_UP | IFF_BROADCAST |
+					 IFF_RUNNING)) !=
+		    (IFF_UP | IFF_BROADCAST | IFF_RUNNING))
+			return fail("interface flags");
+		if (ioctl(fd, SIOCGIFADDR, &request) < 0 ||
+		    ((struct sockaddr_in *)&request.ifr_addr)->
+			sin_addr.s_addr == INADDR_ANY)
+			return fail("interface address");
+		if (ioctl(fd, SIOCGIFNETMASK, &request) < 0 ||
+		    ((struct sockaddr_in *)&request.ifr_netmask)->
+			sin_addr.s_addr == INADDR_ANY)
+			return fail("interface netmask");
+		if (ioctl(fd, SIOCGIFBRDADDR, &request) < 0 ||
+		    ((struct sockaddr_in *)&request.ifr_broadaddr)->
+			sin_addr.s_addr == INADDR_ANY)
+			return fail("interface broadcast");
+		if (ioctl(fd, SIOCGIFHWADDR, &request) < 0 ||
+		    request.ifr_hwaddr.sa_family != ARPHRD_ETHER)
+			return fail("interface hardware address");
+		if (ioctl(fd, SIOCGIFMTU, &request) < 0 ||
+		    request.ifr_mtu != 1500 ||
+		    ioctl(fd, SIOCGIFINDEX, &request) < 0 ||
+		    request.ifr_ifindex <= 0)
+			return fail("interface identity");
+		eth_index = request.ifr_ifindex;
+	}
+	if (!eth_index)
+		return fail("interface missing");
+	memset(&request, 0, sizeof(request));
+	request.ifr_ifindex = eth_index;
+	if (ioctl(fd, SIOCGIFNAME, &request) < 0 ||
+	    strcmp(request.ifr_name, "eth0"))
+		return fail("interface index lookup");
+	memset(&request, 0, sizeof(request));
+	strcpy(request.ifr_name, "missing0");
+	errno = 0;
+	if (ioctl(fd, SIOCGIFFLAGS, &request) != -1 || errno != ENODEV)
+		return fail("interface missing error");
+	strcpy(request.ifr_name, "eth0");
+	errno = 0;
+	if (ioctl(fd, SIOCSIFFLAGS, &request) != -1 || errno != ENOTTY)
+		return fail("interface mutation rejection");
+	if (close(fd) < 0)
+		return fail("interface close");
+
+	route_fd = open("/proc/net/route", O_RDONLY);
+	if (route_fd < 0)
+		return fail("route open");
+	length = read(route_fd, route, sizeof(route) - 1);
+	if (length <= 0 || close(route_fd) < 0)
+		return fail("route read");
+	route[length] = 0;
+	if (!strstr(route, "Iface\tDestination\tGateway") ||
+	    !strstr(route, "eth0\t00000000\t") ||
+	    !strstr(route, "\t0003\t0\t0\t0\t00000000\t"))
+		return fail("route contents");
+	return 0;
+}
+
 static int tcp_test(const struct sockaddr_in *host)
 {
 	const int invalid_ttl[] = { 0, 256, -2 };
@@ -615,6 +801,7 @@ static int tcp_test(const struct sockaddr_in *host)
 		.l_linger = 1,
 	};
 	struct linger linger_result;
+	struct iovec fault_iovecs[2];
 	struct iovec iovec;
 	struct msghdr message;
 	struct sockaddr_in peer;
@@ -772,6 +959,16 @@ static int tcp_test(const struct sockaddr_in *host)
 		return fail("tcp poll");
 	if (ioctl(fd, FIONREAD, &available) < 0 || available != 9)
 		return fail("tcp queued bytes before shutdown");
+	memset(reply, 0xa5, sizeof(reply));
+	fault_iovecs[0].iov_base = reply;
+	fault_iovecs[0].iov_len = 4;
+	fault_iovecs[1].iov_base = (void *)-1;
+	fault_iovecs[1].iov_len = 5;
+	errno = 0;
+	if (readv(fd, fault_iovecs, 2) != -1 || errno != EFAULT ||
+	    ioctl(fd, FIONREAD, &available) < 0 || available != 9 ||
+	    (unsigned char)reply[0] != 0xa5)
+		return fail("tcp readv fault preserves data");
 	if (shutdown(fd, SHUT_RDWR) < 0)
 		return fail("tcp shutdown");
 	if (ioctl(fd, FIONREAD, &available) < 0 || available != 9)
@@ -993,7 +1190,7 @@ int main(int argc, char **argv)
 
 	if (clock_gettime(CLOCK_MONOTONIC, &time) < 0 || time.tv_sec < 0)
 		return fail("clock_gettime");
-	if (protocol_test() || broadcast_permission_test() ||
+	if (sigpipe_test() || protocol_test() || broadcast_permission_test() ||
 	    loopback_test() || inherited_poll_test())
 		return 1;
 	if (argc == 2 && !strcmp(argv[1], "loopback")) {
@@ -1003,6 +1200,8 @@ int main(int argc, char **argv)
 	if (inet_pton(AF_INET, FIXTURE_ADDRESS, &host.sin_addr) != 1)
 		return fail("inet_pton");
 	if (icmp_test(&host))
+		return 1;
+	if (interface_test())
 		return 1;
 	if (udp_test(&host))
 		return 1;

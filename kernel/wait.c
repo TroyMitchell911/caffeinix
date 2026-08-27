@@ -2,8 +2,13 @@
 #include <ktime.h>
 #include <process.h>
 #include <scheduler.h>
+#include <signal.h>
 #include <thread.h>
 #include <wait.h>
+
+#define WAIT_SIGNAL_NONE          0
+#define WAIT_SIGNAL_INTERRUPTIBLE 1
+#define WAIT_SIGNAL_KILLABLE      2
 
 static struct {
 	struct spinlock lock;
@@ -41,7 +46,7 @@ static void timeout_insert_locked(thread_t thread)
 
 static int wait_queue_sleep_deadline(wait_queue_t queue,
 				     spinlock_t condition_lock,
-				     uint64 deadline, int interruptible)
+				     uint64 deadline, int signal_mode)
 {
 	thread_t current = cur_thread();
 	uint64 signal_sequence = 0;
@@ -54,10 +59,18 @@ static int wait_queue_sleep_deadline(wait_queue_t queue,
 		process_thread_exit(exit_status, 0);
 		PANIC("terminated wait returned");
 	}
-	if (interruptible) {
-		signal_sequence = __atomic_load_n(&current->signal_sequence,
-		                                  __ATOMIC_ACQUIRE);
-		if (signal_pending_unblocked(current))
+	if (signal_mode) {
+		if (signal_mode == WAIT_SIGNAL_KILLABLE)
+			signal_sequence = __atomic_load_n(
+				&current->fatal_signal_sequence,
+				__ATOMIC_ACQUIRE);
+		else
+			signal_sequence = __atomic_load_n(
+				&current->signal_sequence, __ATOMIC_ACQUIRE);
+		if ((signal_mode == WAIT_SIGNAL_KILLABLE &&
+		     signal_fatal_pending(current)) ||
+		    (signal_mode == WAIT_SIGNAL_INTERRUPTIBLE &&
+		     signal_pending_unblocked(current)))
 			return WAIT_QUEUE_INTERRUPTED;
 	}
 	spinlock_acquire(&timeout_queue.lock);
@@ -70,7 +83,7 @@ static int wait_queue_sleep_deadline(wait_queue_t queue,
 	current->on_waitqueue = 1;
 	current->wait_deadline = deadline;
 	current->wait_result = 0;
-	current->wait_interruptible = !!interruptible;
+	current->wait_interruptible = signal_mode;
 	list_insert_before(&queue->waiters, &current->wait_node);
 	if (deadline)
 		timeout_insert_locked(current);
@@ -91,9 +104,10 @@ static int wait_queue_sleep_deadline(wait_queue_t queue,
 		process_thread_exit(exit_status, 0);
 		PANIC("terminated wait returned");
 	}
-	if (interruptible &&
-	    signal_sequence != __atomic_load_n(&current->signal_sequence,
-	                                      __ATOMIC_ACQUIRE)) {
+	if (signal_mode && signal_sequence != __atomic_load_n(
+			signal_mode == WAIT_SIGNAL_KILLABLE ?
+			&current->fatal_signal_sequence :
+			&current->signal_sequence, __ATOMIC_ACQUIRE)) {
 		list_remove(&current->wait_node);
 		current->on_waitqueue = 0;
 		current->waiting_on = 0;
@@ -155,7 +169,15 @@ int wait_queue_sleep_timeout(wait_queue_t queue,
 int wait_queue_sleep_interruptible(wait_queue_t queue,
 				   spinlock_t condition_lock)
 {
-	return wait_queue_sleep_deadline(queue, condition_lock, 0, 1);
+	return wait_queue_sleep_deadline(queue, condition_lock, 0,
+					 WAIT_SIGNAL_INTERRUPTIBLE);
+}
+
+int wait_queue_sleep_killable(wait_queue_t queue,
+			      spinlock_t condition_lock)
+{
+	return wait_queue_sleep_deadline(queue, condition_lock, 0,
+					 WAIT_SIGNAL_KILLABLE);
 }
 
 int wait_queue_sleep_interruptible_timeout(wait_queue_t queue,
@@ -171,7 +193,8 @@ int wait_queue_sleep_interruptible_timeout(wait_queue_t queue,
 	deadline = now + delta;
 	if (deadline < now)
 		deadline = ~(uint64)0;
-	return wait_queue_sleep_deadline(queue, condition_lock, deadline, 1);
+	return wait_queue_sleep_deadline(queue, condition_lock, deadline,
+					 WAIT_SIGNAL_INTERRUPTIBLE);
 }
 
 int wait_queue_sleep_interruptible_until(wait_queue_t queue,
@@ -180,7 +203,8 @@ int wait_queue_sleep_interruptible_until(wait_queue_t queue,
 {
 	if (deadline <= ktime_get_ticks())
 		return WAIT_QUEUE_TIMEOUT;
-	return wait_queue_sleep_deadline(queue, condition_lock, deadline, 1);
+	return wait_queue_sleep_deadline(queue, condition_lock, deadline,
+					 WAIT_SIGNAL_INTERRUPTIBLE);
 }
 
 static void wait_queue_wake_locked(wait_queue_t queue, thread_t thread,
@@ -333,20 +357,25 @@ int wait_queue_wake_thread(thread_t thread)
 	return 1;
 }
 
-int wait_queue_interrupt_thread(thread_t thread)
+int wait_queue_signal_thread(thread_t thread, int fatal)
 {
 	wait_queue_t queue;
+	uint8 signal_mode;
 
 	spinlock_acquire(&timeout_queue.lock);
 	queue = thread->waiting_on;
-	if (!queue || !thread->wait_interruptible) {
+	signal_mode = thread->wait_interruptible;
+	if (!queue || !signal_mode ||
+	    (signal_mode == WAIT_SIGNAL_KILLABLE && !fatal)) {
 		spinlock_release(&timeout_queue.lock);
 		return 0;
 	}
 	spinlock_acquire(&queue->lock);
 	spinlock_acquire(&thread->lock);
+	signal_mode = thread->wait_interruptible;
 	if (thread->state != THREAD_SLEEPING || !thread->on_waitqueue ||
-	    thread->waiting_on != queue || !thread->wait_interruptible) {
+	    thread->waiting_on != queue || !signal_mode ||
+	    (signal_mode == WAIT_SIGNAL_KILLABLE && !fatal)) {
 		spinlock_release(&thread->lock);
 		spinlock_release(&queue->lock);
 		spinlock_release(&timeout_queue.lock);

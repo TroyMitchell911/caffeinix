@@ -29,11 +29,15 @@ static void thread_sched_init(thread_t thread)
 	thread->sched.vruntime = 0;
 	thread->sched.exec_start = 0;
 	thread->sched.sum_exec_runtime = 0;
+	thread->sched.user_runtime = 0;
+	thread->sched.system_runtime = 0;
+	thread->sched.mode_start = 0;
 	thread->sched.slice_ns = 0;
 	thread->sched.weight = 1024;
 	thread->sched.nice = 0;
 	thread->sched.initialized = 0;
 	thread->sched.on_runqueue = 0;
+	thread->sched.user_mode = 0;
 }
 
 static void kernel_thread_entry(void)
@@ -63,6 +67,16 @@ static int kernel_tid_alloc(void)
 
 	spinlock_acquire(&tid_lock);
 	tid = next_kernel_tid--;
+	spinlock_release(&tid_lock);
+	return tid;
+}
+
+int thread_last_user_tid(void)
+{
+	int tid;
+
+	spinlock_acquire(&tid_lock);
+	tid = next_tid - 1;
 	spinlock_release(&tid_lock);
 	return tid;
 }
@@ -99,6 +113,7 @@ void thread_setup(void)
                 t->on_waitqueue = 0;
 		t->wait_private = 0;
 		t->wait_bitset = ~(uint32)0;
+		t->vfork_child = 0;
                 list_init(&t->wait_node);
 		t->on_timeout_queue = 0;
 		t->wait_interruptible = 0;
@@ -155,6 +170,7 @@ found:
         t->on_waitqueue = 0;
 	t->wait_private = 0;
 	t->wait_bitset = ~(uint32)0;
+	t->vfork_child = 0;
         list_init(&t->wait_node);
 	t->on_timeout_queue = 0;
 	t->wait_interruptible = 0;
@@ -224,6 +240,7 @@ found:
 	t->on_waitqueue = 0;
 	t->wait_private = 0;
 	t->wait_bitset = ~(uint32)0;
+	t->vfork_child = 0;
 	list_init(&t->wait_node);
 	t->on_timeout_queue = 0;
 	t->wait_interruptible = 0;
@@ -258,6 +275,7 @@ void kernel_thread_reap(thread_t t)
 	t->exit_status = 0;
 	t->wait_private = 0;
 	t->wait_bitset = ~(uint32)0;
+	t->vfork_child = 0;
 	t->wait_interruptible = 0;
 	thread_sched_init(t);
 	list_init(&t->wait_node);
@@ -278,6 +296,8 @@ void thread_free(thread_t t)
 
 	if (t->sched.on_runqueue)
                 PANIC("thread_free runnable");
+	if (t->vfork_child)
+		PANIC("thread_free vfork parent");
         if(t->on_waitqueue || t->waiting_on)
                 PANIC("thread_free waiting");
         if(p->tnums == 0)
@@ -294,6 +314,8 @@ void thread_free(thread_t t)
 	if (!found)
 		PANIC("thread_free slot");
 	p->tnums--;
+	p->retired_user_time_ns += t->sched.user_runtime;
+	p->retired_system_time_ns += t->sched.system_runtime;
 	if (t->state != THREAD_EXITED) {
 		if (!p->live_threads)
 			PANIC("thread_free live count");
@@ -316,6 +338,7 @@ void thread_free(thread_t t)
 	t->exit_status = 0;
 	t->wait_private = 0;
 	t->wait_bitset = ~(uint32)0;
+	t->vfork_child = 0;
 	t->wait_interruptible = 0;
 	thread_sched_init(t);
         list_init(&t->wait_node);

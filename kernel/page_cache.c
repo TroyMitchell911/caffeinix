@@ -65,7 +65,7 @@ static int page_cache_same_inode(const struct page_cache_entry *entry,
 static void page_cache_release(struct page_cache_entry *entry)
 {
 	list_remove(&entry->node);
-	vfs_file_put(entry->file);
+	vfs_file_unhold(entry->file);
 	pfree(entry->page);
 	free(entry);
 	page_cache.stats.pages--;
@@ -154,6 +154,29 @@ uint64 page_cache_reclaim_mapped(uint64 target)
 	return reclaimed;
 }
 
+uint64 page_cache_reclaim_unmapped(void)
+{
+	struct page_cache_entry *entry;
+	list_t next, node;
+	uint64 reclaimed = 0;
+
+	sleeplock_acquire(&page_cache.lock);
+	for (node = page_cache.entries.next; node != &page_cache.entries;
+	     node = next) {
+		next = node->next;
+		entry = list_entry(node, struct page_cache_entry, node);
+		if (entry->dirty || !entry->writeback_mapped ||
+		    entry->evicting || palloc_refcount(entry->page) != 1)
+			continue;
+		entry->writeback_mapped = 0;
+		page_cache_release(entry);
+		reclaimed++;
+	}
+	page_cache.stats.reclaimed += reclaimed;
+	sleeplock_release(&page_cache.lock);
+	return reclaimed;
+}
+
 enum page_cache_get_result page_cache_get(struct vfs_file *file,
 					  uint64 offset, uint32 bytes,
 					  void **page)
@@ -205,7 +228,7 @@ enum page_cache_get_result page_cache_get(struct vfs_file *file,
 		goto failed;
 	}
 	list_init(&entry->node);
-	entry->file = vfs_file_get(file);
+	entry->file = vfs_file_hold(file);
 	entry->superblock = inode->superblock;
 	entry->inode_number = inode->number;
 	entry->offset = offset;
@@ -253,7 +276,7 @@ int page_cache_mark_dirty(struct vfs_file *file, uint64 offset)
 		goto out;
 	if (!(entry->file->flags & VFS_OPEN_WRITE)) {
 		old_file = entry->file;
-		entry->file = vfs_file_get(file);
+		entry->file = vfs_file_hold(file);
 	}
 	entry->dirty = 1;
 	entry->writeback_mapped = 1;
@@ -261,7 +284,7 @@ int page_cache_mark_dirty(struct vfs_file *file, uint64 offset)
 out:
 	sleeplock_release(&page_cache.lock);
 	if (old_file)
-		vfs_file_put(old_file);
+		vfs_file_unhold(old_file);
 	return result;
 }
 
@@ -436,6 +459,48 @@ int page_cache_writeback_super(struct vfs_super_block *superblock)
 	sleeplock_acquire(&superblock->write_lock);
 	sleeplock_acquire(&page_cache.lock);
 	result = page_cache_writeback_locked(0, superblock);
+	sleeplock_release(&page_cache.lock);
+	sleeplock_release(&superblock->write_lock);
+	return result;
+}
+
+int page_cache_evict_super(struct vfs_super_block *superblock)
+{
+	struct page_cache_entry *entry;
+	list_t next, node;
+	int result = VFS_OK;
+
+	if (!superblock)
+		return VFS_ERR_INVAL;
+	sleeplock_acquire(&superblock->write_lock);
+	sleeplock_acquire(&page_cache.lock);
+	for (node = page_cache.entries.next; node != &page_cache.entries;
+	     node = node->next) {
+		entry = list_entry(node, struct page_cache_entry, node);
+		if (entry->superblock != superblock)
+			continue;
+		if (entry->evicting || palloc_refcount(entry->page) != 1) {
+			result = VFS_ERR_BUSY;
+			goto out;
+		}
+	}
+	for (node = page_cache.entries.next; node != &page_cache.entries;
+	     node = node->next) {
+		entry = list_entry(node, struct page_cache_entry, node);
+		if (entry->superblock == superblock &&
+		    page_cache_writeback_entry(entry) < 0) {
+			result = VFS_ERR_IO;
+			goto out;
+		}
+	}
+	for (node = page_cache.entries.next; node != &page_cache.entries;
+	     node = next) {
+		next = node->next;
+		entry = list_entry(node, struct page_cache_entry, node);
+		if (entry->superblock == superblock)
+			page_cache_release(entry);
+	}
+out:
 	sleeplock_release(&page_cache.lock);
 	sleeplock_release(&superblock->write_lock);
 	return result;

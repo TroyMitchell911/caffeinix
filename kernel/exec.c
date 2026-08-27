@@ -6,6 +6,7 @@
 #include <palloc.h>
 #include <random.h>
 #include <scheduler.h>
+#include <syscall.h>
 #include <vfs.h>
 #include <vm.h>
 #include <vma.h>
@@ -121,47 +122,109 @@ static int elf_program_order(uint64 size, unsigned int *order)
 
 static int elf_image_open(const char *path, struct elf_image *image)
 {
+	int64 result;
 	int i;
 
 	*image = (struct elf_image){0};
-	if (vfs_open_file(path, VFS_OPEN_READ, 0, &image->file) < 0)
-		return -1;
-	if (vfs_file_pread(image->file, 0, (uint64)&image->header,
-			   sizeof(image->header), 0) != sizeof(image->header) ||
-	    elf_image_layout_init(&image->layout, &image->header) < 0)
+	result = vfs_open_file(path, VFS_OPEN_EXEC, 0, &image->file);
+	if (result < 0)
+		return linux_error(result);
+	if (!image->file->path.dentry ||
+	    !image->file->path.dentry->inode ||
+	    image->file->path.dentry->inode->type == VFS_INODE_DIRECTORY) {
+		elf_image_close(image);
+		return -LINUX_EACCES;
+	}
+	result = vfs_file_pread(image->file, 0, (uint64)&image->header,
+				sizeof(image->header), 0);
+	if (result < 0) {
+		result = linux_error(result);
 		goto fail;
+	}
+	if (result != sizeof(image->header) ||
+	    elf_image_layout_init(&image->layout, &image->header) < 0) {
+		result = -LINUX_ENOEXEC;
+		goto fail;
+	}
 	if (elf_program_order(image->layout.phdr_size,
-			      &image->program_order) < 0)
+			      &image->program_order) < 0) {
+		result = -LINUX_ENOEXEC;
 		goto fail;
+	}
 	image->programs = alloc_pages(image->program_order, 0);
-	if (!image->programs ||
-	    vfs_file_pread(image->file, 0, (uint64)image->programs,
-			   image->layout.phdr_size, image->header.phoff) !=
-	    image->layout.phdr_size)
+	if (!image->programs) {
+		result = -LINUX_ENOMEM;
 		goto fail;
+	}
+	result = vfs_file_pread(image->file, 0, (uint64)image->programs,
+				image->layout.phdr_size, image->header.phoff);
+	if (result < 0) {
+		result = linux_error(result);
+		goto fail;
+	}
+	if (result != image->layout.phdr_size) {
+		result = -LINUX_ENOEXEC;
+		goto fail;
+	}
 	for (i = 0; i < image->header.phnum; i++) {
 		if (elf_image_layout_add(&image->layout, &image->header,
-					 &image->programs[i]) < 0)
+					 &image->programs[i]) < 0) {
+			result = -LINUX_ENOEXEC;
 			goto fail;
+		}
 	}
-	if (elf_image_layout_finish(&image->layout) < 0)
+	if (elf_image_layout_finish(&image->layout) < 0) {
+		result = -LINUX_ENOEXEC;
 		goto fail;
+	}
 	return 0;
 
 fail:
 	elf_image_close(image);
-	return -1;
+	return result;
+}
+
+static void elf_image_exec_credentials(
+	const struct elf_image *image,
+	struct process_credentials *credentials)
+{
+	struct vfs_inode *inode = image->file->path.dentry->inode;
+	sleeplock_t lock = inode->superblock ?
+		&inode->superblock->attribute_lock : 0;
+	uint32 gid, mode, uid;
+
+	if (lock)
+		sleeplock_acquire(lock);
+	mode = inode->mode;
+	uid = inode->uid;
+	gid = inode->gid;
+	if (lock)
+		sleeplock_release(lock);
+	process_credentials_get(credentials);
+	if (mode & 04000)
+		credentials->euid = uid;
+	if ((mode & 02000) && (mode & 00010))
+		credentials->egid = gid;
+	credentials->suid = credentials->euid;
+	credentials->fsuid = credentials->euid;
+	credentials->sgid = credentials->egid;
+	credentials->fsgid = credentials->egid;
 }
 
 static int elf_image_interpreter(const struct elf_image *image, char *path)
 {
+	int64 result;
 	uint64 size = image->layout.interp_size;
 
-	if (!image->layout.has_interp || size > MAXPATH ||
-	    vfs_file_pread(image->file, 0, (uint64)path, size,
-			   image->layout.interp_offset) != size ||
+	if (!image->layout.has_interp || size > MAXPATH)
+		return -LINUX_ENOEXEC;
+	result = vfs_file_pread(image->file, 0, (uint64)path, size,
+				image->layout.interp_offset);
+	if (result < 0)
+		return linux_error(result);
+	if (result != size ||
 	    !elf_interpreter_path_valid(path, size, MAXPATH))
-		return -1;
+		return -LINUX_ENOEXEC;
 	return 0;
 }
 
@@ -268,11 +331,14 @@ static int elf_image_map(struct elf_image *image, pagedir_t pgdir,
 
 static int build_linux_stack(pagedir_t pgdir, uint64 stack_top,
 			     uint64 stack_base, char **argv, char **envp,
+			     const char *execfn,
 			     const struct linux_exec_layout *exec,
+			     const struct process_credentials *credentials,
 			     uint64 *new_sp)
 {
 	uint64 argv_address[MAXARG];
 	uint64 envp_address[MAXARG];
+	uint64 execfn_address;
 	uint64 words[4 * MAXARG + 32];
 	uint8 random[16];
 	uint64 sp = stack_top;
@@ -299,6 +365,12 @@ static int build_linux_stack(pagedir_t pgdir, uint64 stack_top,
 			return -1;
 		envp_address[envc] = sp;
 	}
+	length = strlen(execfn) + 1;
+	sp -= length;
+	if (sp < stack_base ||
+	    copyout(pgdir, sp, (char *)execfn, length) < 0)
+		return -1;
+	execfn_address = sp;
 
 	if (get_random_bytes(random, sizeof(random)) < 0)
 		return -1;
@@ -329,13 +401,14 @@ static int build_linux_stack(pagedir_t pgdir, uint64 stack_top,
 	AUX(LINUX_AT_PAGESZ, PGSIZE);
 	AUX(LINUX_AT_BASE, exec->base);
 	AUX(LINUX_AT_ENTRY, exec->entry);
-	AUX(LINUX_AT_UID, 0);
-	AUX(LINUX_AT_EUID, 0);
-	AUX(LINUX_AT_GID, 0);
-	AUX(LINUX_AT_EGID, 0);
-	AUX(LINUX_AT_SECURE, 0);
+	AUX(LINUX_AT_UID, credentials->uid);
+	AUX(LINUX_AT_EUID, credentials->euid);
+	AUX(LINUX_AT_GID, credentials->gid);
+	AUX(LINUX_AT_EGID, credentials->egid);
+	AUX(LINUX_AT_SECURE, credentials->uid != credentials->euid ||
+			     credentials->gid != credentials->egid);
 	AUX(LINUX_AT_RANDOM, length);
-	AUX(LINUX_AT_EXECFN, argc ? argv_address[0] : 0);
+	AUX(LINUX_AT_EXECFN, execfn_address);
 	AUX(LINUX_AT_NULL, 0);
 #undef AUX
 
@@ -348,48 +421,109 @@ static int build_linux_stack(pagedir_t pgdir, uint64 stack_top,
 	return argc;
 }
 
-int exec_linux(char *path, char **argv, char **envp)
+static int copy_process_cmdline(char **argv, void **page_out,
+				uint32 *length_out)
+{
+	char *page;
+	uint32 length = 0;
+	int index;
+
+	page = palloc_zero();
+	if (!page)
+		return -LINUX_ENOMEM;
+	for (index = 0; argv[index]; index++) {
+		uint64 argument_length, available;
+
+		if (index >= MAXARG - 1) {
+			pfree(page);
+			return -LINUX_E2BIG;
+		}
+		if (length == PROCESS_CMDLINE_MAX)
+			continue;
+		argument_length = strlen(argv[index]) + 1;
+		available = PROCESS_CMDLINE_MAX - length;
+		if (argument_length > available) {
+			if (available > 1)
+				memmove(page + length, argv[index], available - 1);
+			page[PROCESS_CMDLINE_MAX - 1] = 0;
+			length = PROCESS_CMDLINE_MAX;
+			continue;
+		}
+		memmove(page + length, argv[index], argument_length);
+		length += argument_length;
+	}
+	*page_out = page;
+	*length_out = length;
+	return 0;
+}
+
+static int exec_elf(char *path, const char *execfn, char **argv, char **envp)
 {
 	struct elf_image executable = {0}, interpreter = {0};
 	struct exec_aslr_layout aslr;
 	struct linux_exec_layout exec;
+	struct process_credentials credentials;
 	struct vma_set new_vmas, old_vmas;
 	char interpreter_path[MAXPATH];
+	void *new_cmdline = 0;
+	uint32 new_cmdline_length = 0;
 	pagedir_t oldpgdir, pgdir = 0;
 	process_t process = cur_proc();
 	thread_t current = cur_thread();
 	uint64 brk_start, entry, oldsz, sp, stack_base, sz = 0;
-	char *name, *path_p;
-	int argc, stack_permissions = PTE_W;
+	const char *name, *path_p;
+	int argc, error = -LINUX_ENOEXEC, stack_permissions = PTE_W;
+	int vfork_released;
 	uint32 stack_protection = LINUX_PROT_READ | LINUX_PROT_WRITE;
 
 	if (process_exec_begin(process, current) < 0)
-		return -1;
+		return -LINUX_EAGAIN;
 	vma_set_init(&new_vmas);
 	vma_set_init(&old_vmas);
-	if (exec_aslr_layout_init(&aslr) < 0 ||
-	    elf_image_open(path, &executable) < 0)
+	error = copy_process_cmdline(argv, &new_cmdline,
+				     &new_cmdline_length);
+	if (error < 0)
 		goto fail;
-	if (executable.layout.has_interp &&
-	    elf_image_interpreter(&executable, interpreter_path) < 0)
+	if (exec_aslr_layout_init(&aslr) < 0) {
+		error = -LINUX_EIO;
 		goto fail;
+	}
+	error = elf_image_open(path, &executable);
+	if (error < 0)
+		goto fail;
+	elf_image_exec_credentials(&executable, &credentials);
+	if (executable.layout.has_interp) {
+		error = elf_image_interpreter(&executable,
+					      interpreter_path);
+		if (error < 0)
+			goto fail;
+	}
 
 	pgdir = process_pagedir(process, current);
-	if (!pgdir ||
-	    elf_image_place(&executable, &new_vmas, aslr.pie_hint) < 0 ||
-	    elf_image_map(&executable, pgdir, &new_vmas) < 0)
+	if (!pgdir) {
+		error = -LINUX_ENOMEM;
 		goto fail;
+	}
+	if (elf_image_place(&executable, &new_vmas, aslr.pie_hint) < 0 ||
+	    elf_image_map(&executable, pgdir, &new_vmas) < 0) {
+		error = -LINUX_ENOEXEC;
+		goto fail;
+	}
 	sz = executable.runtime.map_end;
 	entry = executable.runtime.entry;
 	exec.base = 0;
 
 	if (executable.layout.has_interp) {
-		if (elf_image_open(interpreter_path, &interpreter) < 0 ||
-		    interpreter.layout.has_interp ||
+		error = elf_image_open(interpreter_path, &interpreter);
+		if (error < 0)
+			goto fail;
+		if (interpreter.layout.has_interp ||
 		    elf_image_place(&interpreter, &new_vmas,
 				    aslr.interpreter_hint) < 0 ||
-		    elf_image_map(&interpreter, pgdir, &new_vmas) < 0)
+		    elf_image_map(&interpreter, pgdir, &new_vmas) < 0) {
+			error = -LINUX_ENOEXEC;
 			goto fail;
+		}
 		entry = interpreter.runtime.entry;
 		exec.base = interpreter.runtime.load_bias;
 	}
@@ -409,21 +543,31 @@ int exec_linux(char *path, char **argv, char **envp)
 	    vma_insert(&new_vmas, stack_base, aslr.stack_top,
 		       stack_protection,
 		       LINUX_MAP_PRIVATE, VMA_ANONYMOUS, VMA_STACK,
-		       0, 0) < 0)
+		       0, 0) < 0) {
+		error = -LINUX_ENOMEM;
 		goto fail;
+	}
 	sp = aslr.stack_top;
 	argc = build_linux_stack(pgdir, aslr.stack_top, stack_base,
-				 argv, envp, &exec, &sp);
-	if (argc < 0)
+				 argv, envp, execfn, &exec, &credentials, &sp);
+	if (argc < 0) {
+		error = -LINUX_E2BIG;
 		goto fail;
-	if (sz > (uint64)-1 - aslr.brk_gap)
+	}
+	if (sz > (uint64)-1 - aslr.brk_gap) {
+		error = -LINUX_ENOMEM;
 		goto fail;
+	}
 	brk_start = PGROUNDUP(sz) + aslr.brk_gap;
 	if (brk_start < sz || brk_start >= aslr.mmap_top ||
-	    !vma_range_free(&new_vmas, PGROUNDUP(sz), brk_start + PGSIZE))
+	    !vma_range_free(&new_vmas, PGROUNDUP(sz), brk_start + PGSIZE)) {
+		error = -LINUX_ENOMEM;
 		goto fail;
-	if (process_exec_quiesce(process, current) < 0)
+	}
+	if (process_exec_quiesce(process, current) < 0) {
+		error = -LINUX_EAGAIN;
 		goto fail;
+	}
 
 	sleeplock_acquire(&process->mmap_lock);
 	oldpgdir = process->pagetable;
@@ -444,24 +588,129 @@ int exec_linux(char *path, char **argv, char **envp)
 	current->trapframe->fcsr = 0;
 	__atomic_store_n(&process->membarrier_private_expedited, 0,
 	                 __ATOMIC_RELEASE);
+	spinlock_acquire(&process->lock);
+	process->credentials = credentials;
+	spinlock_release(&process->lock);
 	signal_process_exec(process, current);
 
-	for (name = path_p = path; *path_p; path_p++) {
+	for (name = path_p = execfn; *path_p; path_p++) {
 		if (*path_p == '/')
 			name = path_p + 1;
 	}
 	safe_strncpy(process->name, name, MAXNAME);
-	process_exec_end(process);
-	process_freepagedir(oldpgdir, oldsz);
+	process_set_cmdline(process, new_cmdline, new_cmdline_length);
+	new_cmdline = 0;
+	process_exec_end(process, 1);
+	vfork_released = process_vfork_exec(process);
+	if (!vfork_released)
+		process_freepagedir(oldpgdir, oldsz);
 	vma_set_destroy(&old_vmas);
 	return argc;
 
 fail:
+	if (new_cmdline)
+		pfree(new_cmdline);
 	elf_image_close(&interpreter);
 	elf_image_close(&executable);
 	if (pgdir)
 		process_freepagedir(pgdir, sz);
 	vma_set_destroy(&new_vmas);
-	process_exec_end(process);
-	return -1;
+	process_exec_end(process, 0);
+	return error;
+}
+
+#define EXEC_SCRIPT_BUFFER_SIZE 256
+#define EXEC_SCRIPT_MAX_DEPTH   4
+
+static int exec_script_or_elf(char *path, const char *execfn, char **argv,
+			      char **envp, int depth);
+
+static int exec_script(char *path, const char *execfn, char **argv,
+		       char **envp, int depth)
+{
+	char buffer[EXEC_SCRIPT_BUFFER_SIZE + 1];
+	char *interpreter, *optional, *separator;
+	char *script_argv[MAXARG];
+	file_t file = 0;
+	int64 length;
+	int input = 1, output = 0;
+
+	length = vfs_open_file(path, VFS_OPEN_EXEC, 0, &file);
+	if (length < 0)
+		return linux_error(length);
+	length = vfs_file_pread(file, 0, (uint64)buffer,
+				EXEC_SCRIPT_BUFFER_SIZE, 0);
+	vfs_file_put(file);
+	if (length < 0)
+		return linux_error(length);
+	if (length < 2 || buffer[0] != '#' || buffer[1] != '!')
+		return -LINUX_ENOEXEC;
+	buffer[length] = 0;
+
+	separator = buffer + 2;
+	while (*separator == ' ' || *separator == '\t')
+		separator++;
+	interpreter = separator;
+	while (*separator && *separator != '\n' &&
+	       *separator != ' ' && *separator != '\t')
+		separator++;
+	if (separator == interpreter)
+		return -LINUX_ENOEXEC;
+	if (!*separator && length == EXEC_SCRIPT_BUFFER_SIZE)
+		return -LINUX_ENOEXEC;
+	if (*separator && *separator != '\n') {
+		*separator++ = 0;
+		while (*separator == ' ' || *separator == '\t')
+			separator++;
+		optional = separator;
+	} else {
+		optional = 0;
+		if (*separator)
+			*separator = 0;
+	}
+
+	if (optional) {
+		char *end = optional;
+
+		while (*end && *end != '\n')
+			end++;
+		while (end > optional &&
+		       (end[-1] == ' ' || end[-1] == '\t'))
+			end--;
+		*end = 0;
+		if (!*optional)
+			optional = 0;
+	}
+	if (strlen(interpreter) >= MAXPATH)
+		return -LINUX_ENOEXEC;
+	if (depth >= EXEC_SCRIPT_MAX_DEPTH)
+		return -LINUX_ELOOP;
+
+	script_argv[output++] = interpreter;
+	if (optional)
+		script_argv[output++] = optional;
+	script_argv[output++] = path;
+	while (argv[input]) {
+		if (output >= MAXARG - 1)
+			return -LINUX_E2BIG;
+		script_argv[output++] = argv[input++];
+	}
+	script_argv[output] = 0;
+	return exec_script_or_elf(interpreter, execfn, script_argv, envp,
+				  depth + 1);
+}
+
+static int exec_script_or_elf(char *path, const char *execfn, char **argv,
+			      char **envp, int depth)
+{
+	int result = exec_elf(path, execfn, argv, envp);
+
+	if (result != -LINUX_ENOEXEC)
+		return result;
+	return exec_script(path, execfn, argv, envp, depth);
+}
+
+int exec_linux(char *path, char **argv, char **envp)
+{
+	return exec_script_or_elf(path, path, argv, envp, 0);
 }

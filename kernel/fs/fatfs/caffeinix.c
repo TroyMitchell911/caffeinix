@@ -112,6 +112,47 @@ static int fatfs_join(char *path, const char *directory, const char *name)
 	return VFS_OK;
 }
 
+struct fatfs_path_rebase {
+	const char *old_path;
+	const char *new_path;
+	int apply;
+};
+
+static int fatfs_rebase_inode_path(struct vfs_inode *inode, void *argument)
+{
+	struct fatfs_path_rebase *rebase = argument;
+	struct fatfs_inode *private = inode->private;
+	uint32 old_length = strlen(rebase->old_path);
+	uint32 new_length = strlen(rebase->new_path);
+	uint32 suffix_length;
+
+	if (!private || strncmp(private->path, rebase->old_path, old_length) ||
+	    (private->path[old_length] && private->path[old_length] != '/'))
+		return VFS_OK;
+	suffix_length = strlen(private->path + old_length);
+	if (new_length + suffix_length >= sizeof(private->path))
+		return VFS_ERR_NAMETOOLONG;
+	if (!rebase->apply)
+		return VFS_OK;
+	memmove(private->path + new_length, private->path + old_length,
+		suffix_length + 1);
+	memmove(private->path, rebase->new_path, new_length);
+	return VFS_OK;
+}
+
+static int fatfs_rebase_paths(struct vfs_super_block *superblock,
+			      const char *old_path, const char *new_path,
+			      int apply)
+{
+	struct fatfs_path_rebase rebase = {
+		.old_path = old_path,
+		.new_path = new_path,
+		.apply = apply,
+	};
+
+	return vfs_visit_inodes(superblock, fatfs_rebase_inode_path, &rebase);
+}
+
 static int fatfs_path_is_root(const char *path)
 {
 	return !strcmp(path, FATFS_ROOT);
@@ -127,11 +168,62 @@ static FRESULT fatfs_stat_locked(const char *path, FILINFO *info)
 	return f_stat(path, info);
 }
 
+struct fatfs_identity_lookup {
+	struct vfs_inode *candidate;
+	const char *path;
+	uint64 number;
+	int found;
+};
+
+static int fatfs_path_equal(const char *left, const char *right)
+{
+	uint8 left_character, right_character;
+
+	for (;;) {
+		left_character = *left++;
+		right_character = *right++;
+		if (left_character >= 'A' && left_character <= 'Z')
+			left_character += 'a' - 'A';
+		if (right_character >= 'A' && right_character <= 'Z')
+			right_character += 'a' - 'A';
+		if (left_character != right_character)
+			return 0;
+		if (!left_character)
+			return 1;
+	}
+}
+
+static int fatfs_find_inode_identity(struct vfs_inode *inode, void *argument)
+{
+	struct fatfs_identity_lookup *lookup = argument;
+	struct fatfs_inode *private = inode->private;
+
+	if (!lookup->found && inode != lookup->candidate && private &&
+	    fatfs_path_equal(private->path, lookup->path)) {
+		lookup->number = inode->number;
+		lookup->found = 1;
+	}
+	return VFS_OK;
+}
+
+static uint64 fatfs_live_inode_number(struct vfs_super_block *superblock,
+				      struct vfs_inode *candidate,
+				      const char *path)
+{
+	struct fatfs_identity_lookup lookup = {
+		.candidate = candidate,
+		.path = path,
+		.number = fatfs_inode_number(path),
+	};
+
+	(void)vfs_visit_inodes(superblock, fatfs_find_inode_identity, &lookup);
+	return lookup.number;
+}
+
 static void fatfs_refresh_locked(struct vfs_inode *inode)
 {
 	struct fatfs_inode *private = inode->private;
 
-	inode->number = fatfs_inode_number(private->path);
 	inode->type = private->info.fattrib & AM_DIR ?
 		VFS_INODE_DIRECTORY : VFS_INODE_REGULAR;
 	inode->mode = inode->type == VFS_INODE_DIRECTORY ? 0777 : 0666;
@@ -170,6 +262,7 @@ static struct vfs_inode *fatfs_wrap_locked(
 		return 0;
 	}
 	inode->private = private;
+	inode->number = fatfs_live_inode_number(superblock, inode, path);
 	fatfs_refresh_locked(inode);
 	return inode;
 }
@@ -185,9 +278,47 @@ static int fatfs_sync(struct vfs_super_block *superblock)
 		VFS_ERR_IO : VFS_OK;
 }
 
+static int fatfs_statfs(struct vfs_super_block *superblock,
+			struct vfs_statfs *stat)
+{
+	FATFS *filesystem;
+	DWORD free_clusters;
+	FRESULT result;
+
+	(void)superblock;
+	sleeplock_acquire(&fatfs_port.lock);
+	result = f_getfree("0:", &free_clusters, &filesystem);
+	sleeplock_release(&fatfs_port.lock);
+	if (result != FR_OK)
+		return fatfs_result(result);
+	memset(stat, 0, sizeof(*stat));
+	stat->type = 0x4d44;
+	stat->block_size = filesystem->csize * 512;
+	stat->fragment_size = stat->block_size;
+	stat->blocks = filesystem->n_fatent - 2;
+	stat->blocks_free = free_clusters;
+	stat->blocks_available = free_clusters;
+	stat->name_length = VFS_NAME_MAX;
+	return VFS_OK;
+}
+
+static void fatfs_unmount(struct vfs_super_block *superblock)
+{
+	(void)superblock;
+	sleeplock_acquire(&fatfs_port.lock);
+	f_mount(0, "0:", 0);
+	sleeplock_release(&fatfs_port.lock);
+	fatfs_set_block_device(0);
+	fatfs_port.active = 0;
+	fatfs_port.device = 0;
+	memset(&fatfs_port.filesystem, 0, sizeof(fatfs_port.filesystem));
+}
+
 static const struct vfs_super_operations fatfs_super_operations = {
 	.put_inode = fatfs_put_inode,
 	.sync = fatfs_sync,
+	.statfs = fatfs_statfs,
+	.unmount = fatfs_unmount,
 };
 
 static int fatfs_getattr(struct vfs_inode *inode, struct vfs_stat *stat)
@@ -230,7 +361,8 @@ static int fatfs_lookup(struct vfs_inode *directory, const char *name,
 }
 
 static int fatfs_create(struct vfs_inode *directory, const char *name,
-			uint32 mode, struct vfs_inode **result)
+			uint32 mode, uint32 uid, uint32 gid,
+			struct vfs_inode **result)
 {
 	struct fatfs_inode *parent = directory->private;
 	char *path = palloc();
@@ -239,6 +371,8 @@ static int fatfs_create(struct vfs_inode *directory, const char *name,
 	int status;
 
 	(void)mode;
+	(void)uid;
+	(void)gid;
 	if (!path)
 		return VFS_ERR_NOMEM;
 	status = fatfs_join(path, parent->path, name);
@@ -266,7 +400,8 @@ out:
 }
 
 static int fatfs_mkdir(struct vfs_inode *directory, const char *name,
-		       uint32 mode, struct vfs_inode **result)
+		       uint32 mode, uint32 uid, uint32 gid,
+		       struct vfs_inode **result)
 {
 	struct fatfs_inode *parent = directory->private;
 	char *path = palloc();
@@ -274,6 +409,8 @@ static int fatfs_mkdir(struct vfs_inode *directory, const char *name,
 	int status;
 
 	(void)mode;
+	(void)uid;
+	(void)gid;
 	if (!path)
 		return VFS_ERR_NOMEM;
 	status = fatfs_join(path, parent->path, name);
@@ -349,7 +486,7 @@ static int fatfs_rename(struct vfs_inode *old_directory,
 	FILINFO old_info, new_info;
 	FRESULT operation;
 	int old_directory_type, new_directory_type;
-	int status;
+	int destination_exists = 0, status;
 
 	if (!old_path)
 		return VFS_ERR_NOMEM;
@@ -372,6 +509,10 @@ static int fatfs_rename(struct vfs_inode *old_directory,
 			status = VFS_ERR_EXIST;
 			goto unlock;
 		}
+		if (!strcmp(old_path, new_path)) {
+			status = VFS_OK;
+			goto unlock;
+		}
 		old_directory_type = !!(old_info.fattrib & AM_DIR);
 		new_directory_type = !!(new_info.fattrib & AM_DIR);
 		if (old_directory_type != new_directory_type) {
@@ -379,16 +520,27 @@ static int fatfs_rename(struct vfs_inode *old_directory,
 				VFS_ERR_NOTDIR : VFS_ERR_ISDIR;
 			goto unlock;
 		}
+		destination_exists = 1;
+	} else if (operation != FR_NO_FILE && operation != FR_NO_PATH) {
+		status = fatfs_result(operation);
+		goto unlock;
+	}
+	status = fatfs_rebase_paths(old_directory->superblock, old_path,
+				    new_path, 0);
+	if (status < 0)
+		goto unlock;
+	if (destination_exists) {
 		operation = f_unlink(new_path);
 		if (operation != FR_OK) {
 			status = fatfs_result(operation);
 			goto unlock;
 		}
-	} else if (operation != FR_NO_FILE && operation != FR_NO_PATH) {
-		status = fatfs_result(operation);
-		goto unlock;
 	}
 	status = fatfs_result(f_rename(old_path, new_path));
+	if (status == VFS_OK &&
+	    fatfs_rebase_paths(old_directory->superblock, old_path,
+			       new_path, 1) < 0)
+		PANIC("FAT rename path rebase");
 unlock:
 	sleeplock_release(&fatfs_port.lock);
 out:
@@ -659,10 +811,33 @@ static int fatfs_readdir(struct vfs_file *file,
 	return 1;
 }
 
+static int fatfs_seekdir(struct vfs_file *file, uint64 position)
+{
+	struct fatfs_directory *handle = file->private;
+	uint64 index;
+	FRESULT operation;
+
+	if (!handle)
+		return VFS_ERR_INVAL;
+	sleeplock_acquire(&fatfs_port.lock);
+	operation = f_rewinddir(&handle->directory);
+	for (index = 2; operation == FR_OK && index < position; index++) {
+		operation = f_readdir(&handle->directory, &handle->info);
+		if (operation == FR_OK && !handle->info.fname[0])
+			operation = FR_INT_ERR;
+	}
+	sleeplock_release(&fatfs_port.lock);
+	if (operation != FR_OK)
+		return fatfs_result(operation);
+	file->position = position;
+	return VFS_OK;
+}
+
 static const struct vfs_file_operations fatfs_directory_operations = {
 	.open = fatfs_directory_open,
 	.release = fatfs_directory_release,
 	.readdir = fatfs_readdir,
+	.seekdir = fatfs_seekdir,
 	.fsync = fatfs_directory_sync,
 };
 

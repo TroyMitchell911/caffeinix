@@ -2,18 +2,25 @@
 #include <file.h>
 #include <ksocket.h>
 #include <ktime.h>
+#include <list.h>
 #include <lwip/sockets.h>
+#include <lwip/tcp.h>
 #include <mystring.h>
 #include <network_stack.h>
 #include <palloc.h>
 #include <process.h>
+#include <scheduler.h>
+#include <sleeplock.h>
+#include <signal.h>
 #include <spinlock.h>
 #include <vfs.h>
+#include <vm.h>
 
 #define SOCKET_LISTEN_BACKLOG_MAX 16
 #define SOCKET_LINGER_MAX_SECONDS 0x7fff
 #define SOCKET_RECEIVE_BUFFER_MIN 2304
 #define SOCKET_RECEIVE_BUFFER_MAX 0x7fffffff
+#define SOCKET_DATAGRAM_RECEIVE_MAX 0xffff
 #define SOCKET_TIMEOUT_MAX_MS 0x7fffffff
 
 #define SOCKET_INHERIT_REUSEADDR (1U << 0)
@@ -37,6 +44,7 @@ struct socket_inherited_options {
 
 struct socket_file {
 	struct spinlock lock;
+	struct list registry_node;
 	int descriptor;
 	int family;
 	int type;
@@ -47,6 +55,9 @@ struct socket_file {
 	uint8 read_shutdown;
 	uint8 write_shutdown;
 	uint8 listening;
+	uint8 registered;
+	uint64 inode;
+	uint32 uid;
 	struct socket_inherited_options inherited;
 };
 
@@ -55,6 +66,125 @@ union socket_option_storage {
 	struct linger linger;
 	struct timeval timeout;
 };
+
+static struct {
+	struct sleeplock lock;
+	struct list sockets;
+	uint64 next_inode;
+} socket_registry;
+
+static void socket_address_from_lwip(
+	const struct sockaddr_in *lwip_address,
+	struct linux_sockaddr_in *linux_address);
+
+void ksocket_init(void)
+{
+	sleeplock_init(&socket_registry.lock, "socket registry");
+	list_init(&socket_registry.sockets);
+	socket_registry.next_inode = 1;
+}
+
+static void socket_registry_add(struct socket_file *socket)
+{
+	sleeplock_acquire(&socket_registry.lock);
+	socket->inode = socket_registry.next_inode++;
+	list_insert_before(&socket_registry.sockets, &socket->registry_node);
+	socket->registered = 1;
+	sleeplock_release(&socket_registry.lock);
+}
+
+static void socket_registry_remove(struct socket_file *socket)
+{
+	sleeplock_acquire(&socket_registry.lock);
+	if (socket->registered) {
+		list_remove(&socket->registry_node);
+		socket->registered = 0;
+	}
+	sleeplock_release(&socket_registry.lock);
+}
+
+static uint8 socket_snapshot_state(struct socket_file *socket)
+{
+	socklen_t length = sizeof(int);
+	int state;
+
+	if (socket->type != LINUX_SOCK_STREAM)
+		return 0x07;
+	if (lwip_getsockopt(socket->descriptor, SOL_SOCKET,
+			    SO_LWIP_TCP_STATE,
+			    &state, &length) < 0)
+		return 0x07;
+	switch (state) {
+	case ESTABLISHED: return 0x01;
+	case SYN_SENT: return 0x02;
+	case SYN_RCVD: return 0x03;
+	case FIN_WAIT_1: return 0x04;
+	case FIN_WAIT_2: return 0x05;
+	case TIME_WAIT: return 0x06;
+	case CLOSE_WAIT: return 0x08;
+	case LAST_ACK: return 0x09;
+	case LISTEN: return 0x0a;
+	case CLOSING: return 0x0b;
+	default: return 0x07;
+	}
+}
+
+uint32 ksocket_snapshot_type(int type, struct ksocket_snapshot *snapshots,
+			     uint32 capacity)
+{
+	struct socket_file *socket;
+	struct sockaddr_in address;
+	list_t node;
+	uint32 count = 0;
+
+	if (!snapshots || !capacity)
+		return 0;
+	lwip_socket_thread_init();
+	sleeplock_acquire(&socket_registry.lock);
+	for (node = socket_registry.sockets.next;
+	     node != &socket_registry.sockets && count < capacity;
+	     node = node->next) {
+		struct ksocket_snapshot *snapshot;
+		socklen_t length;
+		int descriptor, has_peer, queued = 0;
+
+		socket = list_entry(node, struct socket_file, registry_node);
+		spinlock_acquire(&socket->lock);
+		if (socket->type != type) {
+			spinlock_release(&socket->lock);
+			continue;
+		}
+		descriptor = socket->descriptor;
+		has_peer = socket->has_peer || socket->connect_pending;
+		snapshot = &snapshots[count];
+		memset(snapshot, 0, sizeof(*snapshot));
+		snapshot->inode = socket->inode;
+		snapshot->uid = socket->uid;
+		spinlock_release(&socket->lock);
+		snapshot->state = socket_snapshot_state(socket);
+
+		length = sizeof(address);
+		memset(&address, 0, sizeof(address));
+		if (lwip_getsockname(descriptor,
+				      (struct sockaddr *)&address,
+				      &length) == 0)
+			socket_address_from_lwip(&address, &snapshot->local);
+		if (has_peer) {
+			length = sizeof(address);
+			memset(&address, 0, sizeof(address));
+			if (lwip_getpeername(descriptor,
+					     (struct sockaddr *)&address,
+					     &length) == 0)
+				socket_address_from_lwip(
+					&address, &snapshot->remote);
+		}
+		if (lwip_ioctl(descriptor, FIONREAD, &queued) == 0 && queued > 0)
+			snapshot->receive_queue = queued;
+		count++;
+	}
+	sleeplock_release(&socket_registry.lock);
+	return count;
+}
 
 static int socket_vfs_error(int error)
 {
@@ -287,6 +417,15 @@ static int socket_write_error(struct socket_file *socket)
 	return errno > 0 ? errno : EIO;
 }
 
+static int socket_report_write_error(struct socket_file *socket, int error,
+				     int flags)
+{
+	if (error == EPIPE && socket->type == LINUX_SOCK_STREAM &&
+	    !(flags & LINUX_MSG_NOSIGNAL))
+		signal_raise_current(LINUX_SIGPIPE, LINUX_SI_KERNEL);
+	return error;
+}
+
 static void socket_address_to_lwip(
 	const struct linux_sockaddr_in *linux_address,
 	struct sockaddr_in *lwip_address)
@@ -452,6 +591,7 @@ static void socket_file_release(struct vfs_file *file)
 
 	if (!socket)
 		return;
+	socket_registry_remove(socket);
 	lwip_socket_thread_init();
 	if ((file->flags & VFS_OPEN_NONBLOCK) &&
 	    (socket->inherited.mask & SOCKET_INHERIT_LINGER) &&
@@ -522,6 +662,76 @@ static int64 socket_file_read(struct vfs_file *file, int user_destination,
 	return result;
 }
 
+static int64 socket_file_readv(struct vfs_file *file, int user_destination,
+			       const struct vfs_iovec *iovecs,
+			       uint32 count)
+{
+	struct socket_file *socket = file->private;
+	uint64 copied = 0, capacity = 0, remaining;
+	unsigned int buffer_order = 0;
+	void *buffer;
+	uint32 index;
+	int64 result;
+
+	for (index = 0; index < count; index++)
+		capacity += iovecs[index].length;
+	if (!capacity)
+		return 0;
+	if (socket_read_is_shutdown(socket) &&
+	    socket->type != LINUX_SOCK_STREAM)
+		return 0;
+	if (socket->type == LINUX_SOCK_STREAM && capacity > PGSIZE)
+		capacity = PGSIZE;
+	else if (capacity > SOCKET_DATAGRAM_RECEIVE_MAX)
+		capacity = SOCKET_DATAGRAM_RECEIVE_MAX;
+	remaining = capacity;
+	for (index = 0; user_destination && index < count && remaining;
+	     index++) {
+		uint64 length = iovecs[index].length;
+
+		if (length > remaining)
+			length = remaining;
+		if (length && vm_prefault_user_write(cur_proc()->pagetable,
+						  iovecs[index].base,
+						  length) < 0)
+			return VFS_ERR_FAULT;
+		remaining -= length;
+	}
+	while ((PGSIZE << buffer_order) < capacity)
+		buffer_order++;
+	buffer = alloc_pages(buffer_order, 0);
+	if (!buffer)
+		return VFS_ERR_NOMEM;
+	lwip_socket_thread_init();
+	errno = 0;
+	result = lwip_recv(socket->descriptor, buffer, capacity, 0);
+	if (result < 0) {
+		if (socket_read_is_shutdown(socket) &&
+		    (errno == ENOTCONN || errno == ECONNRESET))
+			result = 0;
+		else
+			result = socket_vfs_error(errno);
+		goto out;
+	}
+	for (index = 0; index < count && copied < (uint64)result; index++) {
+		uint64 length = iovecs[index].length;
+
+		if (length > (uint64)result - copied)
+			length = result - copied;
+		if (length && either_copyout(user_destination,
+					     iovecs[index].base,
+					     (uint8 *)buffer + copied,
+					     length) < 0) {
+			result = VFS_ERR_FAULT;
+			goto out;
+		}
+		copied += length;
+	}
+out:
+	free_pages(buffer, buffer_order);
+	return result;
+}
+
 static int64 socket_file_write(struct vfs_file *file, int user_source,
 			       uint64 source, uint64 count,
 			       uint64 *position)
@@ -533,13 +743,15 @@ static int64 socket_file_write(struct vfs_file *file, int user_source,
 
 	(void)position;
 	if (socket_write_is_shutdown(socket))
-		return VFS_ERR_PIPE;
+		return socket_vfs_error(
+			socket_report_write_error(socket, EPIPE, 0));
 	if (socket_write_needs_peer(socket))
 		return VFS_ERR_DESTADDRREQ;
 	lwip_socket_thread_init();
 	status = socket_stream_prepare_write(socket);
 	if (status)
-		return socket_vfs_error(status);
+		return socket_vfs_error(
+			socket_report_write_error(socket, status, 0));
 	if (!count && socket->type != LINUX_SOCK_DGRAM)
 		return 0;
 	if (!count) {
@@ -547,8 +759,8 @@ static int64 socket_file_write(struct vfs_file *file, int user_source,
 
 		errno = 0;
 		result = lwip_send(socket->descriptor, &dummy, 0, 0);
-		return result < 0 ?
-			socket_vfs_error(socket_write_error(socket)) : result;
+		return result < 0 ? socket_vfs_error(socket_report_write_error(
+			socket, socket_write_error(socket), 0)) : result;
 	}
 	if (count > PGSIZE && socket->type != LINUX_SOCK_STREAM)
 		return VFS_ERR_MSGSIZE;
@@ -564,7 +776,8 @@ static int64 socket_file_write(struct vfs_file *file, int user_source,
 	errno = 0;
 	result = lwip_send(socket->descriptor, buffer, count, 0);
 	if (result < 0)
-		result = socket_vfs_error(socket_write_error(socket));
+		result = socket_vfs_error(socket_report_write_error(
+			socket, socket_write_error(socket), 0));
 	pfree(buffer);
 	return result;
 }
@@ -584,13 +797,15 @@ static int64 socket_file_writev(struct vfs_file *file, int user_source,
 	if (!total)
 		return 0;
 	if (socket_write_is_shutdown(socket))
-		return VFS_ERR_PIPE;
+		return socket_vfs_error(
+			socket_report_write_error(socket, EPIPE, 0));
 	if (socket_write_needs_peer(socket))
 		return VFS_ERR_DESTADDRREQ;
 	lwip_socket_thread_init();
 	result = socket_stream_prepare_write(socket);
 	if (result)
-		return socket_vfs_error(result);
+		return socket_vfs_error(
+			socket_report_write_error(socket, result, 0));
 	if (socket->type != LINUX_SOCK_STREAM && total > PGSIZE)
 		return VFS_ERR_MSGSIZE;
 	if (total > PGSIZE)
@@ -616,10 +831,161 @@ static int64 socket_file_writev(struct vfs_file *file, int user_source,
 	errno = 0;
 	result = lwip_send(socket->descriptor, buffer, total, 0);
 	if (result < 0)
-		result = socket_vfs_error(socket_write_error(socket));
+		result = socket_vfs_error(socket_report_write_error(
+			socket, socket_write_error(socket), 0));
 	if (buffer)
 		pfree(buffer);
 	return result;
+}
+
+static void socket_interface_address(struct linux_ifreq *request,
+				     uint32 address)
+{
+	struct linux_sockaddr_in *socket_address =
+		(void *)&request->data.address;
+
+	memset(&request->data, 0, sizeof(request->data));
+	socket_address->family = LINUX_AF_INET;
+	socket_address->address = address;
+}
+
+static int socket_snapshot_interfaces(
+	struct network_interface_snapshot *interfaces, uint32 *count)
+{
+	if (network_stack_snapshot_interfaces(interfaces, NET_DEVICE_MAX,
+					      count) < 0)
+		return VFS_ERR_IO;
+	return VFS_OK;
+}
+
+static struct network_interface_snapshot *socket_find_interface(
+	struct network_interface_snapshot *interfaces, uint32 count,
+	const char *name)
+{
+	uint32 index;
+
+	for (index = 0; index < count; index++) {
+		if (!strcmp(interfaces[index].name, name))
+			return &interfaces[index];
+	}
+	return 0;
+}
+
+static int64 socket_interface_conf(uint64 argument)
+{
+	struct network_interface_snapshot interfaces[NET_DEVICE_MAX];
+	struct linux_ifconf configuration;
+	uint32 capacity, copied = 0, count, index;
+
+	if (either_copyin(&configuration, 1, argument,
+			  sizeof(configuration)) < 0)
+		return VFS_ERR_FAULT;
+	if (configuration.length < 0)
+		return VFS_ERR_INVAL;
+	if (socket_snapshot_interfaces(interfaces, &count) < 0)
+		return VFS_ERR_IO;
+	capacity = configuration.length / sizeof(struct linux_ifreq);
+	for (index = 0; index < count; index++) {
+		struct linux_ifreq request;
+
+		if (!interfaces[index].ipv4_address)
+			continue;
+		if (!configuration.buffer) {
+			copied++;
+			continue;
+		}
+		if (copied >= capacity)
+			break;
+		memset(&request, 0, sizeof(request));
+		safe_strncpy(request.name, interfaces[index].name,
+			     sizeof(request.name));
+		socket_interface_address(&request,
+					 interfaces[index].ipv4_address);
+		if (either_copyout(1, configuration.buffer +
+				   copied * sizeof(request), &request,
+				   sizeof(request)) < 0)
+			return VFS_ERR_FAULT;
+		copied++;
+	}
+	configuration.length = copied * sizeof(struct linux_ifreq);
+	if (either_copyout(1, argument, &configuration,
+			   sizeof(configuration)) < 0)
+		return VFS_ERR_FAULT;
+	return VFS_OK;
+}
+
+static int64 socket_interface_ioctl(uint64 command, uint64 argument)
+{
+	struct network_interface_snapshot interfaces[NET_DEVICE_MAX];
+	struct network_interface_snapshot *interface = 0;
+	struct linux_ifreq request;
+	uint32 count, index;
+
+	if (command == LINUX_SIOCGIFCONF)
+		return socket_interface_conf(argument);
+	if (either_copyin(&request, 1, argument, sizeof(request)) < 0)
+		return VFS_ERR_FAULT;
+	if (socket_snapshot_interfaces(interfaces, &count) < 0)
+		return VFS_ERR_IO;
+	if (command == LINUX_SIOCGIFNAME) {
+		for (index = 0; index < count; index++) {
+			if (interfaces[index].index ==
+			    (uint32)request.data.value) {
+				interface = &interfaces[index];
+				break;
+			}
+		}
+	} else {
+		request.name[LINUX_IFNAMSIZ - 1] = 0;
+		interface = socket_find_interface(interfaces, count,
+						  request.name);
+	}
+	if (!interface)
+		return VFS_ERR_NODEV;
+
+	if (command == LINUX_SIOCGIFNAME) {
+		memset(request.name, 0, sizeof(request.name));
+		safe_strncpy(request.name, interface->name,
+			     sizeof(request.name));
+	} else if (command == LINUX_SIOCGIFFLAGS) {
+		request.data.flags =
+			(interface->up ? LINUX_IFF_UP : 0) |
+			(interface->running ? LINUX_IFF_RUNNING : 0) |
+			(interface->loopback ? LINUX_IFF_LOOPBACK : 0) |
+			(interface->broadcast ? LINUX_IFF_BROADCAST : 0);
+	} else if (command == LINUX_SIOCGIFADDR) {
+		if (!interface->ipv4_address)
+			return VFS_ERR_ADDRNOTAVAIL;
+		socket_interface_address(&request, interface->ipv4_address);
+	} else if (command == LINUX_SIOCGIFBRDADDR) {
+		if (!interface->broadcast || !interface->ipv4_address ||
+		    !interface->ipv4_netmask)
+			return VFS_ERR_ADDRNOTAVAIL;
+		socket_interface_address(&request,
+			(interface->ipv4_address & interface->ipv4_netmask) |
+			~interface->ipv4_netmask);
+	} else if (command == LINUX_SIOCGIFNETMASK) {
+		if (!interface->ipv4_netmask)
+			return VFS_ERR_ADDRNOTAVAIL;
+		socket_interface_address(&request, interface->ipv4_netmask);
+	} else if (command == LINUX_SIOCGIFMETRIC) {
+		request.data.value = 0;
+	} else if (command == LINUX_SIOCGIFMTU) {
+		request.data.value = interface->mtu;
+	} else if (command == LINUX_SIOCGIFHWADDR) {
+		memset(&request.data, 0, sizeof(request.data));
+		request.data.address.family = interface->loopback ?
+			LINUX_ARPHRD_LOOPBACK : LINUX_ARPHRD_ETHER;
+		memmove(request.data.address.data, interface->address,
+			NET_ETH_ADDRESS_LENGTH);
+	} else if (command == LINUX_SIOCGIFINDEX) {
+		request.data.value = interface->index;
+	} else {
+		return VFS_ERR_NOTTY;
+	}
+	if (either_copyout(1, argument, &request, sizeof(request)) < 0)
+		return VFS_ERR_FAULT;
+	return VFS_OK;
 }
 
 static int64 socket_file_ioctl(struct vfs_file *file, uint64 request,
@@ -651,14 +1017,24 @@ static int64 socket_file_ioctl(struct vfs_file *file, uint64 request,
 			return VFS_ERR_FAULT;
 		return 0;
 	}
+	if (request >= LINUX_SIOCGIFNAME &&
+	    request <= LINUX_SIOCGIFINDEX)
+		return socket_interface_ioctl(request, argument);
 	return VFS_ERR_NOTTY;
 }
 
 static int socket_file_getattr(struct vfs_file *file,
 			       struct vfs_stat *stat)
 {
-	(void)file;
+	struct socket_file *socket = file ? file->private : 0;
+
+	if (!socket || !stat)
+		return VFS_ERR_INVAL;
 	memset(stat, 0, sizeof(*stat));
+	spinlock_acquire(&socket->lock);
+	stat->ino = socket->inode;
+	stat->uid = socket->uid;
+	spinlock_release(&socket->lock);
 	stat->type = VFS_INODE_SOCKET;
 	stat->mode = 0666;
 	stat->nlink = 1;
@@ -703,6 +1079,7 @@ static uint32 socket_file_poll(struct vfs_file *file, uint32 events)
 static const struct vfs_file_operations socket_file_operations = {
 	.release = socket_file_release,
 	.read = socket_file_read,
+	.readv = socket_file_readv,
 	.write = socket_file_write,
 	.writev = socket_file_writev,
 	.ioctl = socket_file_ioctl,
@@ -716,6 +1093,7 @@ static int socket_install(int descriptor, int family, int type,
 			  const struct socket_inherited_options *inherited,
 			  int connected, int flags, int *fd_out)
 {
+	struct process_credentials credentials;
 	struct socket_file *socket;
 	file_t file;
 	int status;
@@ -736,12 +1114,16 @@ static int socket_install(int descriptor, int family, int type,
 	socket->type = type;
 	socket->protocol = protocol;
 	socket->has_peer = connected;
+	process_credentials_get(&credentials);
+	socket->uid = credentials.fsuid;
 	spinlock_init(&socket->lock, "socket options");
+	list_init(&socket->registry_node);
 	if (inherited)
 		socket->inherited = *inherited;
 	file->operations = &socket_file_operations;
 	file->private = socket;
 	file->flags = VFS_OPEN_READ | VFS_OPEN_WRITE;
+	socket_registry_add(socket);
 	if (flags & LINUX_SOCK_NONBLOCK) {
 		int error;
 
@@ -784,6 +1166,7 @@ static int socket_get(int fd, file_t *file_out,
 
 int ksocket_create(int family, int type, int protocol, int *fd_out)
 {
+	struct process_credentials credentials;
 	int base_type = type & ~(LINUX_SOCK_NONBLOCK | LINUX_SOCK_CLOEXEC);
 	int descriptor;
 
@@ -797,9 +1180,13 @@ int ksocket_create(int family, int type, int protocol, int *fd_out)
 		return -LINUX_ESOCKTNOSUPPORT;
 	if (type & ~(base_type | LINUX_SOCK_NONBLOCK | LINUX_SOCK_CLOEXEC))
 		return -LINUX_EINVAL;
-	if (base_type == LINUX_SOCK_RAW &&
-	    protocol != LINUX_IPPROTO_ICMP)
-		return -LINUX_EPROTONOSUPPORT;
+	if (base_type == LINUX_SOCK_RAW) {
+		process_credentials_get(&credentials);
+		if (credentials.euid)
+			return -LINUX_EPERM;
+		if (protocol != LINUX_IPPROTO_ICMP)
+			return -LINUX_EPROTONOSUPPORT;
+	}
 	if ((base_type == LINUX_SOCK_STREAM &&
 	     protocol != LINUX_IPPROTO_IP &&
 	     protocol != LINUX_IPPROTO_TCP) ||
@@ -1022,8 +1409,9 @@ int64 ksocket_send(int fd, const void *buffer, uint64 length, int flags,
 		return -LINUX_EOPNOTSUPP;
 	}
 	if (socket_write_is_shutdown(socket)) {
+		status = socket_report_write_error(socket, EPIPE, flags);
 		vfs_file_put(file);
-		return -LINUX_EPIPE;
+		return -status;
 	}
 	if (!address && socket_write_needs_peer(socket)) {
 		vfs_file_put(file);
@@ -1031,6 +1419,7 @@ int64 ksocket_send(int fd, const void *buffer, uint64 length, int flags,
 	}
 	status = socket_stream_prepare_write(socket);
 	if (status) {
+		status = socket_report_write_error(socket, status, flags);
 		vfs_file_put(file);
 		return -status;
 	}
@@ -1052,7 +1441,8 @@ int64 ksocket_send(int fd, const void *buffer, uint64 length, int flags,
 				   lwip_flags);
 	}
 	if (result < 0)
-		result = -socket_write_error(socket);
+		result = -socket_report_write_error(
+			socket, socket_write_error(socket), flags);
 	vfs_file_put(file);
 	return result;
 }

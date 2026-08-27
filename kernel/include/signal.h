@@ -7,6 +7,7 @@
 #define SIGNAL_COUNT 64
 #define SIGNAL_RESTART_SYS 512
 #define SIGNAL_QUEUE_FULL -2
+#define SIGNAL_QUEUE_DENIED -3
 
 struct process;
 struct thread;
@@ -17,6 +18,8 @@ struct signal_info {
 	int code;
 	int sender_pid;
 	uint32 sender_uid;
+	uint32 sender_euid;
+	int sender_sid;
 	int status;
 	uint64 address;
 };
@@ -48,11 +51,15 @@ int signal_queue_thread_locked(struct process *process,
 			       const struct signal_info *information);
 int signal_send_process(int pid, int signal,
 			const struct signal_info *information);
+int signal_send_processes(int selector, int signal,
+			  const struct signal_info *information);
 int signal_send_thread(int thread_group, int tid, int signal,
 		       const struct signal_info *information);
 
 int signal_pending_unblocked(struct thread *thread);
+int signal_fatal_pending(struct thread *thread);
 uint64 signal_mask_sanitize(uint64 mask);
+void signal_raise_current(int signal, int code);
 void signal_force_fault(int signal, int code, uint64 address);
 void signal_user_return(int from_syscall);
 

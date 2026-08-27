@@ -127,6 +127,25 @@ uint32_t ext4_inode_get_modif_time(struct ext4_inode *inode);
  */
 void ext4_inode_set_modif_time(struct ext4_inode *inode, uint32_t time);
 
+void ext4_inode_get_access_time_ext(struct ext4_sblock *sb,
+				    struct ext4_inode *inode,
+				    struct ext4_timespec *time);
+void ext4_inode_get_modif_time_ext(struct ext4_sblock *sb,
+				   struct ext4_inode *inode,
+				   struct ext4_timespec *time);
+void ext4_inode_get_change_time_ext(struct ext4_sblock *sb,
+				    struct ext4_inode *inode,
+				    struct ext4_timespec *time);
+int ext4_inode_set_access_time_ext(struct ext4_sblock *sb,
+				   struct ext4_inode *inode,
+				   const struct ext4_timespec *time);
+int ext4_inode_set_modif_time_ext(struct ext4_sblock *sb,
+				  struct ext4_inode *inode,
+				  const struct ext4_timespec *time);
+int ext4_inode_set_change_time_ext(struct ext4_sblock *sb,
+				   struct ext4_inode *inode,
+				   const struct ext4_timespec *time);
+
 /**@brief Get time, when i-node was deleted.
  * @param inode I-node
  * @return Time of the delete action (POSIX)

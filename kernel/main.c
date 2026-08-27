@@ -26,6 +26,8 @@
 #include <fatfs.h>
 #include <devfs.h>
 #include <tmpfs.h>
+#include <procfs.h>
+#include <loadavg.h>
 #include <vfs.h>
 #include <device_model.h>
 #include <boot.h>
@@ -45,10 +47,12 @@
 #include <virtio.h>
 #include <netdevice.h>
 #include <network_stack.h>
+#include <ksocket.h>
 #include <futex.h>
 #include <page_cache.h>
 #include <mmap.h>
 #include <random.h>
+#include <goldfish_rtc.h>
 
 volatile static uint8 start = 0;
 extern char end[];
@@ -85,9 +89,13 @@ static void main_boot(void)
 		PANIC("populate platform devices");
 	if (ns16550_init() < 0)
 		PANIC("register NS16550 driver");
+	if (goldfish_rtc_init() < 0)
+		PANIC("register goldfish RTC driver");
 	if (uart_core_selftest() < 0)
 		PANIC("UART core selftest");
 	block_device_init();
+	if (block_core_selftest_start() < 0)
+		PANIC("block core selftest");
 	net_device_init();
 	if (net_core_selftest() < 0)
 		PANIC("network core selftest");
@@ -102,11 +110,14 @@ static void main_boot(void)
 	if (virtio_mmio_init() < 0)
 		PANIC("register virtio-mmio driver");
 	random_finalize_boot();
+	ksocket_init();
 	network_stack_init();
 	ext4fs_init();
 	fatfs_init();
 	devfs_init();
 	tmpfs_init();
+	loadavg_init();
+	procfs_init();
 	userinit();
 
 	timer_wait_for_interrupt();

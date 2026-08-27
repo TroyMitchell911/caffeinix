@@ -40,6 +40,8 @@ static struct {
 	uint32 count;
 } runqueue;
 
+static volatile uint64 context_switches;
+
 int cpuid(void)
 {
 	return (int)tp_r();
@@ -76,6 +78,31 @@ void scheduler_init(void)
 	runqueue.total_weight = 0;
 	runqueue.min_vruntime = 0;
 	runqueue.count = 0;
+	context_switches = 0;
+}
+
+uint64 scheduler_idle_time_ns(void)
+{
+	uint64 idle = 0;
+	uint64 now = ktime_get_ns();
+	int logical;
+
+	for (logical = 0; logical < cpu_count(); logical++) {
+		uint64 since;
+
+		idle += __atomic_load_n(&cpus[logical]->idle_time_ns,
+					__ATOMIC_SEQ_CST);
+		since = __atomic_load_n(&cpus[logical]->idle_since_ns,
+					__ATOMIC_SEQ_CST);
+		if (since && now > since)
+			idle += now - since;
+	}
+	return idle;
+}
+
+uint64 scheduler_context_switches(void)
+{
+	return __atomic_load_n(&context_switches, __ATOMIC_RELAXED);
 }
 
 static uint64 add_saturate(uint64 left, uint64 right)
@@ -101,10 +128,32 @@ static uint64 entity_vruntime_now(thread_t thread, uint64 now)
 	return runtime;
 }
 
+static void account_mode(thread_t thread, uint64 now)
+{
+	uint64 start = __atomic_load_n(&thread->sched.mode_start,
+	                               __ATOMIC_RELAXED);
+	uint64 delta;
+
+	if (!start || now <= start) {
+		__atomic_store_n(&thread->sched.mode_start, now,
+		                 __ATOMIC_RELAXED);
+		return;
+	}
+	delta = now - start;
+	if (__atomic_load_n(&thread->sched.user_mode, __ATOMIC_RELAXED))
+		__atomic_add_fetch(&thread->sched.user_runtime, delta,
+		                   __ATOMIC_RELAXED);
+	else
+		__atomic_add_fetch(&thread->sched.system_runtime, delta,
+		                   __ATOMIC_RELAXED);
+	__atomic_store_n(&thread->sched.mode_start, now, __ATOMIC_RELAXED);
+}
+
 static void account_runtime(thread_t thread, uint64 now)
 {
 	uint64 delta;
 
+	account_mode(thread, now);
 	if (!thread->sched.exec_start || now <= thread->sched.exec_start) {
 		thread->sched.exec_start = now;
 		return;
@@ -115,6 +164,51 @@ static void account_runtime(thread_t thread, uint64 now)
 	thread->sched.vruntime = add_saturate(thread->sched.vruntime,
 		scale_runtime(delta, thread->sched.weight));
 	thread->sched.exec_start = now;
+}
+
+void scheduler_account_kernel_enter(void)
+{
+	thread_t current = cur_thread();
+	uint64 now;
+
+	if (!current)
+		return;
+	now = ktime_get_ns();
+	account_mode(current, now);
+	__atomic_store_n(&current->sched.user_mode, 0, __ATOMIC_RELAXED);
+}
+
+void scheduler_account_user_enter(void)
+{
+	thread_t current = cur_thread();
+	uint64 now;
+
+	if (!current)
+		return;
+	now = ktime_get_ns();
+	account_mode(current, now);
+	__atomic_store_n(&current->sched.user_mode, 1, __ATOMIC_RELAXED);
+}
+
+void scheduler_thread_times(thread_t thread, uint64 now,
+			    uint64 *user, uint64 *system)
+{
+	uint64 start, user_time, system_time;
+
+	user_time = __atomic_load_n(&thread->sched.user_runtime,
+	                            __ATOMIC_RELAXED);
+	system_time = __atomic_load_n(&thread->sched.system_runtime,
+	                              __ATOMIC_RELAXED);
+	start = __atomic_load_n(&thread->sched.mode_start, __ATOMIC_RELAXED);
+	if (thread->state == THREAD_RUNNING && start && now > start) {
+		if (__atomic_load_n(&thread->sched.user_mode,
+		                    __ATOMIC_RELAXED))
+			user_time = add_saturate(user_time, now - start);
+		else
+			system_time = add_saturate(system_time, now - start);
+	}
+	*user = user_time;
+	*system = system_time;
 }
 
 static int entity_before(thread_t left, thread_t right)
@@ -447,6 +541,8 @@ void scheduler(void)
 	cpu->selected = 0;
 	cpu->idle = 0;
 	for (;;) {
+		uint64 idle_start;
+
 		/*
 		 * Keep global interrupts disabled through WFI. An IPI arriving
 		 * after the empty check remains pending and makes WFI return.
@@ -455,7 +551,20 @@ void scheduler(void)
 		next = scheduler_next(cpu);
 		if (!next) {
 			timer_set_idle();
+			idle_start = ktime_get_ns();
+			__atomic_store_n(&cpu->idle_since_ns, idle_start,
+					 __ATOMIC_SEQ_CST);
 			wait_for_interrupt();
+			idle_start = __atomic_exchange_n(&cpu->idle_since_ns, 0,
+						 __ATOMIC_SEQ_CST);
+			if (idle_start) {
+				uint64 now = ktime_get_ns();
+
+				if (now > idle_start)
+					__atomic_add_fetch(&cpu->idle_time_ns,
+						now - idle_start,
+						__ATOMIC_SEQ_CST);
+			}
 			intr_on();
 			continue;
 		}
@@ -471,9 +580,12 @@ void scheduler(void)
 			PANIC("invalid scheduled thread");
 		next->state = THREAD_RUNNING;
 		next->sched.exec_start = ktime_get_ns();
+		next->sched.mode_start = next->sched.exec_start;
+		next->sched.user_mode = 0;
 		cpu->selected = 0;
 		__atomic_store_n(&cpu->need_resched, 0, __ATOMIC_RELEASE);
 		cpu->current = next;
+		__atomic_add_fetch(&context_switches, 1, __ATOMIC_RELAXED);
 		spinlock_release(&runqueue.lock);
 		switchto(&cpu->context, &next->context);
 		spinlock_acquire(&runqueue.lock);

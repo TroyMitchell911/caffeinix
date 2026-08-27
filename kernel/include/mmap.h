@@ -11,6 +11,7 @@ enum mmap_fault_access {
 	MMAP_FAULT_READ,
 	MMAP_FAULT_WRITE,
 	MMAP_FAULT_EXEC,
+	MMAP_FAULT_POPULATE,
 };
 
 enum mmap_fault_result {
@@ -29,10 +30,15 @@ void mmap_init(void);
 void mmap_process_register(struct process *process);
 void mmap_process_unregister(struct process *process);
 int mmap_process_fork(struct process *parent, struct process *child);
+int mmap_process_vfork(struct process *parent, struct process *child);
+int mmap_process_vfork_detach(struct process *parent,
+			      struct process *child, uint64 *shared);
 int mmap_file_truncate(struct vfs_inode *inode, uint64 old_size,
 		       uint64 size);
 int mmap_reclaim_file_page(struct vfs_file *file, uint64 offset,
 			   void *page);
 uint64 mmap_reclaim_clean_pages(uint64 target);
+int mmap_process_usage(int pid, uint64 *virtual_size,
+		       uint64 *resident_pages);
 
 #endif

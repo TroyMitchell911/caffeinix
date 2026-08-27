@@ -28,6 +28,9 @@ struct tty {
 	uint64 commit_position;
 	uint64 edit_position;
 	int eof_pending;
+	/* Process job-control state is protected by the process table lock. */
+	int session_id;
+	int foreground_pgid;
 	struct linux_termios termios;
 	struct linux_winsize winsize;
 	const struct tty_operations *operations;
@@ -42,5 +45,6 @@ void tty_receive_char(struct tty *tty, int character);
 void tty_set_console(struct tty *tty);
 struct tty *tty_get_console(void);
 struct tty *tty_get(int line);
+uint32 tty_device_number(const struct tty *tty);
 
 #endif

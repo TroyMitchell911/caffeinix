@@ -47,6 +47,7 @@ struct vma_set {
  * - intervals are non-empty, page-aligned, ordered, and non-overlapping;
  * - adjacent intervals with identical attributes are merged;
  * - file-backed intervals own a file reference and a page-aligned offset;
+ * - ELF file-backed intervals deny writes for their complete lifetime;
  * - shared anonymous intervals own a backing reference and offset;
  * - a live process serializes access with its mmap_lock; temporary exec
  *   sets and unpublished processes are owned exclusively by their caller.

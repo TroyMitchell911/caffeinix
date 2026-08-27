@@ -43,10 +43,12 @@ int page_cache_writeback_file(struct vfs_file *file);
 int page_cache_writeback_inode(struct vfs_inode *inode);
 int page_cache_writeback_inode_locked(struct vfs_inode *inode);
 int page_cache_writeback_super(struct vfs_super_block *superblock);
+int page_cache_evict_super(struct vfs_super_block *superblock);
 int page_cache_truncate(struct vfs_inode *inode, uint64 old_size,
 			uint64 size);
 uint64 page_cache_reclaim(uint64 target);
 uint64 page_cache_reclaim_mapped(uint64 target);
+uint64 page_cache_reclaim_unmapped(void);
 void page_cache_get_stats(struct page_cache_stats *stats);
 
 #endif

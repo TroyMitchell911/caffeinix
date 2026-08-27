@@ -26,6 +26,8 @@ int wait_queue_sleep_timeout(wait_queue_t queue,
 			     spinlock_t condition_lock, uint64 timeout_ms);
 int wait_queue_sleep_interruptible(wait_queue_t queue,
 				   spinlock_t condition_lock);
+int wait_queue_sleep_killable(wait_queue_t queue,
+			      spinlock_t condition_lock);
 int wait_queue_sleep_interruptible_timeout(wait_queue_t queue,
 					   spinlock_t condition_lock,
 					   uint64 timeout_ms);
@@ -38,7 +40,7 @@ int wait_queue_wake_mask(wait_queue_t queue, int count, uint32 mask);
 int wait_queue_requeue(wait_queue_t source, wait_queue_t destination,
 		       int count, void *wait_private);
 int wait_queue_wake_thread(struct thread *thread);
-int wait_queue_interrupt_thread(struct thread *thread);
+int wait_queue_signal_thread(struct thread *thread, int fatal);
 int wait_queue_terminate_thread(struct thread *thread);
 int wait_queue_empty(wait_queue_t queue);
 void wait_queue_timeout_init(void);

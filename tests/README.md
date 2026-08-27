@@ -53,7 +53,8 @@ requires 2 MiB PT_LOAD alignment. Permission fixtures exercise an executable
 stack and a permissionless guard segment. In addition, the image contains the
 unmodified musl 1.2.6 runtime linker and shared libc, dynamically linked test
 programs, shared-object fixtures, a dynamic BusyBox, and a static recovery
-BusyBox.
+BusyBox. Both BusyBox binaries use the checked broad configuration and must
+report exactly the 207 applets in `configs/busybox.applets`.
 
 Each boot requires one SBI BASE report and exactly one online and timer marker
 per logical CPU. A static check rejects machine-mode CSR operations, direct
@@ -131,21 +132,43 @@ The guest selftest covers:
 - concurrent CFS nice classes, ext4, tmpfs, FAT, and four TCP bulk clients;
 - multiple TTY sleepers and repeated wake-all/requeue behavior;
 - devfs character devices and device numbers;
-- `/dev/ttyS0` metadata, `/dev/tty` error semantics, and terminal ioctls;
+- `/dev/ttyS0` metadata, controlling `/dev/tty`, foreground-group and session
+  ioctls, and background terminal access;
 - termios set/get state, canonical echo and erase, raw input, CR/NL handling,
-  blocking wakeups, and UART output larger than the transmit queue;
-- dynamic BusyBox ash startup, core applets, repeated process startup, Tab
-  completion, command history, cursor editing, and cancellation of a partial
-  command with Ctrl-C, plus execution of the static recovery binary;
+  `ISIG` control characters, `NOFLSH`, blocking wakeups, and UART output
+  larger than the transmit queue;
+- dynamic BusyBox ash startup, core applets, repeated process startup,
+  command and UTF-8 pathname completion, completion listings, saved and
+  reverse-searchable history, Home/End/Delete and control-key editing, long
+  input, empty-line Ctrl-D, and cancellation of a partial command with Ctrl-C;
+- broad BusyBox ash language, text, archive, file, account, process, and
+  system-tool semantics, with the dynamic and static applet lists checked
+  against the committed manifest;
+- BusyBox vi insertion, persistence, exit, and reopen, foreground pipeline
+  interruption, stopped and resumed jobs, background terminal reads, plus
+  execution of the static recovery binary;
 - ext4 and tmpfs links, sparse files, rename, directory iteration, truncate,
   fsync, and open-unlink lifetime rules;
+- ext4 and tmpfs inode timestamps, nanosecond persistence, automatic access
+  and modification updates, `utimensat`, `futimens`, `UTIME_OMIT`, and
+  no-follow symlink updates;
+- procfs process snapshots, command-line lifetime, process-exit races, mount,
+  memory, uptime, scheduler, and IPv4 statistics, together with BusyBox
+  `ps`, `top`, `free`, `uptime`, `pidof`, and `netstat` consumers;
+- real, effective, saved, and filesystem credentials, supplementary groups,
+  umask inheritance, file ownership, discretionary access, sticky-directory
+  deletion, signal authorization, and credential auxv values across exec;
+- filesystem capacity reporting, chmod/chown ownership updates, FIFO nodes,
+  extent allocation, and raw virtio block-device discovery and I/O;
 - symlink metadata through `lstat`;
 - FAT open-file restrictions, unsupported Unix links, overwrite rename, and
   UTF-8 long names;
 - DHCP, raw ICMP, UDP, TCP clients and servers, blocking and nonblocking
   sockets, polling, metadata, options, shutdown, and close; and
-- BusyBox `nc` and `wget`, including a 32 KiB transfer across packet,
-  socket, pbuf, and virtqueue buffer boundaries.
+- BusyBox IPv4 status and routes, `ping`, deterministic musl DNS resolution,
+  `nslookup`, DNS-backed `wget`, a loopback `httpd`, `nc`, and direct `wget`,
+  including a 32 KiB transfer across packet, socket, pbuf, and virtqueue
+  buffer boundaries.
 
 Every smoke boot runs a dynamically linked hello program and concurrent
 dynamic fork/exec pressure. The one-, two-, four-, and eight-hart cases cover

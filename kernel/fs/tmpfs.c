@@ -1,3 +1,5 @@
+#include <block_device.h>
+#include <char_device.h>
 #include <debug.h>
 #include <mystring.h>
 #include <palloc.h>
@@ -29,8 +31,12 @@ struct tmpfs_inode {
 	uint32 gid;
 	uint32 nlink;
 	uint32 references;
+	uint64 device;
 	uint64 size;
 	uint64 page_count;
+	struct vfs_timespec atime;
+	struct vfs_timespec mtime;
+	struct vfs_timespec ctime;
 	struct tmpfs_inode *parent;
 	union {
 		struct tmpfs_entry *entries;
@@ -51,8 +57,25 @@ static const struct vfs_inode_operations tmpfs_inode_operations;
 static const struct vfs_file_operations tmpfs_file_operations;
 static const struct vfs_file_operations tmpfs_directory_operations;
 
+#define TMPFS_TIME_CTIME (1U << 2)
+
+static void tmpfs_touch_locked(struct tmpfs_inode *inode, uint32 mask)
+{
+	struct vfs_timespec now;
+
+	if (vfs_current_time(&now) < 0)
+		return;
+	if (mask & VFS_TIME_ATIME)
+		inode->atime = now;
+	if (mask & VFS_TIME_MTIME)
+		inode->mtime = now;
+	if (mask & TMPFS_TIME_CTIME)
+		inode->ctime = now;
+}
+
 static struct tmpfs_inode *tmpfs_inode_alloc_locked(
-	struct tmpfs_super *super, enum vfs_inode_type type, uint32 mode)
+	struct tmpfs_super *super, enum vfs_inode_type type, uint32 mode,
+	uint32 uid, uint32 gid)
 {
 	struct tmpfs_inode *inode = malloc(sizeof(*inode));
 
@@ -62,6 +85,10 @@ static struct tmpfs_inode *tmpfs_inode_alloc_locked(
 	inode->number = super->next_inode++;
 	inode->type = type;
 	inode->mode = mode & VFS_MODE_PERMISSIONS;
+	inode->uid = uid;
+	inode->gid = gid;
+	tmpfs_touch_locked(inode, VFS_TIME_ATIME | VFS_TIME_MTIME |
+			   TMPFS_TIME_CTIME);
 	return inode;
 }
 
@@ -99,11 +126,19 @@ static void tmpfs_refresh_locked(struct vfs_inode *inode)
 	inode->nlink = node->nlink;
 	inode->size = node->size;
 	inode->blocks = node->page_count * (PGSIZE / 512);
+	inode->device = node->device;
+	inode->atime = node->atime;
+	inode->mtime = node->mtime;
+	inode->ctime = node->ctime;
 	inode->operations = &tmpfs_inode_operations;
 	if (node->type == VFS_INODE_DIRECTORY)
 		inode->file_operations = &tmpfs_directory_operations;
 	else if (node->type == VFS_INODE_REGULAR)
 		inode->file_operations = &tmpfs_file_operations;
+	else if (node->type == VFS_INODE_CHAR_DEVICE)
+		inode->file_operations = &vfs_device_operations;
+	else if (node->type == VFS_INODE_BLOCK_DEVICE)
+		inode->file_operations = &vfs_block_device_operations;
 }
 
 static struct vfs_inode *tmpfs_wrap_locked(
@@ -209,9 +244,69 @@ static int tmpfs_sync(struct vfs_super_block *superblock)
 	return VFS_OK;
 }
 
+static int tmpfs_statfs(struct vfs_super_block *superblock,
+			struct vfs_statfs *stat)
+{
+	uint64 total = palloc_usable_bytes() / PGSIZE;
+
+	(void)superblock;
+	memset(stat, 0, sizeof(*stat));
+	stat->type = 0x01021994;
+	stat->block_size = PGSIZE;
+	stat->fragment_size = PGSIZE;
+	stat->blocks = total;
+	stat->blocks_free = palloc_free_pages();
+	stat->blocks_available = stat->blocks_free;
+	stat->files = total;
+	stat->files_free = stat->blocks_free;
+	stat->name_length = VFS_NAME_MAX;
+	return VFS_OK;
+}
+
+static void tmpfs_destroy_tree_locked(struct tmpfs_inode *inode)
+{
+	struct tmpfs_entry *entry, *next;
+	struct tmpfs_inode *child;
+
+	if (inode->type == VFS_INODE_DIRECTORY) {
+		for (entry = inode->entries; entry; entry = next) {
+			next = entry->next;
+			child = entry->inode;
+			if (child->type == VFS_INODE_DIRECTORY) {
+				tmpfs_destroy_tree_locked(child);
+			} else {
+				if (!child->nlink)
+					PANIC("tmpfs unmount link");
+				child->nlink--;
+				tmpfs_inode_maybe_destroy_locked(child);
+			}
+			free(entry);
+		}
+		inode->entries = 0;
+	}
+	inode->nlink = 0;
+	tmpfs_inode_maybe_destroy_locked(inode);
+}
+
+static void tmpfs_unmount(struct vfs_super_block *superblock)
+{
+	struct tmpfs_super *super = superblock->private;
+
+	if (!super)
+		return;
+	sleeplock_acquire(&super->lock);
+	tmpfs_destroy_tree_locked(super->root);
+	super->root = 0;
+	sleeplock_release(&super->lock);
+	free(super);
+	superblock->private = 0;
+}
+
 static const struct vfs_super_operations tmpfs_super_operations = {
 	.put_inode = tmpfs_put_inode,
 	.sync = tmpfs_sync,
+	.statfs = tmpfs_statfs,
+	.unmount = tmpfs_unmount,
 };
 
 static int tmpfs_getattr(struct vfs_inode *inode, struct vfs_stat *stat)
@@ -245,7 +340,8 @@ static int tmpfs_lookup(struct vfs_inode *directory, const char *name,
 }
 
 static int tmpfs_create(struct vfs_inode *directory, const char *name,
-			uint32 mode, struct vfs_inode **result)
+			uint32 mode, uint32 uid, uint32 gid,
+			struct vfs_inode **result)
 {
 	struct tmpfs_super *super = directory->superblock->private;
 	struct tmpfs_inode *parent = directory->private;
@@ -257,7 +353,8 @@ static int tmpfs_create(struct vfs_inode *directory, const char *name,
 		status = VFS_ERR_EXIST;
 		goto out;
 	}
-	node = tmpfs_inode_alloc_locked(super, VFS_INODE_REGULAR, mode);
+	node = tmpfs_inode_alloc_locked(super, VFS_INODE_REGULAR, mode,
+					uid, gid);
 	if (!node) {
 		status = VFS_ERR_NOMEM;
 		goto out;
@@ -281,13 +378,15 @@ static int tmpfs_create(struct vfs_inode *directory, const char *name,
 		goto out;
 	}
 	status = VFS_OK;
+	tmpfs_touch_locked(parent, VFS_TIME_MTIME | TMPFS_TIME_CTIME);
 out:
 	sleeplock_release(&super->lock);
 	return status;
 }
 
 static int tmpfs_mkdir(struct vfs_inode *directory, const char *name,
-		       uint32 mode, struct vfs_inode **result)
+		       uint32 mode, uint32 uid, uint32 gid,
+		       struct vfs_inode **result)
 {
 	struct tmpfs_super *super = directory->superblock->private;
 	struct tmpfs_inode *parent = directory->private;
@@ -299,7 +398,8 @@ static int tmpfs_mkdir(struct vfs_inode *directory, const char *name,
 		status = VFS_ERR_EXIST;
 		goto out;
 	}
-	node = tmpfs_inode_alloc_locked(super, VFS_INODE_DIRECTORY, mode);
+	node = tmpfs_inode_alloc_locked(super, VFS_INODE_DIRECTORY, mode,
+					uid, gid);
 	if (!node) {
 		status = VFS_ERR_NOMEM;
 		goto out;
@@ -326,6 +426,7 @@ static int tmpfs_mkdir(struct vfs_inode *directory, const char *name,
 		goto out;
 	}
 	status = VFS_OK;
+	tmpfs_touch_locked(parent, VFS_TIME_MTIME | TMPFS_TIME_CTIME);
 out:
 	sleeplock_release(&super->lock);
 	return status;
@@ -344,8 +445,11 @@ static int tmpfs_unlink(struct vfs_inode *directory, const char *name)
 		status = VFS_ERR_NOENT;
 	else if (entry->inode->type == VFS_INODE_DIRECTORY)
 		status = VFS_ERR_ISDIR;
-	else
+	else {
+		tmpfs_touch_locked(entry->inode, TMPFS_TIME_CTIME);
 		tmpfs_remove_entry_locked(parent, entry, previous);
+		tmpfs_touch_locked(parent, VFS_TIME_MTIME | TMPFS_TIME_CTIME);
+	}
 	sleeplock_release(&super->lock);
 	return status;
 }
@@ -365,8 +469,11 @@ static int tmpfs_rmdir(struct vfs_inode *directory, const char *name)
 		status = VFS_ERR_NOTDIR;
 	else if (entry->inode->entries)
 		status = VFS_ERR_NOTEMPTY;
-	else
+	else {
+		tmpfs_touch_locked(entry->inode, TMPFS_TIME_CTIME);
 		tmpfs_remove_entry_locked(parent, entry, previous);
+		tmpfs_touch_locked(parent, VFS_TIME_MTIME | TMPFS_TIME_CTIME);
+	}
 	sleeplock_release(&super->lock);
 	return status;
 }
@@ -383,14 +490,18 @@ static int tmpfs_link(struct vfs_inode *inode,
 		return VFS_ERR_PERM;
 	sleeplock_acquire(&super->lock);
 	status = tmpfs_add_entry_locked(parent, name, node);
-	if (status == VFS_OK)
+	if (status == VFS_OK) {
 		node->nlink++;
+		tmpfs_touch_locked(node, TMPFS_TIME_CTIME);
+		tmpfs_touch_locked(parent, VFS_TIME_MTIME | TMPFS_TIME_CTIME);
+	}
 	sleeplock_release(&super->lock);
 	return status;
 }
 
 static int tmpfs_symlink(struct vfs_inode *directory, const char *name,
-			 const char *target, struct vfs_inode **result)
+			 const char *target, uint32 uid, uint32 gid,
+			 struct vfs_inode **result)
 {
 	struct tmpfs_super *super = directory->superblock->private;
 	struct tmpfs_inode *parent = directory->private;
@@ -403,7 +514,8 @@ static int tmpfs_symlink(struct vfs_inode *directory, const char *name,
 		status = VFS_ERR_EXIST;
 		goto out;
 	}
-	node = tmpfs_inode_alloc_locked(super, VFS_INODE_SYMLINK, 0777);
+	node = tmpfs_inode_alloc_locked(super, VFS_INODE_SYMLINK, 0777,
+					uid, gid);
 	if (!node) {
 		status = VFS_ERR_NOMEM;
 		goto out;
@@ -435,6 +547,56 @@ static int tmpfs_symlink(struct vfs_inode *directory, const char *name,
 		goto out;
 	}
 	status = VFS_OK;
+	tmpfs_touch_locked(parent, VFS_TIME_MTIME | TMPFS_TIME_CTIME);
+out:
+	sleeplock_release(&super->lock);
+	return status;
+}
+
+static int tmpfs_mknod(struct vfs_inode *directory, const char *name,
+		       enum vfs_inode_type type, uint32 mode, uint32 uid,
+		       uint32 gid, uint64 device, struct vfs_inode **result)
+{
+	struct tmpfs_super *super = directory->superblock->private;
+	struct tmpfs_inode *parent = directory->private;
+	struct tmpfs_inode *node;
+	int status;
+
+	if (type != VFS_INODE_CHAR_DEVICE &&
+	    type != VFS_INODE_BLOCK_DEVICE && type != VFS_INODE_FIFO &&
+	    type != VFS_INODE_SOCKET)
+		return VFS_ERR_INVAL;
+	sleeplock_acquire(&super->lock);
+	if (tmpfs_find_entry_locked(parent, name, 0)) {
+		status = VFS_ERR_EXIST;
+		goto out;
+	}
+	node = tmpfs_inode_alloc_locked(super, type, mode, uid, gid);
+	if (!node) {
+		status = VFS_ERR_NOMEM;
+		goto out;
+	}
+	node->device = device;
+	status = tmpfs_add_entry_locked(parent, name, node);
+	if (status < 0) {
+		tmpfs_inode_destroy_locked(node);
+		goto out;
+	}
+	node->nlink = 1;
+	*result = tmpfs_wrap_locked(directory->superblock, node);
+	if (!*result) {
+		struct tmpfs_entry *entry =
+			tmpfs_find_entry_locked(parent, name, 0);
+
+		parent->entries = entry->next;
+		free(entry);
+		node->nlink = 0;
+		tmpfs_inode_destroy_locked(node);
+		status = VFS_ERR_NOMEM;
+		goto out;
+	}
+	status = VFS_OK;
+	tmpfs_touch_locked(parent, VFS_TIME_MTIME | TMPFS_TIME_CTIME);
 out:
 	sleeplock_release(&super->lock);
 	return status;
@@ -450,6 +612,7 @@ static int tmpfs_readlink(struct vfs_inode *inode, char *buffer,
 	sleeplock_acquire(&super->lock);
 	length = node->size > size ? size : node->size;
 	memmove(buffer, node->target, length);
+	tmpfs_touch_locked(node, VFS_TIME_ATIME);
 	sleeplock_release(&super->lock);
 	return length;
 }
@@ -520,6 +683,7 @@ static int tmpfs_truncate(struct vfs_inode *inode, uint64 size)
 		}
 	}
 	node->size = size;
+	tmpfs_touch_locked(node, VFS_TIME_MTIME | TMPFS_TIME_CTIME);
 	tmpfs_refresh_locked(inode);
 	sleeplock_release(&super->lock);
 	return VFS_OK;
@@ -580,6 +744,7 @@ static int tmpfs_rename(struct vfs_inode *old_directory,
 		}
 	}
 	if (new_entry) {
+		tmpfs_touch_locked(new_entry->inode, TMPFS_TIME_CTIME);
 		tmpfs_remove_entry_locked(new_parent, new_entry, new_previous);
 		old_entry = tmpfs_find_entry_locked(old_parent, old_name,
 		                                      &old_previous);
@@ -595,9 +760,50 @@ static int tmpfs_rename(struct vfs_inode *old_directory,
 		new_parent->nlink++;
 		source->parent = new_parent;
 	}
+	tmpfs_touch_locked(source, TMPFS_TIME_CTIME);
+	tmpfs_touch_locked(old_parent, VFS_TIME_MTIME | TMPFS_TIME_CTIME);
+	if (new_parent != old_parent)
+		tmpfs_touch_locked(new_parent,
+				   VFS_TIME_MTIME | TMPFS_TIME_CTIME);
 out:
 	sleeplock_release(&super->lock);
 	return status;
+}
+
+static int tmpfs_set_times(struct vfs_inode *inode,
+			   const struct vfs_timespec times[2], uint32 mask)
+{
+	struct tmpfs_super *super = inode->superblock->private;
+	struct tmpfs_inode *node = inode->private;
+
+	sleeplock_acquire(&super->lock);
+	if (mask & VFS_TIME_ATIME)
+		node->atime = times[0];
+	if (mask & VFS_TIME_MTIME)
+		node->mtime = times[1];
+	tmpfs_touch_locked(node, TMPFS_TIME_CTIME);
+	tmpfs_refresh_locked(inode);
+	sleeplock_release(&super->lock);
+	return VFS_OK;
+}
+
+static int tmpfs_setattr(struct vfs_inode *inode,
+			 const struct vfs_iattr *attributes)
+{
+	struct tmpfs_super *super = inode->superblock->private;
+	struct tmpfs_inode *node = inode->private;
+
+	sleeplock_acquire(&super->lock);
+	if (attributes->mask & VFS_ATTR_MODE)
+		node->mode = attributes->mode & VFS_MODE_PERMISSIONS;
+	if (attributes->mask & VFS_ATTR_UID)
+		node->uid = attributes->uid;
+	if (attributes->mask & VFS_ATTR_GID)
+		node->gid = attributes->gid;
+	tmpfs_touch_locked(node, TMPFS_TIME_CTIME);
+	tmpfs_refresh_locked(inode);
+	sleeplock_release(&super->lock);
+	return VFS_OK;
 }
 
 static const struct vfs_inode_operations tmpfs_inode_operations = {
@@ -609,8 +815,11 @@ static const struct vfs_inode_operations tmpfs_inode_operations = {
 	.rename = tmpfs_rename,
 	.link = tmpfs_link,
 	.symlink = tmpfs_symlink,
+	.mknod = tmpfs_mknod,
 	.readlink = tmpfs_readlink,
 	.truncate = tmpfs_truncate,
+	.setattr = tmpfs_setattr,
+	.set_times = tmpfs_set_times,
 	.getattr = tmpfs_getattr,
 };
 
@@ -648,6 +857,8 @@ static int64 tmpfs_read(struct vfs_file *file, int user_destination,
 		total += chunk;
 	}
 out:
+	if (total >= 0 && count)
+		tmpfs_touch_locked(inode, VFS_TIME_ATIME);
 	sleeplock_release(&super->lock);
 	return total;
 }
@@ -683,9 +894,42 @@ static int64 tmpfs_write(struct vfs_file *file, int user_source,
 	}
 	if (*position > inode->size)
 		inode->size = *position;
+	if (total)
+		tmpfs_touch_locked(inode,
+				   VFS_TIME_MTIME | TMPFS_TIME_CTIME);
 	tmpfs_refresh_locked(file->path.dentry->inode);
 	sleeplock_release(&super->lock);
 	return total ? total : count ? error : 0;
+}
+
+static int tmpfs_fallocate(struct vfs_file *file, uint64 offset,
+			   uint64 length)
+{
+	struct tmpfs_super *super =
+		file->path.dentry->inode->superblock->private;
+	struct tmpfs_inode *inode = file->path.dentry->inode->private;
+	uint64 end = offset + length, first, last, index;
+	int result = VFS_OK;
+
+	if (!length)
+		return VFS_OK;
+	first = offset / PGSIZE;
+	last = (end - 1) / PGSIZE;
+	sleeplock_acquire(&super->lock);
+	for (index = first; index <= last; index++) {
+		if (!tmpfs_get_page_locked(inode, index)) {
+			result = VFS_ERR_NOSPC;
+			break;
+		}
+	}
+	if (result == VFS_OK && end > inode->size)
+		inode->size = end;
+	if (result == VFS_OK)
+		tmpfs_touch_locked(inode,
+				   VFS_TIME_MTIME | TMPFS_TIME_CTIME);
+	tmpfs_refresh_locked(file->path.dentry->inode);
+	sleeplock_release(&super->lock);
+	return result;
 }
 
 static int tmpfs_file_sync(struct vfs_file *file)
@@ -699,6 +943,7 @@ static const struct vfs_file_operations tmpfs_file_operations = {
 	.read = tmpfs_read,
 	.write = tmpfs_write,
 	.fsync = tmpfs_file_sync,
+	.fallocate = tmpfs_fallocate,
 };
 
 static uint8 tmpfs_dirent_type(enum vfs_inode_type type)
@@ -710,6 +955,14 @@ static uint8 tmpfs_dirent_type(enum vfs_inode_type type)
 		return VFS_DT_REGULAR;
 	case VFS_INODE_SYMLINK:
 		return VFS_DT_SYMLINK;
+	case VFS_INODE_CHAR_DEVICE:
+		return VFS_DT_CHAR;
+	case VFS_INODE_BLOCK_DEVICE:
+		return VFS_DT_BLOCK;
+	case VFS_INODE_FIFO:
+		return VFS_DT_FIFO;
+	case VFS_INODE_SOCKET:
+		return VFS_DT_SOCKET;
 	default:
 		return VFS_DT_UNKNOWN;
 	}
@@ -745,6 +998,7 @@ static int tmpfs_readdir(struct vfs_file *file,
 		             sizeof(result->name));
 	}
 	result->next_offset = ++file->position;
+	tmpfs_touch_locked(directory, VFS_TIME_ATIME);
 	sleeplock_release(&super->lock);
 	return 1;
 }
@@ -771,7 +1025,8 @@ static int tmpfs_mount(struct vfs_filesystem_type *type,
 	sleeplock_init(&super->lock, "tmpfs");
 	super->next_inode = 1;
 	super->root = tmpfs_inode_alloc_locked(super,
-	                                       VFS_INODE_DIRECTORY, 01777);
+					       VFS_INODE_DIRECTORY, 01777,
+					       0, 0);
 	if (!super->root) {
 		free(super);
 		return VFS_ERR_NOMEM;

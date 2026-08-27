@@ -1,11 +1,167 @@
 #include <debug.h>
 #include <linux_uapi.h>
 #include <mystring.h>
+#include <palloc.h>
 #include <printk.h>
 #include <scheduler.h>
 #include <signal.h>
 #include <syscall.h>
+#include <vfs.h>
 #include <vm.h>
+
+int64 linux_error(int result)
+{
+	switch (result) {
+	case VFS_ERR_PERM:
+		return -LINUX_EPERM;
+	case VFS_ERR_NOENT:
+		return -LINUX_ENOENT;
+	case VFS_ERR_BADF:
+		return -LINUX_EBADF;
+	case VFS_ERR_EXIST:
+		return -LINUX_EEXIST;
+	case VFS_ERR_NOTDIR:
+		return -LINUX_ENOTDIR;
+	case VFS_ERR_ISDIR:
+		return -LINUX_EISDIR;
+	case VFS_ERR_INVAL:
+		return -LINUX_EINVAL;
+	case VFS_ERR_MFILE:
+		return -LINUX_EMFILE;
+	case VFS_ERR_NOSPC:
+		return -LINUX_ENOSPC;
+	case VFS_ERR_NOTEMPTY:
+		return -LINUX_ENOTEMPTY;
+	case VFS_ERR_NODEV:
+		return -LINUX_ENODEV;
+	case VFS_ERR_NOMEM:
+		return -LINUX_ENOMEM;
+	case VFS_ERR_NOTSUPP:
+		return -LINUX_EOPNOTSUPP;
+	case VFS_ERR_NAMETOOLONG:
+		return -LINUX_ENAMETOOLONG;
+	case VFS_ERR_BUSY:
+		return -LINUX_EBUSY;
+	case VFS_ERR_TXTBSY:
+		return -LINUX_ETXTBSY;
+	case VFS_ERR_LOOP:
+		return -LINUX_ELOOP;
+	case VFS_ERR_XDEV:
+		return -LINUX_EXDEV;
+	case VFS_ERR_MLINK:
+		return -LINUX_EMLINK;
+	case VFS_ERR_NOTTY:
+		return -LINUX_ENOTTY;
+	case VFS_ERR_NXIO:
+		return -LINUX_ENXIO;
+	case VFS_ERR_FAULT:
+		return -LINUX_EFAULT;
+	case VFS_ERR_IO:
+		return -LINUX_EIO;
+	case VFS_ERR_SPIPE:
+		return -LINUX_ESPIPE;
+	case VFS_ERR_AGAIN:
+		return -LINUX_EAGAIN;
+	case VFS_ERR_NOTSOCK:
+		return -LINUX_ENOTSOCK;
+	case VFS_ERR_DESTADDRREQ:
+		return -LINUX_EDESTADDRREQ;
+	case VFS_ERR_MSGSIZE:
+		return -LINUX_EMSGSIZE;
+	case VFS_ERR_PROTOTYPE:
+		return -LINUX_EPROTOTYPE;
+	case VFS_ERR_NOPROTOOPT:
+		return -LINUX_ENOPROTOOPT;
+	case VFS_ERR_PROTONOSUPPORT:
+		return -LINUX_EPROTONOSUPPORT;
+	case VFS_ERR_SOCKTNOSUPPORT:
+		return -LINUX_ESOCKTNOSUPPORT;
+	case VFS_ERR_AFNOSUPPORT:
+		return -LINUX_EAFNOSUPPORT;
+	case VFS_ERR_ADDRINUSE:
+		return -LINUX_EADDRINUSE;
+	case VFS_ERR_ADDRNOTAVAIL:
+		return -LINUX_EADDRNOTAVAIL;
+	case VFS_ERR_NETDOWN:
+		return -LINUX_ENETDOWN;
+	case VFS_ERR_NETUNREACH:
+		return -LINUX_ENETUNREACH;
+	case VFS_ERR_CONNABORTED:
+		return -LINUX_ECONNABORTED;
+	case VFS_ERR_CONNRESET:
+		return -LINUX_ECONNRESET;
+	case VFS_ERR_NOBUFS:
+		return -LINUX_ENOBUFS;
+	case VFS_ERR_ISCONN:
+		return -LINUX_EISCONN;
+	case VFS_ERR_NOTCONN:
+		return -LINUX_ENOTCONN;
+	case VFS_ERR_SHUTDOWN:
+		return -LINUX_ESHUTDOWN;
+	case VFS_ERR_TIMEDOUT:
+		return -LINUX_ETIMEDOUT;
+	case VFS_ERR_CONNREFUSED:
+		return -LINUX_ECONNREFUSED;
+	case VFS_ERR_HOSTUNREACH:
+		return -LINUX_EHOSTUNREACH;
+	case VFS_ERR_ALREADY:
+		return -LINUX_EALREADY;
+	case VFS_ERR_INPROGRESS:
+		return -LINUX_EINPROGRESS;
+	case VFS_ERR_PIPE:
+		return -LINUX_EPIPE;
+	case VFS_ERR_INTR:
+		return -LINUX_EINTR;
+	case VFS_ERR_OVERFLOW:
+		return -LINUX_EOVERFLOW;
+	case VFS_ERR_ACCES:
+		return -LINUX_EACCES;
+	default:
+		return -LINUX_EIO;
+	}
+}
+
+int copy_user_iov(uint64 address, int count, struct vfs_iovec **result,
+		  unsigned int *order)
+{
+	struct linux_iovec linux_iov;
+	struct vfs_iovec *iovecs;
+	uint64 bytes, capacity = PGSIZE, total = 0;
+	int i;
+
+	*result = 0;
+	*order = 0;
+	if (count < 0 || count > LINUX_IOV_MAX)
+		return -LINUX_EINVAL;
+	if (!count)
+		return 0;
+	bytes = count * sizeof(*iovecs);
+	while (capacity < bytes) {
+		capacity <<= 1;
+		(*order)++;
+	}
+	iovecs = alloc_pages(*order, 0);
+	if (!iovecs)
+		return -LINUX_ENOMEM;
+
+	for (i = 0; i < count; i++) {
+		if (copyin(cur_proc()->pagetable, (char *)&linux_iov,
+		           address + i * sizeof(linux_iov),
+		           sizeof(linux_iov)) < 0) {
+			free_pages(iovecs, *order);
+			return -LINUX_EFAULT;
+		}
+		if (linux_iov.len > 0x7fffffff - total) {
+			free_pages(iovecs, *order);
+			return -LINUX_EINVAL;
+		}
+		iovecs[i].base = linux_iov.base;
+		iovecs[i].length = linux_iov.len;
+		total += linux_iov.len;
+	}
+	*result = iovecs;
+	return 0;
+}
 
 static uint64 argraw(int n)
 {
@@ -80,6 +236,8 @@ extern uint64 sys_linux_getuid(void);
 extern uint64 sys_linux_fdatasync(void);
 extern uint64 sys_linux_fsync(void);
 extern uint64 sys_linux_ioctl(void);
+extern uint64 sys_linux_mknodat(void);
+extern uint64 sys_linux_mount(void);
 extern uint64 sys_linux_linkat(void);
 extern uint64 sys_linux_lseek(void);
 extern uint64 sys_linux_mkdirat(void);
@@ -90,14 +248,31 @@ extern uint64 sys_linux_membarrier(void);
 extern uint64 sys_linux_munmap(void);
 extern uint64 sys_linux_newfstatat(void);
 extern uint64 sys_linux_openat(void);
+extern uint64 sys_linux_pipe2(void);
 extern uint64 sys_linux_prctl(void);
 extern uint64 sys_linux_pread64(void);
+extern uint64 sys_linux_preadv(void);
+extern uint64 sys_linux_preadv2(void);
+extern uint64 sys_linux_pwrite64(void);
+extern uint64 sys_linux_pwritev(void);
+extern uint64 sys_linux_pwritev2(void);
 extern uint64 sys_linux_read(void);
+extern uint64 sys_linux_readv(void);
 extern uint64 sys_linux_readlinkat(void);
 extern uint64 sys_linux_renameat2(void);
+extern uint64 sys_linux_sendfile(void);
 extern uint64 sys_linux_set_tid_address(void);
 extern uint64 sys_linux_clone(void);
 extern uint64 sys_linux_clock_gettime(void);
+extern uint64 sys_linux_clock_getres(void);
+extern uint64 sys_linux_clock_nanosleep(void);
+extern uint64 sys_linux_nanosleep(void);
+extern uint64 sys_linux_getitimer(void);
+extern uint64 sys_linux_setitimer(void);
+extern uint64 sys_linux_sched_getaffinity(void);
+extern uint64 sys_linux_uname(void);
+extern uint64 sys_linux_sysinfo(void);
+extern uint64 sys_linux_gettimeofday(void);
 extern uint64 sys_linux_kill(void);
 extern uint64 sys_linux_tkill(void);
 extern uint64 sys_linux_tgkill(void);
@@ -110,12 +285,29 @@ extern uint64 sys_linux_rt_sigtimedwait(void);
 extern uint64 sys_linux_rt_sigreturn(void);
 extern uint64 sys_linux_setpriority(void);
 extern uint64 sys_linux_getpriority(void);
+extern uint64 sys_linux_setregid(void);
+extern uint64 sys_linux_setgid(void);
+extern uint64 sys_linux_setreuid(void);
+extern uint64 sys_linux_setuid(void);
+extern uint64 sys_linux_setresuid(void);
+extern uint64 sys_linux_getresuid(void);
+extern uint64 sys_linux_setresgid(void);
+extern uint64 sys_linux_getresgid(void);
+extern uint64 sys_linux_setfsuid(void);
+extern uint64 sys_linux_setfsgid(void);
+extern uint64 sys_linux_setpgid(void);
+extern uint64 sys_linux_getpgid(void);
+extern uint64 sys_linux_getsid(void);
+extern uint64 sys_linux_setsid(void);
+extern uint64 sys_linux_getgroups(void);
+extern uint64 sys_linux_setgroups(void);
 extern uint64 sys_linux_getrandom(void);
 extern uint64 sys_linux_symlinkat(void);
 extern uint64 sys_linux_sync(void);
 extern uint64 sys_linux_umask(void);
 extern uint64 sys_linux_unlinkat(void);
 extern uint64 sys_linux_utimensat(void);
+extern uint64 sys_linux_umount2(void);
 extern uint64 sys_linux_write(void);
 extern uint64 sys_linux_writev(void);
 extern uint64 sys_linux_wait4(void);
@@ -138,30 +330,55 @@ extern uint64 sys_linux_recvmsg(void);
 extern uint64 sys_linux_accept4(void);
 extern uint64 sys_linux_riscv_flush_icache(void);
 extern uint64 sys_linux_ftruncate(void);
+extern uint64 sys_linux_truncate(void);
+extern uint64 sys_linux_fallocate(void);
+extern uint64 sys_linux_statfs(void);
+extern uint64 sys_linux_fstatfs(void);
+extern uint64 sys_linux_fchmodat(void);
+extern uint64 sys_linux_fchmod(void);
+extern uint64 sys_linux_fchownat(void);
+extern uint64 sys_linux_fchown(void);
 
 typedef uint64 (*syscall_t)(void);
 
-static syscall_t linux_syscalls[LINUX_SYS_membarrier + 1] = {
+static syscall_t linux_syscalls[LINUX_SYS_pwritev2 + 1] = {
 	[LINUX_SYS_getcwd] = sys_linux_getcwd,
 	[LINUX_SYS_dup] = sys_linux_dup,
 	[LINUX_SYS_dup3] = sys_linux_dup3,
 	[LINUX_SYS_fcntl] = sys_linux_fcntl,
 	[LINUX_SYS_ioctl] = sys_linux_ioctl,
+	[LINUX_SYS_mknodat] = sys_linux_mknodat,
 	[LINUX_SYS_mkdirat] = sys_linux_mkdirat,
 	[LINUX_SYS_unlinkat] = sys_linux_unlinkat,
 	[LINUX_SYS_symlinkat] = sys_linux_symlinkat,
 	[LINUX_SYS_linkat] = sys_linux_linkat,
+	[LINUX_SYS_umount2] = sys_linux_umount2,
+	[LINUX_SYS_mount] = sys_linux_mount,
+	[LINUX_SYS_truncate] = sys_linux_truncate,
 	[LINUX_SYS_ftruncate] = sys_linux_ftruncate,
+	[LINUX_SYS_fallocate] = sys_linux_fallocate,
+	[LINUX_SYS_statfs] = sys_linux_statfs,
+	[LINUX_SYS_fstatfs] = sys_linux_fstatfs,
+	[LINUX_SYS_fchmod] = sys_linux_fchmod,
+	[LINUX_SYS_fchmodat] = sys_linux_fchmodat,
+	[LINUX_SYS_fchownat] = sys_linux_fchownat,
+	[LINUX_SYS_fchown] = sys_linux_fchown,
 	[LINUX_SYS_faccessat] = sys_linux_faccessat,
 	[LINUX_SYS_chdir] = sys_linux_chdir,
 	[LINUX_SYS_openat] = sys_linux_openat,
 	[LINUX_SYS_close] = sys_linux_close,
+	[LINUX_SYS_pipe2] = sys_linux_pipe2,
 	[LINUX_SYS_getdents64] = sys_linux_getdents64,
 	[LINUX_SYS_lseek] = sys_linux_lseek,
 	[LINUX_SYS_read] = sys_linux_read,
 	[LINUX_SYS_write] = sys_linux_write,
+	[LINUX_SYS_readv] = sys_linux_readv,
 	[LINUX_SYS_writev] = sys_linux_writev,
 	[LINUX_SYS_pread64] = sys_linux_pread64,
+	[LINUX_SYS_pwrite64] = sys_linux_pwrite64,
+	[LINUX_SYS_preadv] = sys_linux_preadv,
+	[LINUX_SYS_pwritev] = sys_linux_pwritev,
+	[LINUX_SYS_sendfile] = sys_linux_sendfile,
 	[LINUX_SYS_ppoll] = sys_linux_ppoll,
 	[LINUX_SYS_readlinkat] = sys_linux_readlinkat,
 	[LINUX_SYS_newfstatat] = sys_linux_newfstatat,
@@ -175,8 +392,14 @@ static syscall_t linux_syscalls[LINUX_SYS_membarrier + 1] = {
 	[LINUX_SYS_futex] = sys_linux_futex,
 	[LINUX_SYS_set_robust_list] = sys_linux_set_robust_list,
 	[LINUX_SYS_get_robust_list] = sys_linux_get_robust_list,
+	[LINUX_SYS_nanosleep] = sys_linux_nanosleep,
+	[LINUX_SYS_getitimer] = sys_linux_getitimer,
+	[LINUX_SYS_setitimer] = sys_linux_setitimer,
 	[LINUX_SYS_set_tid_address] = sys_linux_set_tid_address,
 	[LINUX_SYS_clock_gettime] = sys_linux_clock_gettime,
+	[LINUX_SYS_clock_getres] = sys_linux_clock_getres,
+	[LINUX_SYS_clock_nanosleep] = sys_linux_clock_nanosleep,
+	[LINUX_SYS_sched_getaffinity] = sys_linux_sched_getaffinity,
 	[LINUX_SYS_kill] = sys_linux_kill,
 	[LINUX_SYS_tkill] = sys_linux_tkill,
 	[LINUX_SYS_tgkill] = sys_linux_tgkill,
@@ -189,8 +412,26 @@ static syscall_t linux_syscalls[LINUX_SYS_membarrier + 1] = {
 	[LINUX_SYS_rt_sigreturn] = sys_linux_rt_sigreturn,
 	[LINUX_SYS_setpriority] = sys_linux_setpriority,
 	[LINUX_SYS_getpriority] = sys_linux_getpriority,
+	[LINUX_SYS_setregid] = sys_linux_setregid,
+	[LINUX_SYS_setgid] = sys_linux_setgid,
+	[LINUX_SYS_setreuid] = sys_linux_setreuid,
+	[LINUX_SYS_setuid] = sys_linux_setuid,
+	[LINUX_SYS_setresuid] = sys_linux_setresuid,
+	[LINUX_SYS_getresuid] = sys_linux_getresuid,
+	[LINUX_SYS_setresgid] = sys_linux_setresgid,
+	[LINUX_SYS_getresgid] = sys_linux_getresgid,
+	[LINUX_SYS_setfsuid] = sys_linux_setfsuid,
+	[LINUX_SYS_setfsgid] = sys_linux_setfsgid,
+	[LINUX_SYS_setpgid] = sys_linux_setpgid,
+	[LINUX_SYS_getpgid] = sys_linux_getpgid,
+	[LINUX_SYS_getsid] = sys_linux_getsid,
+	[LINUX_SYS_setsid] = sys_linux_setsid,
+	[LINUX_SYS_getgroups] = sys_linux_getgroups,
+	[LINUX_SYS_setgroups] = sys_linux_setgroups,
+	[LINUX_SYS_uname] = sys_linux_uname,
 	[LINUX_SYS_umask] = sys_linux_umask,
 	[LINUX_SYS_prctl] = sys_linux_prctl,
+	[LINUX_SYS_gettimeofday] = sys_linux_gettimeofday,
 	[LINUX_SYS_getpid] = sys_linux_getpid,
 	[LINUX_SYS_getppid] = sys_linux_getppid,
 	[LINUX_SYS_getuid] = sys_linux_getuid,
@@ -198,6 +439,7 @@ static syscall_t linux_syscalls[LINUX_SYS_membarrier + 1] = {
 	[LINUX_SYS_getgid] = sys_linux_getgid,
 	[LINUX_SYS_getegid] = sys_linux_getegid,
 	[LINUX_SYS_gettid] = sys_linux_gettid,
+	[LINUX_SYS_sysinfo] = sys_linux_sysinfo,
 	[LINUX_SYS_socket] = sys_linux_socket,
 	[LINUX_SYS_socketpair] = sys_linux_socketpair,
 	[LINUX_SYS_bind] = sys_linux_bind,
@@ -226,6 +468,8 @@ static syscall_t linux_syscalls[LINUX_SYS_membarrier + 1] = {
 	[LINUX_SYS_renameat2] = sys_linux_renameat2,
 	[LINUX_SYS_getrandom] = sys_linux_getrandom,
 	[LINUX_SYS_membarrier] = sys_linux_membarrier,
+	[LINUX_SYS_preadv2] = sys_linux_preadv2,
+	[LINUX_SYS_pwritev2] = sys_linux_pwritev2,
 };
 
 void syscall(void)

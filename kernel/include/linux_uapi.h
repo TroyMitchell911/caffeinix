@@ -9,13 +9,24 @@
 #define LINUX_SYS_dup3               24
 #define LINUX_SYS_fcntl              25
 #define LINUX_SYS_ioctl              29
+#define LINUX_SYS_mknodat            33
 #define LINUX_SYS_mkdirat            34
 #define LINUX_SYS_unlinkat           35
 #define LINUX_SYS_symlinkat          36
 #define LINUX_SYS_linkat             37
+#define LINUX_SYS_umount2            39
+#define LINUX_SYS_mount              40
+#define LINUX_SYS_statfs             43
+#define LINUX_SYS_fstatfs            44
+#define LINUX_SYS_truncate           45
 #define LINUX_SYS_ftruncate          46
+#define LINUX_SYS_fallocate          47
 #define LINUX_SYS_faccessat          48
 #define LINUX_SYS_chdir              49
+#define LINUX_SYS_fchmod             52
+#define LINUX_SYS_fchmodat           53
+#define LINUX_SYS_fchownat           54
+#define LINUX_SYS_fchown             55
 #define LINUX_SYS_openat             56
 #define LINUX_SYS_close              57
 #define LINUX_SYS_pipe2              59
@@ -23,8 +34,13 @@
 #define LINUX_SYS_lseek              62
 #define LINUX_SYS_read               63
 #define LINUX_SYS_write              64
+#define LINUX_SYS_readv              65
 #define LINUX_SYS_writev             66
 #define LINUX_SYS_pread64            67
+#define LINUX_SYS_pwrite64           68
+#define LINUX_SYS_preadv             69
+#define LINUX_SYS_pwritev            70
+#define LINUX_SYS_sendfile           71
 #define LINUX_SYS_ppoll              73
 #define LINUX_SYS_readlinkat         78
 #define LINUX_SYS_newfstatat         79
@@ -39,7 +55,13 @@
 #define LINUX_SYS_futex              98
 #define LINUX_SYS_set_robust_list    99
 #define LINUX_SYS_get_robust_list   100
+#define LINUX_SYS_nanosleep         101
+#define LINUX_SYS_getitimer         102
+#define LINUX_SYS_setitimer         103
 #define LINUX_SYS_clock_gettime     113
+#define LINUX_SYS_clock_getres      114
+#define LINUX_SYS_clock_nanosleep   115
+#define LINUX_SYS_sched_getaffinity 123
 #define LINUX_SYS_kill              129
 #define LINUX_SYS_tkill             130
 #define LINUX_SYS_tgkill            131
@@ -52,8 +74,26 @@
 #define LINUX_SYS_rt_sigreturn      139
 #define LINUX_SYS_setpriority       140
 #define LINUX_SYS_getpriority       141
+#define LINUX_SYS_setregid          143
+#define LINUX_SYS_setgid            144
+#define LINUX_SYS_setreuid          145
+#define LINUX_SYS_setuid            146
+#define LINUX_SYS_setresuid         147
+#define LINUX_SYS_getresuid         148
+#define LINUX_SYS_setresgid         149
+#define LINUX_SYS_getresgid         150
+#define LINUX_SYS_setfsuid          151
+#define LINUX_SYS_setfsgid          152
+#define LINUX_SYS_setpgid           154
+#define LINUX_SYS_getpgid           155
+#define LINUX_SYS_getsid            156
+#define LINUX_SYS_setsid            157
+#define LINUX_SYS_getgroups         158
+#define LINUX_SYS_setgroups         159
+#define LINUX_SYS_uname             160
 #define LINUX_SYS_umask             166
 #define LINUX_SYS_prctl             167
+#define LINUX_SYS_gettimeofday     169
 #define LINUX_SYS_getpid            172
 #define LINUX_SYS_getppid           173
 #define LINUX_SYS_getuid            174
@@ -61,6 +101,7 @@
 #define LINUX_SYS_getgid            176
 #define LINUX_SYS_getegid           177
 #define LINUX_SYS_gettid            178
+#define LINUX_SYS_sysinfo           179
 #define LINUX_SYS_socket            198
 #define LINUX_SYS_socketpair        199
 #define LINUX_SYS_bind              200
@@ -89,10 +130,17 @@
 #define LINUX_SYS_renameat2         276
 #define LINUX_SYS_getrandom         278
 #define LINUX_SYS_membarrier        283
+#define LINUX_SYS_preadv2           286
+#define LINUX_SYS_pwritev2          287
 
 #define LINUX_SYS_RISCV_FLUSH_ICACHE_LOCAL 1UL
 #define LINUX_SYS_RISCV_FLUSH_ICACHE_ALL \
 	LINUX_SYS_RISCV_FLUSH_ICACHE_LOCAL
+
+#define LINUX_F_OK                    0
+#define LINUX_X_OK                    1
+#define LINUX_W_OK                    2
+#define LINUX_R_OK                    4
 
 #define LINUX_EPERM                   1
 #define LINUX_ENOENT                  2
@@ -118,6 +166,7 @@
 #define LINUX_ENFILE                 23
 #define LINUX_EMFILE                 24
 #define LINUX_ENOTTY                 25
+#define LINUX_ETXTBSY                26
 #define LINUX_EFBIG                  27
 #define LINUX_ENOSPC                 28
 #define LINUX_ESPIPE                 29
@@ -156,7 +205,8 @@
 #define LINUX_EALREADY              114
 #define LINUX_EINPROGRESS           115
 
-#define LINUX_IOV_MAX               16
+#define LINUX_IOV_MAX             1024
+#define LINUX_RWF_NOAPPEND         0x20
 
 struct linux_iovec {
 	uint64 base;
@@ -171,6 +221,81 @@ struct linux_timespec {
 struct linux_timeval {
 	int64 seconds;
 	int64 microseconds;
+};
+
+struct linux_rusage {
+	struct linux_timeval user_time;
+	struct linux_timeval system_time;
+	int64 max_resident_set;
+	int64 shared_memory_size;
+	int64 unshared_data_size;
+	int64 unshared_stack_size;
+	int64 minor_faults;
+	int64 major_faults;
+	int64 swaps;
+	int64 block_inputs;
+	int64 block_outputs;
+	int64 messages_sent;
+	int64 messages_received;
+	int64 signals;
+	int64 voluntary_context_switches;
+	int64 involuntary_context_switches;
+};
+
+struct linux_timezone {
+	int32 minutes_west;
+	int32 dst_time;
+};
+
+struct linux_itimerval {
+	struct linux_timeval interval;
+	struct linux_timeval value;
+};
+
+#define LINUX_UTS_LEN 65
+
+struct linux_utsname {
+	char sysname[LINUX_UTS_LEN];
+	char nodename[LINUX_UTS_LEN];
+	char release[LINUX_UTS_LEN];
+	char version[LINUX_UTS_LEN];
+	char machine[LINUX_UTS_LEN];
+	char domainname[LINUX_UTS_LEN];
+};
+
+struct linux_sysinfo {
+	int64 uptime;
+	uint64 loads[3];
+	uint64 totalram;
+	uint64 freeram;
+	uint64 sharedram;
+	uint64 bufferram;
+	uint64 totalswap;
+	uint64 freeswap;
+	uint16 procs;
+	uint16 pad;
+	uint32 alignment;
+	uint64 totalhigh;
+	uint64 freehigh;
+	uint32 mem_unit;
+	uint32 reserved;
+};
+
+#define LINUX_SI_LOAD_SHIFT 16
+
+struct linux_statfs {
+	int64 type;
+	int64 block_size;
+	uint64 blocks;
+	uint64 blocks_free;
+	uint64 blocks_available;
+	uint64 files;
+	uint64 files_free;
+	int32 fsid[2];
+	int64 name_length;
+	int64 fragment_size;
+	int64 flags;
+	int64 spare[4];
 };
 
 struct linux_pollfd {
@@ -189,6 +314,24 @@ struct linux_sockaddr_in {
 	uint16 port;
 	uint32 address;
 	uint8 zero[8];
+};
+
+#define LINUX_IFNAMSIZ 16
+
+struct linux_ifreq {
+	char name[LINUX_IFNAMSIZ];
+	union {
+		struct linux_sockaddr address;
+		int16 flags;
+		int32 value;
+		uint8 padding[24];
+	} data;
+};
+
+struct linux_ifconf {
+	int32 length;
+	uint32 padding;
+	uint64 buffer;
 };
 
 struct linux_msghdr {
@@ -214,6 +357,9 @@ struct linux_linger {
 #define LINUX_AT_SYMLINK_FOLLOW    0x400
 #define LINUX_AT_EMPTY_PATH       0x1000
 
+#define LINUX_UTIME_NOW      1073741823L
+#define LINUX_UTIME_OMIT     1073741822L
+
 #define LINUX_RENAME_NOREPLACE       0x1
 
 #define LINUX_O_ACCMODE          00000003
@@ -222,12 +368,15 @@ struct linux_linger {
 #define LINUX_O_RDWR            00000002
 #define LINUX_O_CREAT           00000100
 #define LINUX_O_EXCL            00000200
+#define LINUX_O_NOCTTY          00000400
 #define LINUX_O_TRUNC           00001000
 #define LINUX_O_APPEND          00002000
 #define LINUX_O_NONBLOCK        00004000
 #define LINUX_O_LARGEFILE       00100000
 #define LINUX_O_DIRECTORY       00200000
 #define LINUX_O_CLOEXEC         02000000
+
+#define LINUX_MOUNT_SILENT         0x8000
 
 #define LINUX_AF_UNSPEC                  0
 #define LINUX_AF_INET                    2
@@ -280,6 +429,28 @@ struct linux_linger {
 #define LINUX_FIONREAD              0x541b
 #define LINUX_FIONBIO               0x5421
 
+#define LINUX_SIOCGIFNAME           0x8910
+#define LINUX_SIOCGIFCONF           0x8912
+#define LINUX_SIOCGIFFLAGS          0x8913
+#define LINUX_SIOCGIFADDR           0x8915
+#define LINUX_SIOCGIFBRDADDR        0x8919
+#define LINUX_SIOCGIFNETMASK        0x891b
+#define LINUX_SIOCGIFMETRIC         0x891d
+#define LINUX_SIOCGIFMTU            0x8921
+#define LINUX_SIOCGIFHWADDR         0x8927
+#define LINUX_SIOCGIFINDEX          0x8933
+
+#define LINUX_IFF_UP                0x0001
+#define LINUX_IFF_BROADCAST         0x0002
+#define LINUX_IFF_LOOPBACK          0x0008
+#define LINUX_IFF_RUNNING           0x0040
+
+#define LINUX_ARPHRD_ETHER               1
+#define LINUX_ARPHRD_LOOPBACK          772
+
+#define LINUX_BLKSSZGET             0x1268
+#define LINUX_BLKGETSIZE64      0x80081272
+
 #define LINUX_F_DUPFD                  0
 #define LINUX_F_GETFD                  1
 #define LINUX_F_SETFD                  2
@@ -319,21 +490,29 @@ struct linux_linger {
 #define LINUX_TCSETS              0x5402
 #define LINUX_TCSETSW             0x5403
 #define LINUX_TCSETSF             0x5404
+#define LINUX_TIOCGPGRP           0x540f
+#define LINUX_TIOCSPGRP           0x5410
 #define LINUX_TIOCGWINSZ          0x5413
+#define LINUX_TIOCGSID            0x5429
 
 #define LINUX_ICRNL                0x100
 #define LINUX_B38400                 0xf
 #define LINUX_CS8                   0x30
 #define LINUX_CREAD                 0x80
 #define LINUX_CLOCAL               0x800
+#define LINUX_ISIG                   0x1
 #define LINUX_ICANON                 0x2
 #define LINUX_ECHO                   0x8
 #define LINUX_ECHOE                 0x10
 #define LINUX_ECHOK                 0x20
+#define LINUX_NOFLSH                0x80
+#define LINUX_TOSTOP               0x100
 #define LINUX_VINTR                    0
+#define LINUX_VQUIT                    1
 #define LINUX_VERASE                   2
 #define LINUX_VEOF                     4
 #define LINUX_VMIN                     6
+#define LINUX_VSUSP                   10
 
 #define LINUX_SIG_BLOCK                0
 #define LINUX_SIG_UNBLOCK              1
@@ -442,6 +621,9 @@ struct linux_linger {
 
 #define LINUX_CLOCK_REALTIME             0
 #define LINUX_CLOCK_MONOTONIC            1
+#define LINUX_CLOCK_BOOTTIME             7
+#define LINUX_TIMER_ABSTIME            0x1
+#define LINUX_ITIMER_REAL                0
 
 #define LINUX_PRIO_PROCESS               0
 
@@ -621,6 +803,12 @@ _Static_assert(sizeof(struct linux_pollfd) == 8,
 	       "Linux pollfd layout changed");
 _Static_assert(sizeof(struct linux_sockaddr_in) == 16,
 	       "Linux sockaddr_in layout changed");
+_Static_assert(sizeof(struct linux_ifreq) == 40,
+	       "Linux ifreq layout changed");
+_Static_assert(sizeof(struct linux_ifconf) == 16,
+	       "Linux ifconf layout changed");
+_Static_assert(__builtin_offsetof(struct linux_ifconf, buffer) == 8,
+	       "Linux ifconf buffer offset changed");
 _Static_assert(sizeof(struct linux_msghdr) == 56,
 	       "Linux msghdr layout changed");
 _Static_assert(sizeof(struct linux_stat) == 128,

@@ -102,11 +102,15 @@ struct sched_entity {
 	uint64 vruntime;
 	uint64 exec_start;
 	uint64 sum_exec_runtime;
+	uint64 user_runtime;
+	uint64 system_runtime;
+	uint64 mode_start;
 	uint64 slice_ns;
 	uint32 weight;
 	int8 nice;
 	uint8 initialized;
 	uint8 on_runqueue;
+	uint8 user_mode;
 };
 
 typedef struct thread {
@@ -145,6 +149,7 @@ typedef struct thread {
 	uint32 futex_restart_expected;
 	uint32 futex_restart_bitset;
 	uint64 signal_sequence;
+	uint64 fatal_signal_sequence;
 	uint64 process_signal_target;
 	uint8 signal_restore_mask;
 	uint8 process_reaper;
@@ -165,6 +170,7 @@ typedef struct thread {
 	uint8 wait_interruptible;
 	void *wait_private;
 	uint32 wait_bitset;
+	process_t vfork_child;
 }*thread_t;
 
 extern struct thread thread[NTHREAD];
@@ -176,6 +182,7 @@ thread_t thread_alloc(process_t p);
 void thread_free(thread_t t);
 void user_thread_reap(thread_t t);
 int thread_get_robust_list(int tid, uint64 *head, uint64 *length);
+int thread_last_user_tid(void);
 thread_t kernel_thread_create(const char *name, thread_func_t function,
 			      void *argument);
 void kernel_thread_reap(thread_t thread);

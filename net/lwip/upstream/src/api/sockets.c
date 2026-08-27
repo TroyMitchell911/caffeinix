@@ -3004,6 +3004,12 @@ lwip_getsockopt_impl(int s, int level, int optname, void *optval, socklen_t *opt
             *(int *)optval = 0;
           }
           break;
+
+        case SO_LWIP_TCP_STATE:
+          LWIP_SOCKOPT_CHECK_OPTLEN_CONN_PCB_TYPE(sock, *optlen,
+                                                  int, NETCONN_TCP);
+          *(int *)optval = sock->conn->pcb.tcp->state;
+          break;
 #endif /* LWIP_TCP */
 
         /* The option flags */

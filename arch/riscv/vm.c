@@ -483,6 +483,11 @@ int vm_protect_user_range(pagedir_t pgdir, uint64 start, uint64 end,
 			    palloc_refcount((void *)PTE2PA(*pte)) > 1) {
 				page_permissions &= ~PTE_W;
 				software = PTE_SW_COW;
+			} else if (area->origin == VMA_FILE_BACKED &&
+				   (area->flags & 0xf) == LINUX_MAP_SHARED &&
+				   !(*pte & PTE_W)) {
+				page_permissions &= ~PTE_W;
+				software = 0;
 			} else {
 				software = 0;
 			}
@@ -603,6 +608,33 @@ int vm_copy(pagedir_t old, pagedir_t new, const struct vma_set *vmas)
 	return 0;
 }
 
+static uint64 vm_user_resident_walk(pagedir_t pgdir, int level)
+{
+	uint64 pages = 0;
+	pte_t pte;
+	int index;
+
+	for (index = 0; index < PGSIZE / sizeof(pte_t); index++) {
+		pte = pgdir[index];
+		if (!(pte & PTE_V))
+			continue;
+		if (!(pte & (PTE_R | PTE_W | PTE_X))) {
+			if (level > 0)
+				pages += vm_user_resident_walk(
+					(pagedir_t)PTE2PA(pte), level - 1);
+			continue;
+		}
+		if (pte & PTE_U)
+			pages += sv39_level_size(level) / PGSIZE;
+	}
+	return pages;
+}
+
+uint64 vm_user_resident_pages(pagedir_t pgdir)
+{
+	return pgdir ? vm_user_resident_walk(pgdir, SV39_LEVEL_MAX) : 0;
+}
+
 static void vm_free_user_walk(pagedir_t pgdir, int level)
 {
 	pte_t pte;
@@ -663,6 +695,25 @@ int copyout(pagedir_t pgdir, uint64 dstva, char *src, uint64 len)
 int copyout_nofault(pagedir_t pgdir, uint64 dstva, char *src, uint64 len)
 {
 	return copyout_internal(pgdir, dstva, src, len, 0);
+}
+
+int vm_prefault_user_write(pagedir_t pgdir, uint64 address, uint64 length)
+{
+	void *pinned_page;
+	uint64 end, page;
+
+	if (!length)
+		return 0;
+	if (address >= MAXVA || length > MAXVA - address)
+		return -1;
+	end = address + length;
+	for (page = PGROUNDDOWN(address); page < end; page += PGSIZE) {
+		if (!user_copy_va2pa_pinned(pgdir, page, PTE_W, 1,
+					    &pinned_page))
+			return -1;
+		pfree(pinned_page);
+	}
+	return 0;
 }
 
 int copyin(pagedir_t pgdir, char* dst, uint64 srcva, uint64 len)

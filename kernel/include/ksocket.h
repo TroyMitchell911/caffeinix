@@ -4,6 +4,20 @@
 #include <linux_uapi.h>
 #include <typedefs.h>
 
+struct ksocket_snapshot {
+	struct linux_sockaddr_in local;
+	struct linux_sockaddr_in remote;
+	uint64 inode;
+	uint32 receive_queue;
+	uint32 transmit_queue;
+	uint32 uid;
+	uint8 state;
+};
+
+void ksocket_init(void);
+uint32 ksocket_snapshot_type(int type, struct ksocket_snapshot *snapshots,
+			     uint32 capacity);
+
 int ksocket_create(int family, int type, int protocol, int *fd_out);
 int ksocket_bind(int fd, const struct linux_sockaddr_in *address);
 int ksocket_listen(int fd, int backlog);

@@ -270,13 +270,68 @@ static void ext4fs_set_file_operations(struct vfs_inode *inode)
 		inode->file_operations = &ext4fs_directory_operations;
 	else if (inode->type == VFS_INODE_CHAR_DEVICE)
 		inode->file_operations = &vfs_device_operations;
+	else if (inode->type == VFS_INODE_BLOCK_DEVICE)
+		inode->file_operations = &vfs_block_device_operations;
 	else
 		inode->file_operations = 0;
+}
+
+static void ext4fs_copy_time(struct vfs_timespec *destination,
+			     const struct ext4_timespec *source)
+{
+	destination->seconds = source->seconds;
+	destination->nanoseconds = source->nanoseconds;
+}
+
+static int ext4fs_now(struct ext4_timespec *time)
+{
+	struct vfs_timespec now;
+	int result = vfs_current_time(&now);
+
+	if (result < 0)
+		return result;
+	time->seconds = now.seconds;
+	time->nanoseconds = now.nanoseconds;
+	return VFS_OK;
+}
+
+static int ext4fs_touch(const char *path, uint32 mask)
+{
+	struct ext4_timespec times[3];
+	struct ext4_timespec now;
+	int result;
+
+	result = ext4fs_now(&now);
+	if (result < 0)
+		return result;
+	times[0] = now;
+	times[1] = now;
+	times[2] = now;
+	result = ext4_times_set(path, times, mask);
+	return result == ERANGE ? VFS_ERR_OVERFLOW : ext4fs_result(result);
+}
+
+static int ext4fs_touch_inode(struct vfs_inode *inode, uint32 mask)
+{
+	struct ext4_timespec times[3];
+	struct ext4_timespec now;
+	int result;
+
+	result = ext4fs_now(&now);
+	if (result < 0)
+		return result;
+	times[0] = now;
+	times[1] = now;
+	times[2] = now;
+	result = ext4_times_set_by_number(EXT4FS_MOUNT_POINT, inode->number,
+					  times, mask);
+	return result == ERANGE ? VFS_ERR_OVERFLOW : ext4fs_result(result);
 }
 
 static int ext4fs_refresh(struct vfs_inode *inode)
 {
 	struct ext4fs_inode *private = inode->private;
+	struct ext4_timespec time;
 	uint32 mode, number;
 	int result;
 
@@ -304,6 +359,15 @@ static int ext4fs_refresh(struct vfs_inode *inode)
 	                                 &private->raw);
 	inode->blocks = ext4_inode_get_blocks_count(
 		ext4fs_port.raw_superblock, &private->raw);
+	ext4_inode_get_access_time_ext(ext4fs_port.raw_superblock,
+				       &private->raw, &time);
+	ext4fs_copy_time(&inode->atime, &time);
+	ext4_inode_get_modif_time_ext(ext4fs_port.raw_superblock,
+				      &private->raw, &time);
+	ext4fs_copy_time(&inode->mtime, &time);
+	ext4_inode_get_change_time_ext(ext4fs_port.raw_superblock,
+				       &private->raw, &time);
+	ext4fs_copy_time(&inode->ctime, &time);
 	ext4fs_set_file_operations(inode);
 	return VFS_OK;
 }
@@ -356,6 +420,48 @@ static int ext4fs_join(char *path, const char *directory, const char *name)
 		path[position++] = *name++;
 	path[position] = 0;
 	return VFS_OK;
+}
+
+struct ext4fs_path_rebase {
+	const char *old_path;
+	const char *new_path;
+	int apply;
+};
+
+static int ext4fs_rebase_inode_path(struct vfs_inode *inode, void *argument)
+{
+	struct ext4fs_path_rebase *rebase = argument;
+	struct ext4fs_inode *private = inode->private;
+	uint32 old_length = strlen(rebase->old_path);
+	uint32 new_length = strlen(rebase->new_path);
+	uint32 suffix_length;
+
+	if (!private || strncmp(private->path, rebase->old_path, old_length) ||
+	    (private->path[old_length] && private->path[old_length] != '/'))
+		return VFS_OK;
+	suffix_length = strlen(private->path + old_length);
+	if (new_length + suffix_length >= sizeof(private->path))
+		return VFS_ERR_NAMETOOLONG;
+	if (!rebase->apply)
+		return VFS_OK;
+	memmove(private->path + new_length, private->path + old_length,
+		suffix_length + 1);
+	memmove(private->path, rebase->new_path, new_length);
+	return VFS_OK;
+}
+
+static int ext4fs_rebase_paths(struct vfs_super_block *superblock,
+			       const char *old_path, const char *new_path,
+			       int apply)
+{
+	struct ext4fs_path_rebase rebase = {
+		.old_path = old_path,
+		.new_path = new_path,
+		.apply = apply,
+	};
+
+	return vfs_visit_inodes(superblock, ext4fs_rebase_inode_path,
+				&rebase);
 }
 
 static int ext4fs_remove_locked(const char *path, uint32 inode,
@@ -479,9 +585,47 @@ static int ext4fs_sync(struct vfs_super_block *superblock)
 		VFS_ERR_IO : VFS_OK;
 }
 
+static int ext4fs_statfs(struct vfs_super_block *superblock,
+			 struct vfs_statfs *stat)
+{
+	struct ext4_mount_stats stats;
+	int result;
+
+	(void)superblock;
+	result = ext4_mount_point_stats(EXT4FS_MOUNT_POINT, &stats);
+	if (result != EOK)
+		return ext4fs_result(result);
+	memset(stat, 0, sizeof(*stat));
+	stat->type = 0xef53;
+	stat->block_size = stats.block_size;
+	stat->fragment_size = stats.block_size;
+	stat->blocks = stats.blocks_count;
+	stat->blocks_free = stats.free_blocks_count;
+	stat->blocks_available = stats.free_blocks_count;
+	stat->files = stats.inodes_count;
+	stat->files_free = stats.free_inodes_count;
+	stat->name_length = VFS_NAME_MAX;
+	return VFS_OK;
+}
+
+static void ext4fs_unmount(struct vfs_super_block *superblock)
+{
+	(void)superblock;
+	if (!ext4fs_port.active)
+		return;
+	ext4_journal_stop(EXT4FS_MOUNT_POINT);
+	ext4_umount(EXT4FS_MOUNT_POINT);
+	ext4_device_unregister(EXT4FS_DEVICE_NAME);
+	free(ext4fs_port.interface.ph_bbuf);
+	memset(&ext4fs_port, 0, sizeof(ext4fs_port));
+	memset(ext4fs_open_inodes, 0, sizeof(ext4fs_open_inodes));
+}
+
 static const struct vfs_super_operations ext4fs_super_operations = {
 	.put_inode = ext4fs_put_inode,
 	.sync = ext4fs_sync,
+	.statfs = ext4fs_statfs,
+	.unmount = ext4fs_unmount,
 };
 
 static int ext4fs_getattr(struct vfs_inode *inode, struct vfs_stat *stat)
@@ -513,7 +657,8 @@ static int ext4fs_lookup(struct vfs_inode *directory, const char *name,
 }
 
 static int ext4fs_create(struct vfs_inode *directory, const char *name,
-			 uint32 mode, struct vfs_inode **result)
+			 uint32 mode, uint32 uid, uint32 gid,
+			 struct vfs_inode **result)
 {
 	struct ext4fs_inode *private = directory->private;
 	char *path = palloc();
@@ -522,6 +667,7 @@ static int ext4fs_create(struct vfs_inode *directory, const char *name,
 
 	if (!path)
 		return VFS_ERR_NOMEM;
+	ext4fs_lock_mount();
 	status = ext4fs_join(path, private->path, name);
 	if (status < 0)
 		goto out;
@@ -537,18 +683,33 @@ static int ext4fs_create(struct vfs_inode *directory, const char *name,
 		status = ext4fs_result(status);
 		goto out;
 	}
+	status = ext4_owner_set(path, uid, gid);
+	if (status != EOK) {
+		ext4_fremove(path);
+		status = ext4fs_result(status);
+		goto out;
+	}
+	status = ext4fs_touch(path, EXT4_TIME_ATIME | EXT4_TIME_MTIME |
+				     EXT4_TIME_CTIME);
+	if (status < 0) {
+		ext4_fremove(path);
+		goto out;
+	}
 	status = ext4fs_wrap(directory->superblock, path, result);
 	if (status < 0) {
 		ext4_fremove(path);
 		goto out;
 	}
+	ext4fs_touch(private->path, EXT4_TIME_MTIME | EXT4_TIME_CTIME);
 out:
+	ext4fs_unlock_mount();
 	pfree(path);
 	return status;
 }
 
 static int ext4fs_mkdir(struct vfs_inode *directory, const char *name,
-			uint32 mode, struct vfs_inode **result)
+			uint32 mode, uint32 uid, uint32 gid,
+			struct vfs_inode **result)
 {
 	struct ext4fs_inode *private = directory->private;
 	char *path = palloc();
@@ -556,6 +717,7 @@ static int ext4fs_mkdir(struct vfs_inode *directory, const char *name,
 
 	if (!path)
 		return VFS_ERR_NOMEM;
+	ext4fs_lock_mount();
 	status = ext4fs_join(path, private->path, name);
 	if (status < 0)
 		goto out;
@@ -570,12 +732,26 @@ static int ext4fs_mkdir(struct vfs_inode *directory, const char *name,
 		status = ext4fs_result(status);
 		goto out;
 	}
+	status = ext4_owner_set(path, uid, gid);
+	if (status != EOK) {
+		ext4_dir_rm(path);
+		status = ext4fs_result(status);
+		goto out;
+	}
+	status = ext4fs_touch(path, EXT4_TIME_ATIME | EXT4_TIME_MTIME |
+				     EXT4_TIME_CTIME);
+	if (status < 0) {
+		ext4_dir_rm(path);
+		goto out;
+	}
 	status = ext4fs_wrap(directory->superblock, path, result);
 	if (status < 0) {
 		ext4_dir_rm(path);
 		goto out;
 	}
+	ext4fs_touch(private->path, EXT4_TIME_MTIME | EXT4_TIME_CTIME);
 out:
+	ext4fs_unlock_mount();
 	pfree(path);
 	return status;
 }
@@ -594,12 +770,17 @@ static int ext4fs_unlink(struct vfs_inode *directory, const char *name)
 	if (status == VFS_OK) {
 		ext4fs_lock_mount();
 		status = ext4_raw_inode_fill(path, &inode, &raw);
-		if (status == EOK)
+		if (status == EOK) {
+			ext4fs_touch(path, EXT4_TIME_CTIME);
 			status = ext4fs_remove_locked(path, inode, &raw);
-		else
+		} else {
 			status = ext4fs_result(status);
+		}
 		ext4fs_unlock_mount();
 	}
+	if (status == VFS_OK)
+		ext4fs_touch(private->path,
+			     EXT4_TIME_MTIME | EXT4_TIME_CTIME);
 	pfree(path);
 	return status;
 }
@@ -638,6 +819,9 @@ static int ext4fs_rmdir(struct vfs_inode *directory, const char *name)
 		status = ext4fs_directory_empty(path);
 	if (status == VFS_OK)
 		status = ext4fs_result(ext4_dir_rm(path));
+	if (status == VFS_OK)
+		ext4fs_touch(private->path,
+			     EXT4_TIME_MTIME | EXT4_TIME_CTIME);
 	pfree(path);
 	return status;
 }
@@ -657,12 +841,18 @@ static int ext4fs_link(struct vfs_inode *inode,
 		status = ext4fs_result(ext4_flink(source->path, path));
 	if (status == VFS_OK)
 		ext4fs_refresh(inode);
+	if (status == VFS_OK) {
+		ext4fs_touch(source->path, EXT4_TIME_CTIME);
+		ext4fs_touch(parent->path,
+			     EXT4_TIME_MTIME | EXT4_TIME_CTIME);
+	}
 	pfree(path);
 	return status;
 }
 
 static int ext4fs_symlink(struct vfs_inode *directory, const char *name,
-			  const char *target, struct vfs_inode **result)
+			  const char *target, uint32 uid, uint32 gid,
+			  struct vfs_inode **result)
 {
 	struct ext4fs_inode *parent = directory->private;
 	char *path = palloc();
@@ -670,6 +860,7 @@ static int ext4fs_symlink(struct vfs_inode *directory, const char *name,
 
 	if (!path)
 		return VFS_ERR_NOMEM;
+	ext4fs_lock_mount();
 	status = ext4fs_join(path, parent->path, name);
 	if (status < 0)
 		goto out;
@@ -678,12 +869,96 @@ static int ext4fs_symlink(struct vfs_inode *directory, const char *name,
 		status = ext4fs_result(status);
 		goto out;
 	}
+	status = ext4_owner_set(path, uid, gid);
+	if (status != EOK) {
+		ext4_fremove(path);
+		status = ext4fs_result(status);
+		goto out;
+	}
+	status = ext4fs_touch(path, EXT4_TIME_ATIME | EXT4_TIME_MTIME |
+				     EXT4_TIME_CTIME);
+	if (status < 0) {
+		ext4_fremove(path);
+		goto out;
+	}
 	status = ext4fs_wrap(directory->superblock, path, result);
 	if (status < 0) {
 		ext4_fremove(path);
 		goto out;
 	}
+	ext4fs_touch(parent->path, EXT4_TIME_MTIME | EXT4_TIME_CTIME);
 out:
+	ext4fs_unlock_mount();
+	pfree(path);
+	return status;
+}
+
+static uint32 ext4fs_encode_device(uint64 device)
+{
+	uint32 major = VFS_DEVICE_MAJOR(device);
+	uint32 minor = VFS_DEVICE_MINOR(device);
+
+	return (minor & 0xff) | ((major & 0xfff) << 8) |
+	       ((minor & ~0xff) << 12);
+}
+
+static int ext4fs_mknod(struct vfs_inode *directory, const char *name,
+			enum vfs_inode_type type, uint32 mode, uint32 uid,
+			uint32 gid, uint64 device, struct vfs_inode **result)
+{
+	struct ext4fs_inode *parent = directory->private;
+	char *path = palloc();
+	int filetype, status;
+
+	if (!path)
+		return VFS_ERR_NOMEM;
+	ext4fs_lock_mount();
+	if (type == VFS_INODE_CHAR_DEVICE)
+		filetype = EXT4_DE_CHRDEV;
+	else if (type == VFS_INODE_BLOCK_DEVICE)
+		filetype = EXT4_DE_BLKDEV;
+	else if (type == VFS_INODE_FIFO)
+		filetype = EXT4_DE_FIFO;
+	else if (type == VFS_INODE_SOCKET)
+		filetype = EXT4_DE_SOCK;
+	else {
+		status = VFS_ERR_INVAL;
+		goto out;
+	}
+	if ((type == VFS_INODE_CHAR_DEVICE ||
+	     type == VFS_INODE_BLOCK_DEVICE) &&
+	    (VFS_DEVICE_MAJOR(device) > 0xfff ||
+	     VFS_DEVICE_MINOR(device) > 0xfffff)) {
+		status = VFS_ERR_INVAL;
+		goto out;
+	}
+	status = ext4fs_join(path, parent->path, name);
+	if (status < 0)
+		goto out;
+	status = ext4_mknod(path, filetype, ext4fs_encode_device(device));
+	if (status != EOK) {
+		status = ext4fs_result(status);
+		goto out;
+	}
+	status = ext4_mode_set(path, mode & VFS_MODE_PERMISSIONS);
+	if (status == EOK)
+		status = ext4_owner_set(path, uid, gid);
+	if (status != EOK) {
+		ext4_fremove(path);
+		status = ext4fs_result(status);
+		goto out;
+	}
+	status = ext4fs_touch(path, EXT4_TIME_ATIME | EXT4_TIME_MTIME |
+				     EXT4_TIME_CTIME);
+	if (status == VFS_OK)
+		status = ext4fs_wrap(directory->superblock, path, result);
+	if (status < 0) {
+		ext4_fremove(path);
+		goto out;
+	}
+	ext4fs_touch(parent->path, EXT4_TIME_MTIME | EXT4_TIME_CTIME);
+out:
+	ext4fs_unlock_mount();
 	pfree(path);
 	return status;
 }
@@ -700,7 +975,7 @@ static int ext4fs_rename(struct vfs_inode *old_directory,
 	enum vfs_inode_type old_type, new_type;
 	char *old_path = palloc();
 	char *new_path;
-	int result, status;
+	int destination_exists = 0, result, status;
 
 	if (!old_path)
 		return VFS_ERR_NOMEM;
@@ -745,24 +1020,42 @@ static int ext4fs_rename(struct vfs_inode *old_directory,
 			status = ext4fs_directory_empty(new_path);
 			if (status < 0)
 				goto unlock;
-			result = ext4_dir_rm(new_path);
-		} else {
-			status = ext4fs_remove_locked(new_path, new_number,
-						     &new_raw);
-			result = status == VFS_OK ? EOK : EIO;
 		}
-		if (status != VFS_OK || result != EOK) {
-			if (status == VFS_OK)
-				status = ext4fs_result(result);
-			goto unlock;
-		}
+		destination_exists = 1;
 	} else if (result != ENOENT) {
 		status = ext4fs_result(result);
 		goto unlock;
 	}
+	status = ext4fs_rebase_paths(old_directory->superblock, old_path,
+				     new_path, 0);
+	if (status < 0)
+		goto unlock;
+	if (destination_exists) {
+		if (new_type == VFS_INODE_DIRECTORY) {
+			result = ext4_dir_rm(new_path);
+			status = ext4fs_result(result);
+		} else {
+			status = ext4fs_remove_locked(new_path, new_number,
+						     &new_raw);
+		}
+		if (status != VFS_OK)
+			goto unlock;
+	}
 	status = ext4fs_result(ext4_frename(old_path, new_path));
+	if (status == VFS_OK &&
+	    ext4fs_rebase_paths(old_directory->superblock, old_path,
+				new_path, 1) < 0)
+		PANIC("ext4 rename path rebase");
 unlock:
 	ext4fs_unlock_mount();
+	if (status == VFS_OK) {
+		ext4fs_touch(new_path, EXT4_TIME_CTIME);
+		ext4fs_touch(old_parent->path,
+			     EXT4_TIME_MTIME | EXT4_TIME_CTIME);
+		if (strcmp(old_parent->path, new_parent->path))
+			ext4fs_touch(new_parent->path,
+				     EXT4_TIME_MTIME | EXT4_TIME_CTIME);
+	}
 out:
 	pfree(old_path);
 	return status;
@@ -774,19 +1067,21 @@ static int ext4fs_readlink(struct vfs_inode *inode, char *buffer,
 	struct ext4fs_inode *private = inode->private;
 	size_t count;
 	int result = ext4_readlink(private->path, buffer, size, &count);
+	if (result == EOK)
+		ext4fs_touch(private->path, EXT4_TIME_ATIME);
 
 	return result == EOK ? (int)count : ext4fs_result(result);
 }
 
 static int ext4fs_truncate(struct vfs_inode *inode, uint64 size)
 {
-	struct ext4fs_inode *private = inode->private;
 	ext4_file file;
 	void *zeros = 0;
 	uint64 position;
 	int result;
 
-	result = ext4_fopen2(&file, private->path, O_RDWR);
+	result = ext4_fopen_by_number(&file, EXT4FS_MOUNT_POINT,
+				      inode->number, O_RDWR);
 	if (result != EOK)
 		return ext4fs_result(result);
 	if (size > file.fsize) {
@@ -813,8 +1108,64 @@ static int ext4fs_truncate(struct vfs_inode *inode, uint64 size)
 	}
 	ext4_fclose(&file);
 	if (result == EOK)
+		ext4fs_touch_inode(inode, EXT4_TIME_MTIME | EXT4_TIME_CTIME);
+	if (result == EOK)
 		ext4fs_refresh(inode);
 	return ext4fs_result(result);
+}
+
+static int ext4fs_set_times(struct vfs_inode *inode,
+			    const struct vfs_timespec times[2], uint32 mask)
+{
+	struct ext4_timespec ext4_times[3];
+	int result;
+
+	if (mask & VFS_TIME_ATIME) {
+		ext4_times[0].seconds = times[0].seconds;
+		ext4_times[0].nanoseconds = times[0].nanoseconds;
+	}
+	if (mask & VFS_TIME_MTIME) {
+		ext4_times[1].seconds = times[1].seconds;
+		ext4_times[1].nanoseconds = times[1].nanoseconds;
+	}
+	result = ext4fs_now(&ext4_times[2]);
+	if (result < 0)
+		return result;
+	result = ext4_times_set_by_number(
+		EXT4FS_MOUNT_POINT, inode->number, ext4_times,
+		(mask & VFS_TIME_ATIME ? EXT4_TIME_ATIME : 0) |
+		(mask & VFS_TIME_MTIME ? EXT4_TIME_MTIME : 0) |
+		EXT4_TIME_CTIME);
+	if (result == ERANGE)
+		return VFS_ERR_OVERFLOW;
+	if (result != EOK)
+		return ext4fs_result(result);
+	return ext4fs_refresh(inode);
+}
+
+static int ext4fs_setattr(struct vfs_inode *inode,
+			  const struct vfs_iattr *attributes)
+{
+	uint32 uid = inode->uid, gid = inode->gid;
+	int result = EOK;
+
+	if (attributes->mask & VFS_ATTR_MODE)
+		result = ext4_mode_set_by_number(
+			EXT4FS_MOUNT_POINT, inode->number,
+			attributes->mode & VFS_MODE_PERMISSIONS);
+	if (result == EOK && (attributes->mask &
+			      (VFS_ATTR_UID | VFS_ATTR_GID))) {
+		if (attributes->mask & VFS_ATTR_UID)
+			uid = attributes->uid;
+		if (attributes->mask & VFS_ATTR_GID)
+			gid = attributes->gid;
+		result = ext4_owner_set_by_number(EXT4FS_MOUNT_POINT,
+						 inode->number, uid, gid);
+	}
+	if (result != EOK)
+		return ext4fs_result(result);
+	ext4fs_touch_inode(inode, EXT4_TIME_CTIME);
+	return ext4fs_refresh(inode);
 }
 
 static const struct vfs_inode_operations ext4fs_inode_operations = {
@@ -826,8 +1177,11 @@ static const struct vfs_inode_operations ext4fs_inode_operations = {
 	.rename = ext4fs_rename,
 	.link = ext4fs_link,
 	.symlink = ext4fs_symlink,
+	.mknod = ext4fs_mknod,
 	.readlink = ext4fs_readlink,
 	.truncate = ext4fs_truncate,
+	.setattr = ext4fs_setattr,
+	.set_times = ext4fs_set_times,
 	.getattr = ext4fs_getattr,
 };
 
@@ -922,6 +1276,10 @@ static int64 ext4fs_read(struct vfs_file *file, int user_destination,
 	*position += total;
 	status = total;
 out:
+	if (status >= 0 && count)
+		ext4fs_touch(((struct ext4fs_inode *)
+			     file->path.dentry->inode->private)->path,
+			     EXT4_TIME_ATIME);
 	ext4fs_unlock_mount();
 	return status;
 }
@@ -960,11 +1318,84 @@ static int64 ext4fs_write(struct vfs_file *file, int user_source,
 			break;
 	}
 	*position += total;
+	if (total)
+		ext4fs_touch_inode(file->path.dentry->inode,
+			   EXT4_TIME_MTIME | EXT4_TIME_CTIME);
 	ext4fs_refresh(file->path.dentry->inode);
 	status = total;
 out:
 	ext4fs_unlock_mount();
 	return status;
+}
+
+static int ext4fs_fallocate(struct vfs_file *file, uint64 offset,
+			    uint64 length)
+{
+	struct ext4fs_file *handle = file->private;
+	ext4_file read_file;
+	ext4_file *source = &handle->file;
+	uint64 end = offset + length, file_size, position;
+	size_t read_count, written;
+	uint32 chunk, existing;
+	int read_open = 0;
+	int result = EOK;
+
+	if (!length)
+		return VFS_OK;
+	ext4fs_lock_mount();
+	file_size = handle->file.fsize;
+	if (offset < file_size && (handle->file.flags & O_WRONLY)) {
+		result = ext4_fopen_by_number(&read_file, EXT4FS_MOUNT_POINT,
+					      handle->file.inode, O_RDONLY);
+		if (result != EOK)
+			goto out;
+		source = &read_file;
+		read_open = 1;
+	}
+	for (position = offset; position < end; position += chunk) {
+		chunk = end - position > PGSIZE ? PGSIZE : end - position;
+		if (position >= file_size)
+			existing = 0;
+		else if (file_size - position > chunk)
+			existing = chunk;
+		else
+			existing = file_size - position;
+		if (existing) {
+			result = ext4_fseek(source, position, SEEK_SET);
+			if (result == EOK)
+				result = ext4_fread(source, handle->buffer,
+						    existing, &read_count);
+			if (result == EOK && read_count != existing)
+				result = EIO;
+		}
+		if (result != EOK)
+			break;
+		if (existing < chunk)
+			memset((char *)handle->buffer + existing, 0,
+			       chunk - existing);
+		result = ext4_fseek(&handle->file, position, SEEK_SET);
+		if (result == EOK)
+			result = ext4_fwrite(&handle->file, handle->buffer,
+					     chunk, &written);
+		if (result == EOK && written != chunk)
+			result = EIO;
+		if (result != EOK)
+			break;
+	}
+out:
+	if (read_open) {
+		int close_result = ext4_fclose(&read_file);
+
+		if (result == EOK)
+			result = close_result;
+	}
+	if (result == EOK)
+		ext4fs_touch_inode(file->path.dentry->inode,
+			   EXT4_TIME_MTIME | EXT4_TIME_CTIME);
+	if (result == EOK)
+		ext4fs_refresh(file->path.dentry->inode);
+	ext4fs_unlock_mount();
+	return result == EOK ? VFS_OK : ext4fs_result(result);
 }
 
 static int ext4fs_file_sync(struct vfs_file *file)
@@ -1047,7 +1478,21 @@ static int ext4fs_readdir(struct vfs_file *file,
 	memmove(result->name, entry->name, length);
 	result->name[length] = 0;
 	file->position = result->next_offset;
+	ext4fs_touch(((struct ext4fs_inode *)
+		     file->path.dentry->inode->private)->path,
+		     EXT4_TIME_ATIME);
 	return 1;
+}
+
+static int ext4fs_seekdir(struct vfs_file *file, uint64 position)
+{
+	struct ext4fs_directory *handle = file->private;
+
+	if (!handle)
+		return VFS_ERR_INVAL;
+	handle->directory.next_off = position;
+	file->position = position;
+	return VFS_OK;
 }
 
 static const struct vfs_file_operations ext4fs_file_operations = {
@@ -1057,12 +1502,14 @@ static const struct vfs_file_operations ext4fs_file_operations = {
 	.read = ext4fs_read,
 	.write = ext4fs_write,
 	.fsync = ext4fs_file_sync,
+	.fallocate = ext4fs_fallocate,
 };
 
 static const struct vfs_file_operations ext4fs_directory_operations = {
 	.open = ext4fs_directory_open,
 	.release = ext4fs_directory_release,
 	.readdir = ext4fs_readdir,
+	.seekdir = ext4fs_seekdir,
 	.fsync = ext4fs_file_sync,
 };
 

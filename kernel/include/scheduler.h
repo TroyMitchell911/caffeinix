@@ -24,6 +24,8 @@ typedef struct cpu {
 	volatile uint8 need_resched;
 	volatile uint64 membarrier_request;
 	volatile uint64 membarrier_done;
+	volatile uint64 idle_since_ns;
+	volatile uint64 idle_time_ns;
 }*cpu_t;
 
 extern cpu_t *cpus;
@@ -47,5 +49,11 @@ int scheduler_get_nice(thread_t thread);
 void scheduler_request_resched(void);
 void scheduler_tick(void);
 int scheduler_should_resched(void);
+void scheduler_account_kernel_enter(void);
+void scheduler_account_user_enter(void);
+void scheduler_thread_times(thread_t thread, uint64 now,
+			    uint64 *user, uint64 *system);
+uint64 scheduler_idle_time_ns(void);
+uint64 scheduler_context_switches(void);
 
 #endif
