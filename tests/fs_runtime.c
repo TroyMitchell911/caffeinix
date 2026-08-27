@@ -592,6 +592,49 @@ static int test_fat(int *mounted)
 	return 0;
 }
 
+static int test_fat_unmapped_cache_release(void)
+{
+	static const char path[] = "/mnt/fat/runtime/unmapped-cache";
+	char *mapping = MAP_FAILED;
+	int fd = -1, result = 1;
+
+	unlink(path);
+	if (make_file(path, "old!"))
+		goto out;
+	result = 2;
+	fd = open(path, O_RDWR);
+	if (fd < 0)
+		goto out;
+	result = 3;
+	mapping = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED,
+	               fd, 0);
+	if (mapping == MAP_FAILED)
+		goto out;
+	memcpy(mapping, "new!", 4);
+	result = 4;
+	if (msync(mapping, 4096, MS_SYNC))
+		goto out;
+	result = 5;
+	if (munmap(mapping, 4096))
+		goto out;
+	mapping = MAP_FAILED;
+	if (close(fd))
+		goto out;
+	fd = -1;
+	result = 6;
+	if (unlink(path))
+		goto out;
+	return 0;
+
+out:
+	if (mapping != MAP_FAILED)
+		munmap(mapping, 4096);
+	if (fd >= 0)
+		close(fd);
+	unlink(path);
+	return result;
+}
+
 int main(void)
 {
 	int result = test_devices();
@@ -617,6 +660,9 @@ int main(void)
 	result = test_fat(&fat_mounted);
 	if (result)
 		return fail(result);
+	result = fat_mounted ? test_fat_unmapped_cache_release() : 0;
+	if (result)
+		return fail(240 + result);
 	if (fat_mounted && test_getdents_boundary("/mnt/fat/runtime"))
 		return fail(235);
 	pass(fat_mounted ? "FAT_OK\n" : "FAT_SKIP\n");
