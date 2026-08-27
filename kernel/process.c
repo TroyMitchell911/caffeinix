@@ -1219,6 +1219,9 @@ int process_wait(int target, uint64 status_address, int options)
         list_t l;
 
         p = cur_proc();
+	if (status_address &&
+	    process_prefault_write(p, status_address, sizeof(exit_status)) < 0)
+		return PROCESS_WAIT_FAULT;
 
         spinlock_acquire(&wait_lock);
 
@@ -1246,10 +1249,11 @@ int process_wait(int target, uint64 status_address, int options)
 					else
 						exit_status =
 							(pp->exit_state & 0xff) << 8;
-					if(status_address &&
-					   either_copyout(1, status_address,
-					                  &exit_status,
-					                  sizeof(exit_status)) < 0) {
+					if (status_address &&
+					    copyout_nofault(
+						    p->pagetable, status_address,
+						    (char *)&exit_status,
+						    sizeof(exit_status)) < 0) {
 						spinlock_release(&pp->lock);
 						spinlock_release(&wait_lock);
 						return PROCESS_WAIT_FAULT;
@@ -1276,9 +1280,10 @@ int process_wait(int target, uint64 status_address, int options)
 					else
 						exit_status = 0xffff;
 					if (status_address &&
-					    either_copyout(1, status_address,
-					                   &exit_status,
-					                   sizeof(exit_status)) < 0) {
+					    copyout_nofault(
+						    p->pagetable, status_address,
+						    (char *)&exit_status,
+						    sizeof(exit_status)) < 0) {
 						spinlock_release(&pp->lock);
 						spinlock_release(&wait_lock);
 						return PROCESS_WAIT_FAULT;
