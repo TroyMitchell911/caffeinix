@@ -554,12 +554,16 @@ static int exec_elf(char *path, const char *execfn, char **argv, char **envp)
 		error = -LINUX_E2BIG;
 		goto fail;
 	}
-	if (sz > (uint64)-1 - aslr.brk_gap)
+	if (sz > (uint64)-1 - aslr.brk_gap) {
+		error = -LINUX_ENOMEM;
 		goto fail;
+	}
 	brk_start = PGROUNDUP(sz) + aslr.brk_gap;
 	if (brk_start < sz || brk_start >= aslr.mmap_top ||
-	    !vma_range_free(&new_vmas, PGROUNDUP(sz), brk_start + PGSIZE))
+	    !vma_range_free(&new_vmas, PGROUNDUP(sz), brk_start + PGSIZE)) {
+		error = -LINUX_ENOMEM;
 		goto fail;
+	}
 	if (process_exec_quiesce(process, current) < 0) {
 		error = -LINUX_EAGAIN;
 		goto fail;
