@@ -567,6 +567,7 @@ static int ext4fs_create(struct vfs_inode *directory, const char *name,
 
 	if (!path)
 		return VFS_ERR_NOMEM;
+	ext4fs_lock_mount();
 	status = ext4fs_join(path, private->path, name);
 	if (status < 0)
 		goto out;
@@ -595,6 +596,7 @@ static int ext4fs_create(struct vfs_inode *directory, const char *name,
 	}
 	ext4fs_touch(private->path, EXT4_TIME_MTIME | EXT4_TIME_CTIME);
 out:
+	ext4fs_unlock_mount();
 	pfree(path);
 	return status;
 }
@@ -608,6 +610,7 @@ static int ext4fs_mkdir(struct vfs_inode *directory, const char *name,
 
 	if (!path)
 		return VFS_ERR_NOMEM;
+	ext4fs_lock_mount();
 	status = ext4fs_join(path, private->path, name);
 	if (status < 0)
 		goto out;
@@ -635,6 +638,7 @@ static int ext4fs_mkdir(struct vfs_inode *directory, const char *name,
 	}
 	ext4fs_touch(private->path, EXT4_TIME_MTIME | EXT4_TIME_CTIME);
 out:
+	ext4fs_unlock_mount();
 	pfree(path);
 	return status;
 }
@@ -742,6 +746,7 @@ static int ext4fs_symlink(struct vfs_inode *directory, const char *name,
 
 	if (!path)
 		return VFS_ERR_NOMEM;
+	ext4fs_lock_mount();
 	status = ext4fs_join(path, parent->path, name);
 	if (status < 0)
 		goto out;
@@ -763,6 +768,7 @@ static int ext4fs_symlink(struct vfs_inode *directory, const char *name,
 	}
 	ext4fs_touch(parent->path, EXT4_TIME_MTIME | EXT4_TIME_CTIME);
 out:
+	ext4fs_unlock_mount();
 	pfree(path);
 	return status;
 }
