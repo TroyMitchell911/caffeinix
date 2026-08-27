@@ -1,11 +1,110 @@
+#include <elf.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/auxv.h>
 #include <sys/prctl.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+#define EXEC_BRK_LIMIT 0x3efbf000ULL
+#define EXEC_PHDR_MAX  32
+
+static int copy_file_contents(int input, int output)
+{
+	char buffer[4096];
+	ssize_t count, written;
+
+	while ((count = read(input, buffer, sizeof(buffer))) > 0) {
+		written = 0;
+		while (written < count) {
+			ssize_t result = write(output, buffer + written,
+					       count - written);
+
+			if (result <= 0)
+				return -1;
+			written += result;
+		}
+	}
+	return count < 0 ? -1 : 0;
+}
+
+static int write_high_exec_fixture(const char *path)
+{
+	Elf64_Phdr programs[EXEC_PHDR_MAX];
+	Elf64_Ehdr header;
+	uint64_t delta, map_end = 0;
+	int input = -1, output = -1, result = -1;
+	unsigned int index;
+
+	input = open("/bin/exec-runtime", O_RDONLY);
+	output = open(path, O_CREAT | O_TRUNC | O_RDWR, 0700);
+	if (input < 0 || output < 0 || copy_file_contents(input, output) < 0 ||
+	    pread(input, &header, sizeof(header), 0) != sizeof(header) ||
+	    memcmp(header.e_ident, ELFMAG, SELFMAG) ||
+	    header.e_ident[EI_CLASS] != ELFCLASS64 || header.e_type != ET_EXEC ||
+	    header.e_machine != EM_RISCV ||
+	    header.e_phentsize != sizeof(programs[0]) ||
+	    !header.e_phnum || header.e_phnum > EXEC_PHDR_MAX ||
+	    pread(input, programs, header.e_phnum * sizeof(programs[0]),
+		  header.e_phoff) !=
+		    (ssize_t)(header.e_phnum * sizeof(programs[0])))
+		goto out;
+	for (index = 0; index < header.e_phnum; index++) {
+		uint64_t end;
+
+		if (programs[index].p_type != PT_LOAD ||
+		    !programs[index].p_memsz)
+			continue;
+		if (programs[index].p_vaddr >
+		    UINT64_MAX - programs[index].p_memsz)
+			goto out;
+		end = programs[index].p_vaddr + programs[index].p_memsz;
+		if (end > UINT64_MAX - 4095)
+			goto out;
+		end = (end + 4095) & ~4095ULL;
+		if (end > map_end)
+			map_end = end;
+	}
+	if (!map_end || map_end >= EXEC_BRK_LIMIT)
+		goto out;
+	delta = EXEC_BRK_LIMIT - map_end;
+	if (header.e_entry > UINT64_MAX - delta)
+		goto out;
+	header.e_entry += delta;
+	for (index = 0; index < header.e_phnum; index++) {
+		if (programs[index].p_type == PT_LOAD &&
+		    programs[index].p_align > 1 &&
+		    delta % programs[index].p_align)
+			goto out;
+		if (programs[index].p_vaddr) {
+			if (programs[index].p_vaddr > UINT64_MAX - delta)
+				goto out;
+			programs[index].p_vaddr += delta;
+		}
+		if (programs[index].p_paddr) {
+			if (programs[index].p_paddr > UINT64_MAX - delta)
+				goto out;
+			programs[index].p_paddr += delta;
+		}
+	}
+	if (pwrite(output, &header, sizeof(header), 0) != sizeof(header) ||
+	    pwrite(output, programs, header.e_phnum * sizeof(programs[0]),
+		   header.e_phoff) !=
+		    (ssize_t)(header.e_phnum * sizeof(programs[0])))
+		goto out;
+	result = 0;
+out:
+	if (input >= 0)
+		close(input);
+	if (output >= 0 && close(output))
+		result = -1;
+	if (result)
+		unlink(path);
+	return result;
+}
 
 static int write_fixture(const char *path, const char *contents, mode_t mode)
 {
@@ -190,6 +289,7 @@ static int test_long_arguments(void)
 
 int main(int argc, char **argv)
 {
+	char *invalid_brk[] = { "/tmp/exec-invalid-brk", NULL };
 	char *missing[] = { "/does-not-exist", NULL };
 	char *invalid[] = { "/tmp/not-an-elf", NULL };
 	char *denied[] = { "/tmp/not-executable", NULL };
@@ -236,6 +336,14 @@ int main(int argc, char **argv)
 	if (write_fixture(invalid[0], payload, 0700) < 0)
 		return 1;
 	if (expect_errno(invalid[0], invalid, ENOEXEC) < 0)
+		return 1;
+	if (write_high_exec_fixture(invalid_brk[0]) < 0)
+		return 1;
+	if (expect_errno(invalid_brk[0], invalid_brk, ENOMEM) < 0) {
+		unlink(invalid_brk[0]);
+		return 1;
+	}
+	if (unlink(invalid_brk[0]))
 		return 1;
 	if (write_fixture(denied[0], payload, 0600) < 0)
 		return 1;
