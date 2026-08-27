@@ -422,6 +422,48 @@ static int ext4fs_join(char *path, const char *directory, const char *name)
 	return VFS_OK;
 }
 
+struct ext4fs_path_rebase {
+	const char *old_path;
+	const char *new_path;
+	int apply;
+};
+
+static int ext4fs_rebase_inode_path(struct vfs_inode *inode, void *argument)
+{
+	struct ext4fs_path_rebase *rebase = argument;
+	struct ext4fs_inode *private = inode->private;
+	uint32 old_length = strlen(rebase->old_path);
+	uint32 new_length = strlen(rebase->new_path);
+	uint32 suffix_length;
+
+	if (!private || strncmp(private->path, rebase->old_path, old_length) ||
+	    (private->path[old_length] && private->path[old_length] != '/'))
+		return VFS_OK;
+	suffix_length = strlen(private->path + old_length);
+	if (new_length + suffix_length >= sizeof(private->path))
+		return VFS_ERR_NAMETOOLONG;
+	if (!rebase->apply)
+		return VFS_OK;
+	memmove(private->path + new_length, private->path + old_length,
+		suffix_length + 1);
+	memmove(private->path, rebase->new_path, new_length);
+	return VFS_OK;
+}
+
+static int ext4fs_rebase_paths(struct vfs_super_block *superblock,
+			       const char *old_path, const char *new_path,
+			       int apply)
+{
+	struct ext4fs_path_rebase rebase = {
+		.old_path = old_path,
+		.new_path = new_path,
+		.apply = apply,
+	};
+
+	return vfs_visit_inodes(superblock, ext4fs_rebase_inode_path,
+				&rebase);
+}
+
 static int ext4fs_remove_locked(const char *path, uint32 inode,
 				struct ext4_inode *raw)
 {
@@ -933,7 +975,7 @@ static int ext4fs_rename(struct vfs_inode *old_directory,
 	enum vfs_inode_type old_type, new_type;
 	char *old_path = palloc();
 	char *new_path;
-	int result, status;
+	int destination_exists = 0, result, status;
 
 	if (!old_path)
 		return VFS_ERR_NOMEM;
@@ -978,22 +1020,32 @@ static int ext4fs_rename(struct vfs_inode *old_directory,
 			status = ext4fs_directory_empty(new_path);
 			if (status < 0)
 				goto unlock;
-			result = ext4_dir_rm(new_path);
-		} else {
-			status = ext4fs_remove_locked(new_path, new_number,
-						     &new_raw);
-			result = status == VFS_OK ? EOK : EIO;
 		}
-		if (status != VFS_OK || result != EOK) {
-			if (status == VFS_OK)
-				status = ext4fs_result(result);
-			goto unlock;
-		}
+		destination_exists = 1;
 	} else if (result != ENOENT) {
 		status = ext4fs_result(result);
 		goto unlock;
 	}
+	status = ext4fs_rebase_paths(old_directory->superblock, old_path,
+				     new_path, 0);
+	if (status < 0)
+		goto unlock;
+	if (destination_exists) {
+		if (new_type == VFS_INODE_DIRECTORY) {
+			result = ext4_dir_rm(new_path);
+			status = ext4fs_result(result);
+		} else {
+			status = ext4fs_remove_locked(new_path, new_number,
+						     &new_raw);
+		}
+		if (status != VFS_OK)
+			goto unlock;
+	}
 	status = ext4fs_result(ext4_frename(old_path, new_path));
+	if (status == VFS_OK &&
+	    ext4fs_rebase_paths(old_directory->superblock, old_path,
+				new_path, 1) < 0)
+		PANIC("ext4 rename path rebase");
 unlock:
 	ext4fs_unlock_mount();
 	if (status == VFS_OK) {

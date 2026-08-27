@@ -491,6 +491,32 @@ struct vfs_inode *vfs_inode_get(struct vfs_inode *inode)
 	return inode;
 }
 
+int vfs_visit_inodes(struct vfs_super_block *superblock,
+		     vfs_inode_visit_t visit, void *context)
+{
+	struct vfs_inode *inode;
+	uint32 index;
+	int status = VFS_OK;
+
+	if (!superblock || !visit)
+		return VFS_ERR_INVAL;
+	for (index = 0; index < VFS_INODE_MAX; index++) {
+		spinlock_acquire(&vfs.lock);
+		inode = &vfs.inodes[index];
+		if (inode->ref < 1 || inode->superblock != superblock) {
+			spinlock_release(&vfs.lock);
+			continue;
+		}
+		inode->ref++;
+		spinlock_release(&vfs.lock);
+		status = visit(inode, context);
+		vfs_inode_put(inode);
+		if (status != VFS_OK)
+			break;
+	}
+	return status;
+}
+
 void vfs_inode_put(struct vfs_inode *inode)
 {
 	const struct vfs_super_operations *operations;
@@ -854,6 +880,37 @@ static int vfs_dentry_descends_from(struct vfs_dentry *dentry,
 			return 1;
 	}
 	return 0;
+}
+
+static void vfs_finish_renamed_dentries(
+	struct vfs_inode *inode, struct vfs_inode *old_parent,
+	const char *old_name, struct vfs_dentry *new_parent,
+	const char *new_name)
+{
+	struct vfs_dentry *dentry, *released_parent;
+	uint32 index;
+
+	for (index = 0; index < VFS_DENTRY_MAX; index++) {
+		released_parent = 0;
+		spinlock_acquire(&vfs.lock);
+		dentry = &vfs.dentries[index];
+		if (dentry->ref < 1 || !dentry->parent ||
+		    !vfs_same_inode(dentry->inode, inode) ||
+		    !vfs_same_inode(dentry->parent->inode, old_parent) ||
+		    !string_equal(dentry->name, old_name)) {
+			spinlock_release(&vfs.lock);
+			continue;
+		}
+		if (dentry->parent != new_parent) {
+			released_parent = dentry->parent;
+			new_parent->ref++;
+			dentry->parent = new_parent;
+		}
+		safe_strncpy(dentry->name, new_name, sizeof(dentry->name));
+		spinlock_release(&vfs.lock);
+		if (released_parent)
+			vfs_dentry_put(released_parent);
+	}
 }
 
 static struct vfs_mount *vfs_child_mount_locked(
@@ -3036,7 +3093,7 @@ int vfs_rename(const char *old_name, const char *new_name,
 	struct vfs_path source, old_parent, new_parent, destination;
 	char old_last[VFS_NAME_MAX + 1];
 	char new_last[VFS_NAME_MAX + 1];
-	int destination_found = 0, status;
+	int destination_found = 0, same_target = 0, status;
 
 	if (flags & ~VFS_RENAME_NOREPLACE)
 		return VFS_ERR_INVAL;
@@ -3090,6 +3147,8 @@ int vfs_rename(const char *old_name, const char *new_name,
 			  &destination, 0);
 	if (status == VFS_OK) {
 		destination_found = 1;
+		same_target = vfs_same_inode(source.dentry->inode,
+					     destination.dentry->inode);
 		if (destination.mount->parent &&
 		    destination.dentry == destination.mount->root) {
 			status = VFS_ERR_BUSY;
@@ -3107,6 +3166,11 @@ int vfs_rename(const char *old_name, const char *new_name,
 		operations->rename(old_parent.dentry->inode, old_last,
 		                   new_parent.dentry->inode, new_last,
 		                   flags) : VFS_ERR_NOTSUPP;
+	if (status == VFS_OK && !same_target) {
+		vfs_finish_renamed_dentries(
+			source.dentry->inode, old_parent.dentry->inode,
+			old_last, new_parent.dentry, new_last);
+	}
 out:
 	if (destination_found)
 		vfs_path_put(&destination);

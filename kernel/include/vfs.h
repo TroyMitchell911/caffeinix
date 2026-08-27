@@ -356,6 +356,9 @@ void vfs_super_free(struct vfs_super_block *superblock);
 struct vfs_inode *vfs_inode_alloc(struct vfs_super_block *superblock);
 struct vfs_inode *vfs_inode_get(struct vfs_inode *inode);
 void vfs_inode_put(struct vfs_inode *inode);
+typedef int (*vfs_inode_visit_t)(struct vfs_inode *inode, void *context);
+int vfs_visit_inodes(struct vfs_super_block *superblock,
+		     vfs_inode_visit_t visit, void *context);
 int vfs_inode_stat_default(struct vfs_inode *inode,
 			   struct vfs_stat *stat);
 int vfs_inode_stat(struct vfs_inode *inode, struct vfs_stat *stat);
