@@ -628,7 +628,7 @@ done
 
 "$musl_cc" \
 	-static -march=rv64gc -mabi=lp64d \
-	-O2 -Wall -Wextra -Werror \
+	-O2 -Wall -Wextra -Werror -pthread \
 	"$tests_dir/procfs_runtime.c" \
 	-o "$staging/bin/procfs-runtime"
 

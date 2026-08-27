@@ -2,6 +2,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <netinet/in.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,6 +21,8 @@
 #define LOAD_WORKERS 8
 #define LOAD_WORK_NS 6500000000LL
 #define CHILD_CPU_WORK_NS 100000000LL
+#define SHARED_READ_ROUNDS 16
+#define SHARED_READ_WORKERS 8
 #define SYSINFO_LOAD_SHIFT 16
 #define TRANSPORT_SOCKET_COUNT 12
 
@@ -49,6 +52,66 @@ static ssize_t read_file(const char *path, char *buffer, size_t size)
 	buffer[total] = 0;
 	close(fd);
 	return total;
+}
+
+struct shared_read_worker {
+	pthread_barrier_t *barrier;
+	ssize_t count;
+	int fd;
+	int failed;
+};
+
+static void *shared_read_worker(void *argument)
+{
+	struct shared_read_worker *worker = argument;
+	char byte;
+	ssize_t count;
+
+	pthread_barrier_wait(worker->barrier);
+	while ((count = read(worker->fd, &byte, 1)) > 0)
+		worker->count += count;
+	if (count < 0)
+		worker->failed = 1;
+	return 0;
+}
+
+static void test_shared_read_position(void)
+{
+	struct shared_read_worker workers[SHARED_READ_WORKERS];
+	pthread_t threads[SHARED_READ_WORKERS];
+	pthread_barrier_t barrier;
+	char snapshot[BUFFER_SIZE];
+	ssize_t expected, total;
+	int fd, index, round;
+
+	for (round = 0; round < SHARED_READ_ROUNDS; round++) {
+		fd = open("/proc/self/stat", O_RDONLY);
+		if (fd < 0 ||
+		    (expected = pread(fd, snapshot, sizeof(snapshot), 0)) <= 0 ||
+		    pthread_barrier_init(&barrier, 0,
+					 SHARED_READ_WORKERS + 1))
+			fail("shared read setup");
+		memset(workers, 0, sizeof(workers));
+		for (index = 0; index < SHARED_READ_WORKERS; index++) {
+			workers[index].barrier = &barrier;
+			workers[index].fd = dup(fd);
+			if (workers[index].fd < 0 ||
+			    pthread_create(&threads[index], 0, shared_read_worker,
+					   &workers[index]))
+				fail("shared read worker");
+		}
+		pthread_barrier_wait(&barrier);
+		total = 0;
+		for (index = 0; index < SHARED_READ_WORKERS; index++) {
+			if (pthread_join(threads[index], 0) ||
+			    workers[index].failed || close(workers[index].fd))
+				fail("shared read join");
+			total += workers[index].count;
+		}
+		if (total != expected || close(fd) ||
+		    pthread_barrier_destroy(&barrier))
+			fail("shared read position");
+	}
 }
 
 static unsigned long read_meminfo_value(const char *buffer,
@@ -817,6 +880,7 @@ int main(int argc, char **argv)
 	    strcmp(argv[2], "beta"))
 		fail("arguments");
 	test_self_and_cmdline(argc, argv);
+	test_shared_read_position();
 	test_root_directory();
 	test_pending_signal_split();
 	test_system_files();
