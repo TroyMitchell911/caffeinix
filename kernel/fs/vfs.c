@@ -846,6 +846,16 @@ static int vfs_same_inode(struct vfs_inode *left,
 	return vfs_inode_same_identity(left, right);
 }
 
+static int vfs_dentry_descends_from(struct vfs_dentry *dentry,
+				    struct vfs_inode *ancestor)
+{
+	for (; dentry; dentry = dentry->parent) {
+		if (vfs_same_inode(dentry->inode, ancestor))
+			return 1;
+	}
+	return 0;
+}
+
 static struct vfs_mount *vfs_child_mount_locked(
 	const struct vfs_path *path)
 {
@@ -3058,6 +3068,12 @@ int vfs_rename(const char *old_name, const char *new_name,
 	    old_parent.dentry->inode->superblock !=
 	    new_parent.dentry->inode->superblock) {
 		status = VFS_ERR_XDEV;
+		goto out;
+	}
+	if (source.dentry->inode->type == VFS_INODE_DIRECTORY &&
+	    vfs_dentry_descends_from(new_parent.dentry,
+				     source.dentry->inode)) {
+		status = VFS_ERR_INVAL;
 		goto out;
 	}
 	status = vfs_mutation_permission(old_parent.dentry->inode);
