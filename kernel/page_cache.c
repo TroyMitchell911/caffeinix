@@ -154,6 +154,29 @@ uint64 page_cache_reclaim_mapped(uint64 target)
 	return reclaimed;
 }
 
+uint64 page_cache_reclaim_unmapped(void)
+{
+	struct page_cache_entry *entry;
+	list_t next, node;
+	uint64 reclaimed = 0;
+
+	sleeplock_acquire(&page_cache.lock);
+	for (node = page_cache.entries.next; node != &page_cache.entries;
+	     node = next) {
+		next = node->next;
+		entry = list_entry(node, struct page_cache_entry, node);
+		if (entry->dirty || !entry->writeback_mapped ||
+		    entry->evicting || palloc_refcount(entry->page) != 1)
+			continue;
+		entry->writeback_mapped = 0;
+		page_cache_release(entry);
+		reclaimed++;
+	}
+	page_cache.stats.reclaimed += reclaimed;
+	sleeplock_release(&page_cache.lock);
+	return reclaimed;
+}
+
 enum page_cache_get_result page_cache_get(struct vfs_file *file,
 					  uint64 offset, uint32 bytes,
 					  void **page)

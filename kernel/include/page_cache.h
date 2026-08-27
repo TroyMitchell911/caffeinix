@@ -48,6 +48,7 @@ int page_cache_truncate(struct vfs_inode *inode, uint64 old_size,
 			uint64 size);
 uint64 page_cache_reclaim(uint64 target);
 uint64 page_cache_reclaim_mapped(uint64 target);
+uint64 page_cache_reclaim_unmapped(void);
 void page_cache_get_stats(struct page_cache_stats *stats);
 
 #endif

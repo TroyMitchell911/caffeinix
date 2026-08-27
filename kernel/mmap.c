@@ -22,6 +22,12 @@ static struct {
 #define MMAP_RECLAIM_BATCH  64
 #define MMAP_RECLAIM_TARGET 32
 
+static void mmap_unmap_pages(process_t process, uint64 start, uint64 length)
+{
+	vm_unmap_range(process->pagetable, start, length);
+	(void)page_cache_reclaim_unmapped();
+}
+
 void mmap_init(void)
 {
 	sleeplock_init(&mmap_registry.lock, "mmap registry");
@@ -773,7 +779,7 @@ uint64 sys_linux_mmap(void)
 			result = -LINUX_ENOMEM;
 			goto out_unlock;
 		} else {
-			vm_unmap_range(process->pagetable, start, length);
+			mmap_unmap_pages(process, start, length);
 		}
 	} else {
 		uint64 low = PGROUNDUP(process->brk);
@@ -934,7 +940,7 @@ uint64 sys_linux_munmap(void)
 		sleeplock_release(&process->mmap_lock);
 		return -LINUX_ENOMEM;
 	}
-	vm_unmap_range(process->pagetable, address, length);
+	mmap_unmap_pages(process, address, length);
 	sleeplock_release(&process->mmap_lock);
 	return 0;
 }
