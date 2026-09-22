@@ -1,12 +1,9 @@
 /*
- * @Author: TroyMitchell
- * @Date: 2024-04-17
- * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-15
- * @FilePath: /caffeinix/kernel/include/debug.h
- * @Description: 
- * Words are cheap so I do.
- * Copyright (c) 2024 by TroyMitchell, All Rights Reserved. 
+ * Fatal diagnostics and deferred state dumps. Ordinary serial-break requests
+ * are deferred to the workqueue; panic output must not depend on acquiring
+ * locks that may already be held.
+ *
+ * Copyright (c) 2024 by TroyMitchell, All Rights Reserved.
  */
 #ifndef __CAFFEINIX_KERNEL_DEBUG_H
 #define __CAFFEINIX_KERNEL_DEBUG_H

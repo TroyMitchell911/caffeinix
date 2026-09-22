@@ -1,3 +1,8 @@
+/*
+ * Freestanding callback formatting and polling text output. See printf.c for
+ * the supported format subset and the distinction between serialized and
+ * emergency printing.
+ */
 #ifndef __CAFFEINIX_KERNEL_PRINTF_H
 #define __CAFFEINIX_KERNEL_PRINTF_H
 
