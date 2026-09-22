@@ -1,0 +1,72 @@
+# Shared by the QEMU runtime suite and focused terminal regression runs.
+proc test_output_interrupt {mode} {
+	global spawn_id timeout env
+
+	set saved_timeout $timeout
+	set timeout 5
+	set bytes 0
+	if {$mode eq "cat"} {
+		set command "cat /dev/zero"
+	} else {
+		set command "/bin/tty-runtime output-$mode"
+	}
+
+	# Keep the flood out of CI logs, but inspect the actual NUL bytes.
+	log_user 0
+	log_file
+	remove_nulls -i $spawn_id 0
+	send -- "$command\r"
+	expect {
+		-re {\x00+} {
+			incr bytes [string length $expect_out(0,string)]
+		}
+		-re {TTY_RUNTIME_FAIL=[^\r\n]*|\[PANIC\]} {
+			abort_test "output setup failed: $expect_out(0,string)"
+		}
+		timeout { abort_test "$mode did not begin output" }
+		eof { abort_test "QEMU exited before $mode output" }
+	}
+	set started [clock milliseconds]
+	send -- "\003"
+	expect {
+		-re {\x00+} {
+			incr bytes [string length $expect_out(0,string)]
+			exp_continue -continue_timer
+		}
+		-re {TTY_OUTPUT_OK bytes=([0-9]+)\r?\n} {
+			if {$mode eq "cat" || $bytes != $expect_out(1,string)} {
+				abort_test [format "%s output count: got %d, expected %d" \
+					$mode $bytes $expect_out(1,string)]
+			}
+			expect_prompt
+		}
+		-re {(^|\r?\n)# $} {
+			if {$mode ne "cat"} {
+				abort_test "$mode exited without checking short output"
+			}
+		}
+		-re {TTY_RUNTIME_FAIL=[^\r\n]*|\[PANIC\]} {
+			abort_test "output interrupt failed: $expect_out(0,string)"
+		}
+		timeout { abort_test "$mode Ctrl-C did not complete within 5 s" }
+		eof { abort_test "QEMU exited during $mode Ctrl-C" }
+	}
+	set elapsed [expr {[clock milliseconds] - $started}]
+	remove_nulls -i $spawn_id 1
+	log_user 1
+	log_file $env(QEMU_LOG)
+	set timeout $saved_timeout
+	if {$elapsed > 5000} {
+		abort_test "$mode Ctrl-C exceeded 5 s"
+	}
+	if {$mode eq "cat"} {
+		send -- "echo TTY_CAT_STATUS=\$?\r"
+		expect {
+			-re {\r?\nTTY_CAT_STATUS=130\r?\n} {}
+			timeout { abort_test "cat did not exit from SIGINT" }
+			eof { abort_test "QEMU exited after cat Ctrl-C" }
+		}
+		expect_prompt
+	}
+	puts "TTY_OUTPUT_INTERRUPT_OK mode=$mode elapsed_ms=$elapsed bytes=$bytes"
+}

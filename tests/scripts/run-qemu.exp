@@ -1,5 +1,7 @@
 #!/usr/bin/expect -f
 
+source [file join [file dirname [info script]] tty-output.exp]
+
 proc abort_test {message} {
 	puts stderr "QEMU selftest failed: $message"
 	catch {send -- "\001x"}
@@ -1536,6 +1538,10 @@ expect {
 	eof { abort_test "QEMU exited during long UART output" }
 }
 expect_prompt
+
+foreach mode {write sendfile cat} {
+	test_output_interrupt $mode
+}
 
 send -- "/bin/fs-runtime\r"
 expect {

@@ -1268,6 +1268,10 @@ uint64 sys_linux_sendfile(void)
 	}
 	buffer_address = (uint64)buffer;
 	while (total < count) {
+		if (signal_pending_unblocked(cur_thread())) {
+			read_result = VFS_ERR_INTR;
+			break;
+		}
 		chunk = count - total;
 		if (chunk > PGSIZE)
 			chunk = PGSIZE;

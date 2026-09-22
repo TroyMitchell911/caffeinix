@@ -36,8 +36,14 @@ static int64 uart_tty_write(struct tty *tty, const char *buffer,
 	spinlock_acquire(&port->lock);
 	while (written < count) {
 		while (port->transmit_head - port->transmit_tail ==
-		       UART_TX_BUFFER_SIZE)
-			wait_queue_sleep(&port->transmit_wait, &port->lock);
+		       UART_TX_BUFFER_SIZE) {
+			if (wait_queue_sleep_interruptible(&port->transmit_wait,
+			                                   &port->lock) ==
+			    WAIT_QUEUE_INTERRUPTED) {
+				spinlock_release(&port->lock);
+				return written ? written : VFS_ERR_INTR;
+			}
+		}
 		port->transmit[port->transmit_head % UART_TX_BUFFER_SIZE] =
 			buffer[written++];
 		port->transmit_head++;

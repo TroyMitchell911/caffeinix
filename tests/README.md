@@ -137,6 +137,10 @@ The guest selftest covers:
 - termios set/get state, canonical echo and erase, raw input, CR/NL handling,
   `ISIG` control characters, `NOFLSH`, blocking wakeups, and UART output
   larger than the transmit queue;
+- Ctrl-C during sustained `write`, `sendfile`, and BusyBox `cat /dev/zero`
+  output, with a five-second response limit, exact short-write byte counts,
+  and a usable shell afterwards; timer-interrupted `sendfile` to `/dev/null`
+  also checks explicit and shared input offsets without UART blocking;
 - dynamic BusyBox ash startup, core applets, repeated process startup,
   command and UTF-8 pathname completion, completion listings, saved and
   reverse-searchable history, Home/End/Delete and control-key editing, long
