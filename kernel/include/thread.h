@@ -1,12 +1,11 @@
 /*
- * @Author: TroyMitchell
- * @Date: 2024-05-16
- * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-18
- * @FilePath: /caffeinix/kernel/include/thread.h
- * @Description: 
- * Words are cheap so I do.
- * Copyright (c) 2024 by TroyMitchell, All Rights Reserved. 
+ * Thread state and lifetime interface.
+ *
+ * A thread table entry is protected by its lock.  A user thread additionally
+ * belongs to an owning process and follows the process -> thread lock order.
+ * State changes and runqueue membership go through scheduler interfaces.
+ *
+ * Copyright (c) 2024 by TroyMitchell, All Rights Reserved.
  */
 #ifndef __CAFFEINIX_KERNEL_THREAD_H
 #define __CAFFEINIX_KERNEL_THREAD_H
@@ -36,7 +35,7 @@ typedef struct context {
         uint64 ra;
         uint64 sp;
 
-        /* Callee saved */
+	/* RISC-V callee-saved integer registers used by switchto(). */
         uint64 s0;
         uint64 s1;
         uint64 s2;
@@ -52,15 +51,16 @@ typedef struct context {
 }*context_t;
 
 typedef struct trapframe {
-        /* kernel page table */
+	/* Layout consumed by the RISC-V trampoline assembly. */
+	/* Kernel page table used while servicing a user trap. */
         /*   0 */ uint64 kernel_satp; 
-        /* top of process's kernel stack */
+	/* Top of this thread's kernel stack. */
         /*   8 */ uint64 kernel_sp; 
-        /* usertrap() */   
+	/* C trap handler entry point. */
         /*  16 */ uint64 kernel_trap; 
-        /* saved user program counter */  
+	/* Saved user program counter. */
         /*  24 */ uint64 epc; 
-        /* saved kernel tp */      
+	/* Saved kernel hart-local value. */
         /*  32 */ uint64 kernel_hartid; 
         /*  40 */ uint64 ra;
         /*  48 */ uint64 sp;
@@ -175,16 +175,83 @@ typedef struct thread {
 
 extern struct thread thread[NTHREAD];
 
+/**
+ * map_kernel_stack() - Map every fixed virtual kernel-stack slot
+ * @pgdir: Kernel page table receiving writable stack mappings.
+ *
+ * The mappings consume physical pages and remain valid for the page table's
+ * lifetime. Allocation failure is fatal during VM setup.
+ *
+ * Context: Early VM construction; no concurrent page-table users.
+ */
 void map_kernel_stack(pagedir_t pgdir);
-
+/**
+ * thread_setup() - Initialize the static thread table
+ *
+ * Context: Early boot before any thread allocation or scheduling.
+ */
 void thread_setup(void);
+/**
+ * thread_alloc() - Reserve and initialize a user-thread table entry
+ * @p: Caller-locked live process which receives the thread.
+ *
+ * Return: A locked, THREAD_ALLOCATED thread on success, or NULL when no slot
+ * or trapframe page is available. The returned thread is not runnable.
+ */
 thread_t thread_alloc(process_t p);
+/**
+ * thread_free() - Detach and reset a user-thread table entry
+ * @t: Exited or otherwise detached caller-locked user thread.
+ *
+ * The caller holds @t->home->lock followed by @t->lock. The thread must not
+ * be runnable, waiting, or a vfork parent. The thread lock remains held.
+ *
+ * Context: Thread/process reaping path; may free physical memory.
+ */
 void thread_free(thread_t t);
+/**
+ * user_thread_reap() - Reap the current scheduler's exited user thread
+ * @t: Caller-locked exited user thread.
+ *
+ * Acquires the owning process lock in the required process -> thread order,
+ * unmaps the trapframe, frees the entry, and wakes thread reapers.
+ *
+ * Context: Scheduler context; @t->lock held.
+ */
 void user_thread_reap(thread_t t);
+/**
+ * thread_get_robust_list() - Look up a user thread's robust-futex list
+ * @tid: Positive user thread ID.
+ * @head: Destination for the user-space robust-list head address.
+ * @length: Destination for the ABI list length.
+ *
+ * Return: 0 on success, or -1 if the TID is absent or an argument is NULL.
+ */
 int thread_get_robust_list(int tid, uint64 *head, uint64 *length);
+/**
+ * thread_last_user_tid() - Return the latest allocated positive user TID
+ *
+ * Return: The high-water user TID; it is not a liveness query.
+ */
 int thread_last_user_tid(void);
+/**
+ * kernel_thread_create() - Create and enqueue a kernel thread
+ * @name: Non-NULL name copied into the thread entry.
+ * @function: Non-NULL entry function.
+ * @argument: Opaque argument passed to @function.
+ *
+ * Return: The new thread after its lock is released, or NULL if no slot is
+ * available or an argument is invalid.
+ */
 thread_t kernel_thread_create(const char *name, thread_func_t function,
 			      void *argument);
+/**
+ * kernel_thread_reap() - Reset an exited kernel-thread entry
+ * @thread: Caller-locked exited kernel thread.
+ *
+ * Context: Scheduler context. @thread must not be queued or waiting; its
+ * lock remains held on return.
+ */
 void kernel_thread_reap(thread_t thread);
 
 #endif

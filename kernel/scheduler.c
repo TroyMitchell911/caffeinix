@@ -1,3 +1,12 @@
+/*
+ * Global CFS-style scheduler.
+ *
+ * Runnable entities are ordered by virtual runtime in one red-black tree.
+ * The runqueue lock protects the tree and scheduler-visible CPU state; each
+ * thread lock protects its state during transitions.  This implementation
+ * deliberately has one SMP runqueue, not Linux's per-CPU scheduler classes.
+ */
+
 #include <cpu.h>
 #include <debug.h>
 #include <ktime.h>
@@ -15,6 +24,7 @@
 #define SCHED_WAKEUP_GRANULARITY_NS 4000000ULL
 #define SCHED_MIN_SLICE_NS 1000000ULL
 
+/* Classic CFS weights indexed by nice value plus 20. */
 static const uint32 nice_weights[40] = {
 	88761, 71755, 56483, 46273, 36291,
 	29154, 23254, 18705, 14949, 11916,
@@ -32,6 +42,7 @@ static struct cpu boot_cpu;
 static cpu_t boot_cpu_table[] = { &boot_cpu };
 cpu_t *cpus = boot_cpu_table;
 
+/* Protected exclusively by runqueue.lock. */
 static struct {
 	struct spinlock lock;
 	struct rb_root timeline;
@@ -105,17 +116,22 @@ uint64 scheduler_context_switches(void)
 	return __atomic_load_n(&context_switches, __ATOMIC_RELAXED);
 }
 
+/* Saturating arithmetic keeps accounting monotonic after counter overflow. */
 static uint64 add_saturate(uint64 left, uint64 right)
 {
 	return left > ~(uint64)0 - right ? ~(uint64)0 : left + right;
 }
 
+/* Convert actual nanoseconds to nice-0 normalized virtual runtime. */
 static uint64 scale_runtime(uint64 runtime, uint32 weight)
 {
 	return runtime / weight * NICE_0_LOAD +
 	       runtime % weight * NICE_0_LOAD / weight;
 }
 
+/*
+ * Charge elapsed execution into a thread's virtual runtime without storing it.
+ */
 static uint64 entity_vruntime_now(thread_t thread, uint64 now)
 {
 	uint64 runtime = thread->sched.vruntime;
@@ -128,6 +144,7 @@ static uint64 entity_vruntime_now(thread_t thread, uint64 now)
 	return runtime;
 }
 
+/* Charge elapsed time to the mode that was active before this transition. */
 static void account_mode(thread_t thread, uint64 now)
 {
 	uint64 start = __atomic_load_n(&thread->sched.mode_start,
@@ -149,6 +166,7 @@ static void account_mode(thread_t thread, uint64 now)
 	__atomic_store_n(&thread->sched.mode_start, now, __ATOMIC_RELAXED);
 }
 
+/* Commit a running thread's elapsed physical and weighted virtual runtime. */
 static void account_runtime(thread_t thread, uint64 now)
 {
 	uint64 delta;
@@ -211,6 +229,9 @@ void scheduler_thread_times(thread_t thread, uint64 now,
 	*system = system_time;
 }
 
+/*
+ * Order runnable entities by vruntime, then TID as a stable tree tie-breaker.
+ */
 static int entity_before(thread_t left, thread_t right)
 {
 	if (left->sched.vruntime != right->sched.vruntime)
@@ -220,6 +241,7 @@ static int entity_before(thread_t left, thread_t right)
 	return left < right;
 }
 
+/* Insert an entity exactly once while runqueue.lock is held. */
 static void enqueue_entity_locked(thread_t thread)
 {
 	struct rb_node **link = &runqueue.timeline.node;
@@ -242,6 +264,7 @@ static void enqueue_entity_locked(thread_t thread)
 	runqueue.total_weight += thread->sched.weight;
 }
 
+/* Remove an enqueued entity while runqueue.lock is held. */
 static void dequeue_entity_locked(thread_t thread)
 {
 	if (!thread->sched.on_runqueue || !runqueue.count ||
@@ -253,6 +276,7 @@ static void dequeue_entity_locked(thread_t thread)
 	runqueue.total_weight -= thread->sched.weight;
 }
 
+/* Bound wakeup credit so a sleeper cannot monopolize the next selection. */
 static void place_entity_locked(thread_t thread)
 {
 	uint64 floor = runqueue.min_vruntime;
@@ -269,6 +293,7 @@ static void place_entity_locked(thread_t thread)
 	}
 }
 
+/* Advance the monotonic runqueue floor while the runqueue lock is held. */
 static void update_min_vruntime_locked(thread_t selected, uint64 now)
 {
 	struct rb_node *node = rb_first(&runqueue.timeline);
@@ -303,6 +328,7 @@ static void update_min_vruntime_locked(thread_t selected, uint64 now)
 		runqueue.min_vruntime = minimum;
 }
 
+/* Reserve an idle CPU before dropping runqueue.lock and sending its IPI. */
 static int claim_idle_cpu_locked(void)
 {
 	cpu_t current = cur_cpu();
@@ -322,6 +348,7 @@ static int claim_idle_cpu_locked(void)
 	return -1;
 }
 
+/* Find the least fair running CPU for a newly runnable entity. */
 static int select_preempt_cpu_locked(thread_t waking, uint64 now)
 {
 	uint64 wake_vruntime = waking->sched.vruntime;
@@ -350,6 +377,7 @@ static int select_preempt_cpu_locked(thread_t waking, uint64 now)
 	return target;
 }
 
+/* Send an SBI IPI to an idle CPU selected for runnable work. */
 static void wake_cpu(int target)
 {
 	if (target < 0 || target == cpuid())
@@ -377,6 +405,7 @@ void scheduler_kick(thread_t thread)
 	wake_cpu(target);
 }
 
+/* Transition a locked thread into the global runnable tree. */
 static void scheduler_enqueue(thread_t thread, int wake_idle)
 {
 	thread_state_t previous;
@@ -413,6 +442,7 @@ void scheduler_make_runnable(thread_t thread)
 	scheduler_enqueue(thread, 1);
 }
 
+/* Calculate a weighted slice including selected and running entities. */
 static uint64 calculate_slice_locked(thread_t selected)
 {
 	uint64 total_weight = runqueue.total_weight + selected->sched.weight;
@@ -504,6 +534,7 @@ int scheduler_get_nice(thread_t thread)
 	return nice;
 }
 
+/* Remove the leftmost entity and reserve it for @cpu. */
 static thread_t scheduler_next(cpu_t cpu)
 {
 	struct rb_node *node;

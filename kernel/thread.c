@@ -1,12 +1,11 @@
 /*
- * @Author: TroyMitchell
- * @Date: 2024-05-11
- * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-17
- * @FilePath: /caffeinix/kernel/thread.c
- * @Description: 
- * Words are cheap so I do.
- * Copyright (c) 2024 by TroyMitchell, All Rights Reserved. 
+ * Static thread table allocation and reaping.
+ *
+ * A table entry is protected by its thread lock. User thread allocation and
+ * freeing also require the owning process lock first. Scheduler state is
+ * initialized here but only the scheduler changes runqueue membership.
+ *
+ * Copyright (c) 2024 by TroyMitchell, All Rights Reserved.
  */
 #include <thread.h>
 #include <mem_layout.h>
@@ -23,6 +22,7 @@ static int next_tid = 1;
 static int next_kernel_tid = -1;
 static struct spinlock tid_lock;
 
+/* Reset scheduler fields before the entry becomes runnable. */
 static void thread_sched_init(thread_t thread)
 {
 	rb_node_init(&thread->sched.run_node);
@@ -40,6 +40,7 @@ static void thread_sched_init(thread_t thread)
 	thread->sched.user_mode = 0;
 }
 
+/* First instruction of a kernel thread after switchto() releases its lock. */
 static void kernel_thread_entry(void)
 {
 	thread_t current = cur_thread();
@@ -52,6 +53,7 @@ static void kernel_thread_entry(void)
 	scheduler_exit();
 }
 
+/* Positive IDs identify user threads; tid_lock serializes both ID streams. */
 static int tid_alloc(void)
 {
         int tid;
@@ -61,6 +63,7 @@ static int tid_alloc(void)
         return tid;
 }
 
+/* Allocate a negative TID reserved for kernel workers. */
 static int kernel_tid_alloc(void)
 {
 	int tid;
@@ -81,12 +84,13 @@ int thread_last_user_tid(void)
 	return tid;
 }
 
-/* Be called by vm_create */
 void map_kernel_stack(pagedir_t pgdir)
 {
 	int i, page;
         uint64 pa, va;
-        /* Assign kernel stack space to each process and map it */
+	/*
+	 * Every thread slot has a fixed virtual stack range in this page table.
+	 */
         for(i = 0; i < NTHREAD; i++) {
 		va = KSTACK(i);
 		for (page = 0; page < KSTACK_PAGES; page++) {
@@ -108,7 +112,7 @@ void thread_setup(void)
                 t->kstack = KSTACK((int)(t - thread));;
                 t->state = THREAD_UNUSED;
 		thread_sched_init(t);
-	signal_thread_init(t);
+		signal_thread_init(t);
                 t->waiting_on = 0;
                 t->on_waitqueue = 0;
 		t->wait_private = 0;
@@ -186,9 +190,8 @@ found:
 
         t->tid = tid_alloc();
 
-        /* Set the address of kernel stack */
         memset(&t->context, 0, sizeof(struct context));
-        /* Set the context of stack pointer */
+	/* switchto() begins this user thread at the top of its fixed stack. */
 		t->context.sp = t->kstack + KSTACK_SIZE;
 
         return t;
@@ -231,7 +234,7 @@ found:
 	t->clear_child_tid = 0;
 	t->robust_list = 0;
 	t->robust_list_len = 0;
-		signal_thread_init(t);
+	signal_thread_init(t);
 	t->process_reaper = 0;
 	t->exit_requested = 0;
 	t->exit_status = 0;
@@ -376,7 +379,9 @@ void user_thread_reap(thread_t t)
 	p = t->home;
 	if (!p)
 		PANIC("reap detached thread");
-	/* Keep the global process -> thread lock order. */
+	/*
+	 * Drop and reacquire to preserve the global process -> thread lock order.
+	 */
 	spinlock_release(&t->lock);
 	spinlock_acquire(&p->lock);
 	spinlock_acquire(&t->lock);
