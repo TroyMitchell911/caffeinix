@@ -322,6 +322,9 @@ described in the
 [`network architecture`](Documentation/networking/architecture.md).
 The SMP scheduling and virtual-runtime rules are described in
 [`Documentation/scheduler.md`](Documentation/scheduler.md).
+
+Memory allocation, virtual mappings, faults, and cache reclaim are described
+in [`Documentation/memory-management.md`](Documentation/memory-management.md).
 The userspace entropy source and weak-seed fallback are described in
 [`Documentation/random.md`](Documentation/random.md).
 
@@ -514,6 +517,9 @@ the kernel. No separate rootfs repository or private compiler is required.
   interrupt-controller, console, and storage drivers.
 
 ## Contributing
+
+The [kernel documentation index](Documentation/index.md) covers subsystem
+design, API contracts, validation, and comment/documentation conventions.
 
 Bug reports and focused changes are welcome through
 [GitHub issues](https://github.com/TroyMitchell911/Caffeinix/issues).
