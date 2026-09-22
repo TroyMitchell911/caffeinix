@@ -1,3 +1,6 @@
+/*
+ * Guest I/O regression for vectors, pipes, sendfile, offsets, and interruption.
+ */
 #define _GNU_SOURCE
 
 #include <errno.h>

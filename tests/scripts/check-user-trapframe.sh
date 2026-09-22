@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Host ABI check for the user trapframe and RISC-V entry assembly contract.
 
 set -euo pipefail
 

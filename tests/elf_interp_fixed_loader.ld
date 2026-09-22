@@ -1,3 +1,4 @@
+/* Linker fixture placing the fixed-address ELF interpreter image. */
 ENTRY(_start)
 
 PHDRS

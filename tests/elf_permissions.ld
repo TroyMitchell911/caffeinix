@@ -1,3 +1,4 @@
+/* Program-header permissions used by the ELF execution-protection fixture. */
 ENTRY(_start)
 
 PHDRS

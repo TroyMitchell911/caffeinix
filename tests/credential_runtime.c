@@ -1,3 +1,6 @@
+/*
+ * Guest credential and permission regression for Linux-compatible process UAPI.
+ */
 #define _GNU_SOURCE
 
 #include <errno.h>

@@ -1,3 +1,4 @@
+/* Main ELF fixture carrying PT_INTERP and validating interpreter handoff. */
 	.section .interp, "a", @progbits
 #ifdef ELF_FIXED_INTERPRETER
 	.asciz "/lib/ld-caffeinix-riscv64.so.1"

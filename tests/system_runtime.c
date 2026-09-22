@@ -1,3 +1,4 @@
+/* Guest identity, affinity queries, sysinfo, and wait4 CPU-accounting tests. */
 #define _GNU_SOURCE
 
 #include <errno.h>

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Fetch checksum-pinned musl/BusyBox, build static/dynamic userspace fixtures,
+# and create the ext4/FAT images consumed by the QEMU test harnesses.
 
 set -euo pipefail
 

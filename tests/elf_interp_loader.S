@@ -1,3 +1,7 @@
+/*
+ * Relocation-free test interpreter. Validate relocated auxv/PHDR/entry values,
+ * emit a success marker, and jump to the main image without libc.
+ */
 	.section .rodata
 interpreter_message:
 #ifdef ELF_FIXED_INTERPRETER

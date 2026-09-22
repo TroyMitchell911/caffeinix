@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Boot QEMU and collect allocator/page-cache snapshots around executable
+# startup, resident child processes, and fork loops; check regression budgets.
 
 import argparse
 import json

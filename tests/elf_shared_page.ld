@@ -1,3 +1,4 @@
+/* Program-header layout that forces adjacent ELF segments to share one page. */
 PHDRS
 {
 	text PT_LOAD FILEHDR PHDRS FLAGS(5);

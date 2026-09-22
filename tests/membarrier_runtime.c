@@ -1,3 +1,4 @@
+/* Guest membarrier regression for command validation and thread ordering. */
 #define _GNU_SOURCE
 
 #include <errno.h>

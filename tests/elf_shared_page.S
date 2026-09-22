@@ -1,3 +1,6 @@
+/*
+ * ELF fixture where load segments share a page but retain distinct permissions.
+ */
 	.section .rodata
 message:
 	.ascii "ELF_SHARED_PAGE_OK\n"

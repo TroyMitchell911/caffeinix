@@ -1,3 +1,4 @@
+/* Linker layout for the main PT_INTERP fixture executable. */
 ENTRY(_start)
 
 PHDRS

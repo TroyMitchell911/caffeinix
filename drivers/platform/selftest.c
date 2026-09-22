@@ -1,3 +1,4 @@
+/* Boot-time platform bus matching and resource lookup selftest. */
 #include <device_model.h>
 #include <mystring.h>
 #include <platform_device.h>
@@ -7,6 +8,7 @@ static int platform_test_probes;
 static int platform_test_removes;
 static int platform_test_releases;
 
+/* Verify probe receives the resource and match-data selected by the bus. */
 static int platform_test_probe(struct platform_device *device)
 {
 	struct resource *memory;
@@ -21,12 +23,14 @@ static int platform_test_probe(struct platform_device *device)
 	return DRIVER_OK;
 }
 
+/* Record remove after unregister for lifetime coverage. */
 static void platform_test_remove(struct platform_device *device)
 {
 	(void)device;
 	platform_test_removes++;
 }
 
+/* Count release after the test platform device loses its final reference. */
 static void platform_test_release(struct device *device)
 {
 	(void)device;

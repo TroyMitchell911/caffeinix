@@ -1,3 +1,4 @@
+/* Isolated block-core registration and completion selftest. */
 #include <block_device.h>
 #include <debug.h>
 #include <mystring.h>
@@ -10,6 +11,7 @@ struct block_test_context {
 	int close_finished;
 };
 
+/* Complete the test request immediately to cover core completion ordering. */
 static int block_test_submit(struct block_device *device,
 			     struct block_request *request)
 {
@@ -22,6 +24,7 @@ static const struct block_device_operations block_test_operations = {
 	.submit = block_test_submit,
 };
 
+/* Close the held test device reference after unregister wait coverage. */
 static void block_test_close(void *argument)
 {
 	struct block_test_context *context = argument;
@@ -37,6 +40,7 @@ static void block_test_close(void *argument)
 	__atomic_store_n(&context->close_finished, 1, __ATOMIC_RELEASE);
 }
 
+/* Run close from a scheduled thread while unregister waits for it. */
 static void block_test_run(void *argument)
 {
 	struct block_device device = {
@@ -80,6 +84,14 @@ static void block_test_run(void *argument)
 		PANIC("block selftest lifetime");
 }
 
+/**
+ * block_core_selftest_start() - Start the isolated block-core selftest.
+ *
+ * Context:
+ * Boot test context; creates a worker and may sleep for completion.
+ * Return:
+ * Zero on success, negative on failed invariant.
+ */
 int block_core_selftest_start(void)
 {
 	return kernel_thread_create("block-test", block_test_run, 0) ? 0 : -1;

@@ -1,3 +1,6 @@
+/*
+ * Host VirtIO split-ring unit test for descriptor ownership and notification.
+ */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

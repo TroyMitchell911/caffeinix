@@ -1,3 +1,6 @@
+/*
+ * Guest clone/thread lifecycle regression for TLS, waits, and exit semantics.
+ */
 #define _GNU_SOURCE
 
 #include <errno.h>

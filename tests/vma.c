@@ -1,3 +1,4 @@
+/* Host VMA interval-management unit test for lookup, split, and merge rules. */
 #include <stdio.h>
 #include <stdlib.h>
 

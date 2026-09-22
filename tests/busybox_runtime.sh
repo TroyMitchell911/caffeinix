@@ -1,4 +1,5 @@
 #!/bin/ash
+# Guest BusyBox smoke test; success markers are consumed by the QEMU harness.
 
 set -u
 

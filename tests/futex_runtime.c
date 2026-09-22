@@ -1,3 +1,4 @@
+/* Guest futex regression for wait/wake ordering, timeout, and shared memory. */
 #define _GNU_SOURCE
 
 #include <errno.h>

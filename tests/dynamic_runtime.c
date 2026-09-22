@@ -1,3 +1,4 @@
+/* Guest dynamic-loader regression for PT_INTERP, TLS, dlopen, and dlclose. */
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>

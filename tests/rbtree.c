@@ -1,3 +1,7 @@
+/*
+ * Host red-black tree unit test for ordering, rotations, and deletion
+ * invariants.
+ */
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>

@@ -1,4 +1,6 @@
 #!/usr/bin/expect -f
+# Drive the primary interactive guest regression protocol and parse success
+# markers.
 
 source [file join [file dirname [info script]] tty-output.exp]
 

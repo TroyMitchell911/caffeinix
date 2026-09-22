@@ -1,3 +1,7 @@
+/*
+ * Host ELF parser/loader unit test for malformed metadata and segment
+ * validation.
+ */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

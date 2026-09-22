@@ -1,3 +1,7 @@
+/*
+ * Dynamic exec child: verify FD_CLOEXEC, or exit immediately for pressure
+ * loops.
+ */
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>

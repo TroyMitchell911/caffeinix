@@ -1,4 +1,5 @@
 #!/usr/bin/expect -f
+# Verify networking-enabled kernel remains usable when no external peer exists.
 
 proc abort_test {message} {
 	puts stderr "offline network test failed: $message"

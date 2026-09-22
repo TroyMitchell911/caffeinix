@@ -1,3 +1,4 @@
+/* Host physical-memory-range parser and overlap validation unit test. */
 #include <stdio.h>
 #include <stdlib.h>
 

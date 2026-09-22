@@ -1,3 +1,6 @@
+/*
+ * Guest Linux signal ABI regression for delivery, masking, restart, and frames.
+ */
 #define _GNU_SOURCE
 
 #include <errno.h>

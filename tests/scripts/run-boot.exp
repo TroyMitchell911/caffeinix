@@ -1,4 +1,5 @@
 #!/usr/bin/expect -f
+# Verify boot milestones and shell readiness for a parameterized QEMU guest.
 
 proc abort_test {message} {
 	puts stderr "OpenSBI boot test failed: $message"

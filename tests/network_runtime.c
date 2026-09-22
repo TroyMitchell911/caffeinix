@@ -1,3 +1,7 @@
+/*
+ * Guest IPv4 socket regression against network_fixture.py through QEMU user
+ * NAT.
+ */
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>

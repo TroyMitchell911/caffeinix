@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Orchestrate host checks, image construction, and QEMU matrix runtime suites.
 
 set -euo pipefail
 

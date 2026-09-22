@@ -1,3 +1,4 @@
+/* Host compile-time Linux network UAPI layout compatibility assertions. */
 #include <stddef.h>
 
 #include <linux_uapi.h>

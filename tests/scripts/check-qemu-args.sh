@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Host check for QEMU argument construction, topology, and optional devices.
 
 set -euo pipefail
 

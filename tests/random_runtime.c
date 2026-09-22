@@ -1,3 +1,6 @@
+/*
+ * Guest AT_RANDOM/getrandom flag, copy-fault, and cross-fork uniqueness tests.
+ */
 #include <errno.h>
 #include <stdint.h>
 #include <stdio.h>

@@ -1,3 +1,7 @@
+/*
+ * Guest file-administration regression for metadata, permissions, links, and
+ * rename.
+ */
 #define _GNU_SOURCE
 
 #include <errno.h>

@@ -1,3 +1,7 @@
+/*
+ * Guest virtual-memory regression for mmap, faults, COW, and protection
+ * changes.
+ */
 #define _GNU_SOURCE
 
 #include <errno.h>

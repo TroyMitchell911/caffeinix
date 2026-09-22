@@ -1,3 +1,7 @@
+/*
+ * Guest execve regression for ELF setup, argument vectors, and error
+ * propagation.
+ */
 #include <elf.h>
 #include <errno.h>
 #include <fcntl.h>

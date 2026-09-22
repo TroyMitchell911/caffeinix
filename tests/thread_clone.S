@@ -1,4 +1,5 @@
-.section .text
+/* Clone ABI assembly shim used by guest thread creation regression. */
+	.section .text
 .global test_clone
 .type test_clone, %function
 test_clone:

@@ -1,3 +1,4 @@
+/* Guest mount regression for supported filesystems and path rules. */
 #define _GNU_SOURCE
 
 #include <errno.h>
