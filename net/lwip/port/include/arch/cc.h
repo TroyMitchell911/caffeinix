@@ -1,3 +1,4 @@
+/* Caffeinix compiler, integer, errno, diagnostic, and random hooks for lwIP. */
 #ifndef __CAFFEINIX_LWIP_ARCH_CC_H
 #define __CAFFEINIX_LWIP_ARCH_CC_H
 
@@ -25,6 +26,13 @@ typedef int64 ptrdiff_t;
 typedef uint64 mem_ptr_t;
 typedef int64 ssize_t;
 
+/**
+ * lwip_errno_location() - Return the current thread's private lwIP errno slot
+ *
+ * Context: Valid thread context.
+ *
+ * Return: Address of thread-owned errno storage.
+ */
 int *lwip_errno_location(void);
 #define errno (*lwip_errno_location())
 
@@ -53,6 +61,13 @@ int *lwip_errno_location(void);
 #define LWIP_PLATFORM_DIAG(arguments) do { printf arguments; } while (0)
 #define LWIP_PLATFORM_ASSERT(message) PANIC((char *)(message))
 
+/**
+ * lwip_port_rand() - Return a serialized non-cryptographic random word
+ *
+ * Context: After sys_init(); takes an internal spinlock, does not sleep.
+ *
+ * Return: 32-bit xorshift output for lwIP protocol use, not security entropy.
+ */
 u32_t lwip_port_rand(void);
 #define LWIP_RAND() lwip_port_rand()
 

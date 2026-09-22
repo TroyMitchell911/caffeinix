@@ -34,14 +34,16 @@ with `EMSGSIZE`; an empty `sendmsg` still emits an empty datagram.  Connected
 UDP and raw sockets implement read and write shutdown in the wrapper because
 lwIP only exposes shutdown for TCP.  UDP and raw sockets accept `AF_UNSPEC`
 through `connect` to remove their peer association.  Raw receive addresses
-report a zero port as required by Linux.  The current `ppoll` accepts a null
-signal-mask pointer; a non-null mask returns `EOPNOTSUPP` because real
-signal-mask semantics are not implemented.
+report a zero port as required by Linux. `ppoll` accepts an optional temporary
+signal mask. It restores the old mask on normal completion; after interruption,
+the signal-delivery/return path preserves and restores the saved mask. A caught
+signal interrupts the wait with `EINTR`, including handlers using `SA_RESTART`.
 
 ## QEMU networking
 
-Networking is optional.  The normal kernel QEMU target attaches a NIC only
-when `NET_BACKEND` is set.  For example:
+The normal kernel QEMU target defaults to `NET_BACKEND=user` and attaches a
+NIC. Set `NET_BACKEND=` for an offline boot. For example, explicit networking
+settings are:
 
 ```bash
 make qemu \
@@ -58,13 +60,29 @@ transport enumeration order.
 `make -C tests qemu` starts local UDP, TCP, reverse-TCP, bulk-transfer, and
 HTTP fixtures.  It verifies DHCP, ICMP to the QEMU gateway, UDP, TCP client
 and server paths, transfers larger than the socket and packet buffers,
-BusyBox `nc` and `wget`, polling, no-NIC boots, and a NIC with no DHCP peer.
+BusyBox `nc`, `wget`, and `ping`, polling, no-NIC boots, and a NIC with no DHCP
+peer. The signal runtime test covers `ppoll` mask restoration and interruption.
 No test requires Internet access or a privileged TAP device.
 
 ## Deliberate omissions
 
 IPv6, AF_UNIX, packet sockets, netlink, ancillary data, credentials,
-`pselect6`, real signal interruption, asynchronous I/O, and the full Linux
-socket-option surface are not implemented.  BusyBox `ping` also awaits the
-general signal/alarm UAPI; raw ICMP is covered directly by the static network
-selftest.
+`pselect6`, asynchronous I/O, and the full Linux socket-option surface are not
+implemented. Direct blocking lwIP socket calls still use non-interruptible
+semaphore/mailbox waits; this limitation does not apply to VFS `ppoll` waits.
+
+## Error and lifetime rules
+
+The socket layer returns Linux negative errno values to the syscall layer.
+It maps lwIP errors explicitly and treats unknown internal failures as
+`EIO`.  Close removes the VFS file from the socket registry before releasing
+the lwIP descriptor, so procfs snapshots cannot retain a freed wrapper.
+`accept4` closes a newly installed file if copying the peer address back to
+userspace fails.  Socket payload buffers are temporary kernel pages; no
+userspace pointer is retained after the syscall returns.
+
+`ppoll` relies on lwIP socket event notifications reaching the VFS poll wait
+queue and on signals waking interruptible waiters. Direct blocking socket
+operations instead wait inside lwIP. Applications needing signal-driven
+cancellation should combine nonblocking socket I/O with `ppoll`, rather than
+assume that a signal interrupts every blocking lwIP call.

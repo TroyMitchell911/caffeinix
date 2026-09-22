@@ -39,6 +39,23 @@ The adapter contains no QEMU address constants.  QEMU user networking
 normally supplies `10.0.2.x`, a gateway, and DNS through DHCP, but another
 backend may supply different values.
 
+## Lifetime and failure handling
+
+An adapter records only a borrowed `net_device` pointer while it is attached.
+The core state-unregister drain guarantees that `lwip_detach_device()` runs
+before the driver can release the device.  A receive packet is copied into a
+lwIP `pbuf`, then its Caffeinix reference is released regardless of success.
+Transmit performs the inverse copy and transfers the packet only after
+`net_device_xmit()` accepts it; a queue-busy or driver error releases it.
+
+Ordinary mailbox and semaphore objects are dynamically allocated by the port;
+the per-thread netconn semaphores use permanent thread-table storage. Dynamic
+objects must have no waiters when freed, and mailboxes must also contain no
+queued messages. Destruction checks panic on these detected violations;
+callers must separately exclude concurrent new users. The port's
+bounded queues and pool settings mean allocation failure is possible and is
+reported to lwIP as `ERR_MEM` or `ERR_BUF`.
+
 ## Updating lwIP
 
 Resolve the intended signed or annotated upstream tag, record its commit,

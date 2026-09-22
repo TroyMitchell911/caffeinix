@@ -112,3 +112,11 @@ It supports network ID 1, block ID 2, and entropy ID 4.  Packed rings,
 indirect descriptors, event index, shared interrupts, reset recovery, hot
 removal, and legacy MMIO are deferred.  `virtio-net` negotiates only MAC and
 link-status features; `virtio-blk` negotiates optional flush.
+
+## Reproducible tests
+
+Run `make -C tests qemu` to build the test root image and boot the supported
+QEMU VirtIO MMIO topology.  The runtime suite covers split-ring descriptor
+exhaustion and completion, block root mounting, network link state, DHCP,
+UDP/TCP traffic, and interface lifecycle.  The host-only virtqueue selftest
+can be run with `make -C tests virtqueue`.

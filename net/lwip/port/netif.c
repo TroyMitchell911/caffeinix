@@ -1,3 +1,9 @@
+/*
+ * lwIP netif adapter for Caffeinix net_device objects.
+ *
+ * Protocol operations execute in the tcpip thread; frame copies isolate lwIP
+ * buffers from driver lifetime and core callbacks serialize device removal.
+ */
 #include <debug.h>
 #include <lwip/dhcp.h>
 #include <lwip/etharp.h>
@@ -24,6 +30,7 @@ static struct {
 	thread_t tcpip_thread;
 } lwip_network;
 
+/* Locate the adapter currently borrowing a core device. */
 static typeof(lwip_network.adapters[0]) *lwip_find_adapter(
 					struct net_device *device)
 {
@@ -37,6 +44,7 @@ static typeof(lwip_network.adapters[0]) *lwip_find_adapter(
 	return 0;
 }
 
+/* Return an unused slot in the bounded adapter table. */
 static typeof(lwip_network.adapters[0]) *lwip_find_free_adapter(void)
 {
 	uint32 index;
@@ -49,6 +57,7 @@ static typeof(lwip_network.adapters[0]) *lwip_find_free_adapter(void)
 	return 0;
 }
 
+/* Prefer an external interface, falling back to loopback. */
 static struct netif *lwip_choose_default_interface(void)
 {
 	struct netif *fallback = 0;
@@ -67,6 +76,7 @@ static struct netif *lwip_choose_default_interface(void)
 	return fallback;
 }
 
+/* Copy one lwIP pbuf chain into a packet and transfer it to a driver. */
 static err_t lwip_send_packet(struct net_device *device,
 			      struct pbuf *pbuf)
 {
@@ -93,6 +103,7 @@ static err_t lwip_send_packet(struct net_device *device,
 	return ERR_OK;
 }
 
+/* Ethernet output hook for a non-loopback interface. */
 static err_t lwip_link_output(struct netif *interface, struct pbuf *pbuf)
 {
 	typeof(lwip_network.adapters[0]) *adapter = interface->state;
@@ -100,6 +111,7 @@ static err_t lwip_link_output(struct netif *interface, struct pbuf *pbuf)
 	return adapter ? lwip_send_packet(adapter->device, pbuf) : ERR_ARG;
 }
 
+/* IPv4 output hook for software loopback. */
 static err_t lwip_loop_output(struct netif *interface, struct pbuf *pbuf,
 			      const ip4_addr_t *address)
 {
@@ -109,6 +121,7 @@ static err_t lwip_loop_output(struct netif *interface, struct pbuf *pbuf,
 	return adapter ? lwip_send_packet(adapter->device, pbuf) : ERR_ARG;
 }
 
+/* Initialize one lwIP netif from its attached core device. */
 static err_t lwip_netif_init(struct netif *interface)
 {
 	typeof(lwip_network.adapters[0]) *adapter = interface->state;
@@ -136,6 +149,7 @@ static err_t lwip_netif_init(struct netif *interface)
 	return ERR_OK;
 }
 
+/* Consume a core packet after copying it into a lwIP pbuf. */
 static void lwip_receive(struct net_packet *packet, void *argument)
 {
 	typeof(lwip_network.adapters[0]) *adapter;
@@ -163,6 +177,7 @@ static void lwip_receive(struct net_packet *packet, void *argument)
 		pbuf_free(pbuf);
 }
 
+/* Apply core administrative and carrier state within tcpip context. */
 static void lwip_apply_device_state(void *argument)
 {
 	typeof(lwip_network.adapters[0]) *adapter = argument;
@@ -179,6 +194,7 @@ static void lwip_apply_device_state(void *argument)
 		netif_set_link_down(interface);
 }
 
+/* Set the lwIP default from its owner or through netifapi. */
 static void lwip_set_default_interface(struct netif *interface)
 {
 	if (!interface)
@@ -189,6 +205,7 @@ static void lwip_set_default_interface(struct netif *interface)
 		PANIC("set lwIP default interface");
 }
 
+/* Stop DHCP, remove netif state, and release an adapter's device borrow. */
 static void lwip_detach_device(struct net_device *device)
 {
 	typeof(lwip_network.adapters[0]) *adapter =
@@ -223,6 +240,7 @@ static void lwip_detach_device(struct net_device *device)
 	pr_notice("lwIP: detached %s", device->name);
 }
 
+/* Queue state handling to tcpip, retrying a transient allocation failure. */
 static void lwip_device_state_work(struct work_struct *work)
 {
 	typeof(lwip_network.adapters[0]) *adapter;
@@ -243,6 +261,7 @@ static void lwip_device_state_work(struct work_struct *work)
 		PANIC("queue lwIP link state");
 }
 
+/* Translate a core state callback into tcpip-thread state work. */
 static void lwip_device_state(struct net_device *device, void *argument)
 {
 	typeof(lwip_network.adapters[0]) *adapter;
@@ -265,6 +284,7 @@ static void lwip_device_state(struct net_device *device, void *argument)
 		PANIC("schedule lwIP link state");
 }
 
+/* Print a newly configured non-loopback IPv4 address. */
 static void lwip_status_changed(struct netif *interface)
 {
 	typeof(lwip_network.adapters[0]) *adapter = interface->state;
@@ -280,6 +300,7 @@ static void lwip_status_changed(struct netif *interface)
 		(value >> 8) & 0xff, value & 0xff);
 }
 
+/* Attach one registered device and initiate its configured IPv4 policy. */
 static int lwip_attach_device(struct net_device *device)
 {
 	typeof(lwip_network.adapters[0]) *adapter;
@@ -326,6 +347,7 @@ static int lwip_attach_device(struct net_device *device)
 	return 0;
 }
 
+/* Register core consumers and attach devices after tcpip initialization. */
 static void lwip_tcpip_ready(void *argument)
 {
 	struct net_device *device;
@@ -380,6 +402,7 @@ struct lwip_interface_snapshot_request {
 	uint32 count;
 };
 
+/* Copy interface state while pinning each corresponding core device. */
 static void lwip_snapshot_interfaces(void *argument)
 {
 	struct lwip_interface_snapshot_request *request = argument;

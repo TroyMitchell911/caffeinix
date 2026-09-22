@@ -1,3 +1,4 @@
+/* Minimal stdio declaration consumed by the imported lwIP sources. */
 #ifndef __CAFFEINIX_LWIP_STDIO_H
 #define __CAFFEINIX_LWIP_STDIO_H
 
