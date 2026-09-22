@@ -1,3 +1,8 @@
+/*
+ * Kernel entropy input and random output interfaces. Output availability and
+ * trusted seeding are separate states; consumers must not infer entropy
+ * quality from a successful read.
+ */
 #ifndef __CAFFEINIX_KERNEL_RANDOM_H
 #define __CAFFEINIX_KERNEL_RANDOM_H
 
