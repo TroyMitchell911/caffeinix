@@ -1,3 +1,10 @@
+/*
+ * Synthetic /dev filesystem.
+ *
+ * devfs projects registered character-device nodes and block devices into a
+ * directory tree.  Its inodes are short-lived VFS wrappers; device lifetime
+ * remains the responsibility of the character and block-device registries.
+ */
 #include <block_device.h>
 #include <char_device.h>
 #include <debug.h>
@@ -9,6 +16,7 @@
 static const struct vfs_inode_operations devfs_inode_operations;
 static const struct vfs_file_operations devfs_directory_operations;
 
+/* Construct the synthetic root or a character-device inode wrapper. */
 static struct vfs_inode *devfs_wrap(struct vfs_super_block *superblock,
 				    const struct char_device_node *node)
 {
@@ -34,6 +42,9 @@ static struct vfs_inode *devfs_wrap(struct vfs_super_block *superblock,
 	return inode;
 }
 
+/*
+ * Construct a synthetic block-device inode wrapper for one registered device.
+ */
 static struct vfs_inode *devfs_wrap_block(
 	struct vfs_super_block *superblock, struct block_device *device)
 {
@@ -57,6 +68,9 @@ static struct vfs_inode *devfs_wrap_block(
 	return inode;
 }
 
+/*
+ * Find a block device by its devfs-visible name without acquiring an open ref.
+ */
 static struct block_device *devfs_find_block(const char *name)
 {
 	struct block_device *device;
@@ -71,6 +85,7 @@ static struct block_device *devfs_find_block(const char *name)
 	return 0;
 }
 
+/* Translate a readdir cursor index to the currently registered block device. */
 static struct block_device *devfs_get_block(uint32 index)
 {
 	struct block_device *device;
@@ -85,6 +100,9 @@ static struct block_device *devfs_get_block(uint32 index)
 	return 0;
 }
 
+/*
+ * Resolve a current registry name; no stale inode is cached by this filesystem.
+ */
 static int devfs_lookup(struct vfs_inode *directory, const char *name,
 			struct vfs_inode **result)
 {
@@ -105,6 +123,7 @@ static int devfs_lookup(struct vfs_inode *directory, const char *name,
 	return *result ? VFS_OK : VFS_ERR_NOMEM;
 }
 
+/* Report synthetic device inode metadata through VFS defaults. */
 static int devfs_getattr(struct vfs_inode *inode, struct vfs_stat *stat)
 {
 	return vfs_inode_stat_default(inode, stat);
@@ -115,6 +134,7 @@ static const struct vfs_inode_operations devfs_inode_operations = {
 	.getattr = devfs_getattr,
 };
 
+/* Enumerate the dynamic character and block-device registry by cursor index. */
 static int devfs_readdir(struct vfs_file *file, struct vfs_dirent *result)
 {
 	struct block_device *device;
@@ -152,6 +172,7 @@ static const struct vfs_file_operations devfs_directory_operations = {
 	.readdir = devfs_readdir,
 };
 
+/* devfs has no filesystem-private state to flush. */
 static int devfs_sync(struct vfs_super_block *superblock)
 {
 	(void)superblock;
@@ -162,6 +183,7 @@ static const struct vfs_super_operations devfs_super_operations = {
 	.sync = devfs_sync,
 };
 
+/* Create a device-independent synthetic superblock with a root directory. */
 static int devfs_mount(struct vfs_filesystem_type *type,
 			struct block_device *device, const void *data,
 			struct vfs_super_block **result)
@@ -191,6 +213,7 @@ static struct vfs_filesystem_type devfs_type = {
 	.mount = devfs_mount,
 };
 
+/* Register devfs after VFS accepts filesystem types. */
 void devfs_init(void)
 {
 	if (vfs_register_filesystem(&devfs_type) != VFS_OK)

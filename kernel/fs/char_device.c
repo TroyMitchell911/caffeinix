@@ -1,3 +1,10 @@
+/*
+ * Character-device registry and built-in null/zero devices.
+ *
+ * The registry allocates major/minor ranges and devfs-visible names under one
+ * lock.  It does not own registered driver objects: a driver must unregister
+ * its region and nodes before its storage can disappear.
+ */
 #include <char_device.h>
 #include <debug.h>
 #include <device.h>
@@ -28,6 +35,7 @@ static struct char_device null_device;
 static struct char_device zero_device;
 static char zero_page[PGSIZE];
 
+/* Check a nonempty range does not wrap the 32-bit minor number. */
 static int range_valid(uint64 first, uint32 count)
 {
 	uint32 minor = VFS_DEVICE_MINOR(first);
@@ -35,6 +43,7 @@ static int range_valid(uint64 first, uint32 count)
 	return count && minor <= 0xffffffffU - (count - 1);
 }
 
+/* Test half-open minor ranges after confirming their majors match. */
 static int ranges_overlap(uint64 left, uint32 left_count, uint64 right,
 			  uint32 right_count)
 {
@@ -49,6 +58,7 @@ static int ranges_overlap(uint64 left, uint32 left_count, uint64 right,
 	return left_minor < right_end && right_minor < left_end;
 }
 
+/* Reserve a non-overlapping device range under the registry lock. */
 int char_device_region_register(uint64 first, uint32 count,
 				const char *name)
 {
@@ -115,6 +125,7 @@ int char_device_region_unregister(uint64 first, uint32 count)
 	return VFS_OK;
 }
 
+/* Publish a driver only after matching it to one registered range. */
 int char_device_add(struct char_device *device, uint64 first, uint32 count)
 {
 	struct char_region *owner = 0;
@@ -170,6 +181,7 @@ int char_device_add(struct char_device *device, uint64 first, uint32 count)
 	return VFS_OK;
 }
 
+/* Refuse removal while a registered devfs node still names the range. */
 int char_device_remove(struct char_device *device)
 {
 	uint32 i;
@@ -197,6 +209,7 @@ int char_device_remove(struct char_device *device)
 	return VFS_ERR_NOENT;
 }
 
+/* Search the published range while the registry lock keeps the table stable. */
 struct char_device *char_device_lookup(uint64 number)
 {
 	struct char_device *result = 0;
@@ -221,6 +234,7 @@ struct char_device *char_device_lookup(uint64 number)
 	return result;
 }
 
+/* Lookup the driver and expose only its terminal capability bit. */
 int char_device_is_terminal(uint64 number)
 {
 	struct char_device *device = char_device_lookup(number);
@@ -228,6 +242,7 @@ int char_device_is_terminal(uint64 number)
 	return device && (device->flags & CHAR_DEVICE_TERMINAL);
 }
 
+/* Allocate one node slot and copy its caller-supplied stable name. */
 int char_device_node_register(const char *name, uint64 device, uint32 mode)
 {
 	struct char_device_node *free_node = 0;
@@ -262,6 +277,7 @@ int char_device_node_register(const char *name, uint64 device, uint32 mode)
 	return VFS_OK;
 }
 
+/* Clear the matching node slot, making its name and inode unavailable. */
 int char_device_node_unregister(const char *name)
 {
 	uint32 i;
@@ -281,6 +297,7 @@ int char_device_node_unregister(const char *name)
 	return VFS_ERR_NOENT;
 }
 
+/* Copy metadata while the lock protects the node slot from removal. */
 int char_device_node_find(const char *name, struct char_device_node *result)
 {
 	uint32 i;
@@ -299,6 +316,7 @@ int char_device_node_find(const char *name, struct char_device_node *result)
 	return VFS_ERR_NOENT;
 }
 
+/* Enumerate occupied node slots in array order and copy the requested one. */
 int char_device_node_get(uint32 index, struct char_device_node *result)
 {
 	uint32 i, current = 0;
@@ -319,6 +337,7 @@ int char_device_node_get(uint32 index, struct char_device_node *result)
 	return VFS_ERR_NOENT;
 }
 
+/* Count occupied slots under the registry lock. */
 uint32 char_device_node_count(void)
 {
 	uint32 count = 0, i;
@@ -330,6 +349,7 @@ uint32 char_device_node_count(void)
 	return count;
 }
 
+/* /dev/null reads report EOF without touching the caller's buffer. */
 static int64 null_read(struct char_device *device, struct vfs_file *file,
 		       int user_destination, uint64 destination, uint64 count)
 {
@@ -341,6 +361,7 @@ static int64 null_read(struct char_device *device, struct vfs_file *file,
 	return 0;
 }
 
+/* /dev/null accepts every requested byte without inspecting its source. */
 static int64 null_write(struct char_device *device, struct vfs_file *file,
 			int user_source, uint64 source, uint64 count)
 {
@@ -351,6 +372,7 @@ static int64 null_write(struct char_device *device, struct vfs_file *file,
 	return count;
 }
 
+/* /dev/zero fills user or kernel memory in page-sized zero chunks. */
 static int64 zero_read(struct char_device *device, struct vfs_file *file,
 		       int user_destination, uint64 destination, uint64 count)
 {
@@ -380,6 +402,7 @@ static const struct char_device_operations zero_operations = {
 	.write = null_write,
 };
 
+/* Initialize registry state and publish the built-in null and zero devices. */
 void char_device_init(void)
 {
 	spinlock_init(&char_devices.lock, "character devices");

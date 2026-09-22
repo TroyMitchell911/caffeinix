@@ -1,3 +1,4 @@
+/* Caffeinix string declarations selected for imported FatFs. */
 #ifndef CAFFEINIX_FATFS_STRING_H
 #define CAFFEINIX_FATFS_STRING_H
 

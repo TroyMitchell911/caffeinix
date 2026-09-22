@@ -1,3 +1,4 @@
+/* Caffeinix freestanding size and offset shim required by imported lwext4. */
 #ifndef LWEXT4_COMPAT_STDDEF_H
 #define LWEXT4_COMPAT_STDDEF_H
 

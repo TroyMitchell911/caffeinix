@@ -1,3 +1,4 @@
+/* Caffeinix fixed-width integer shim selected for imported FatFs. */
 #ifndef CAFFEINIX_FATFS_STDINT_H
 #define CAFFEINIX_FATFS_STDINT_H
 

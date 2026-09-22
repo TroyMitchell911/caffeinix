@@ -1,3 +1,11 @@
+/*
+ * Virtual filesystem namespace, path walking, and file-descriptor services.
+ *
+ * VFS owns mount, dentry, inode, and open-file references.  Filesystems own
+ * their private objects and implement operation vectors.  vfs.mount_lock
+ * serializes namespace changes; filesystem-specific locking remains behind
+ * the operation vectors.
+ */
 #include <debug.h>
 #include <device.h>
 #include <file.h>
@@ -56,6 +64,7 @@ static struct {
 	uint64 generation;
 } poll_state;
 
+/* Compare two NUL-terminated component names without accepting prefixes. */
 static int string_equal(const char *left, const char *right)
 {
 	uint32 left_length = strlen(left);
@@ -65,6 +74,7 @@ static int string_equal(const char *left, const char *right)
 	       !strncmp(left, right, left_length);
 }
 
+/* Test the selected real or filesystem credentials' supplementary groups. */
 static int vfs_credentials_in_group(
 	const struct process_credentials *credentials, uint32 gid,
 	int use_real_ids)
@@ -81,6 +91,7 @@ static int vfs_credentials_in_group(
 	return 0;
 }
 
+/* Apply Unix owner/group/other mode bits to the supplied credentials. */
 static int vfs_inode_permission_credentials(
 	const struct vfs_inode *inode, uint32 access,
 	const struct process_credentials *credentials, int use_real_ids)
@@ -107,6 +118,7 @@ static int vfs_inode_permission_credentials(
 	return (bits & access) == access ? VFS_OK : VFS_ERR_ACCES;
 }
 
+/* Check access with the current process filesystem credentials. */
 static int vfs_inode_permission(const struct vfs_inode *inode,
 				uint32 access)
 {
@@ -116,6 +128,7 @@ static int vfs_inode_permission(const struct vfs_inode *inode,
 	return vfs_inode_permission_credentials(inode, access, &credentials, 0);
 }
 
+/* Compare filesystem identity rather than wrapper address. */
 static int vfs_inode_same_identity(const struct vfs_inode *left,
 				   const struct vfs_inode *right)
 {
@@ -123,6 +136,7 @@ static int vfs_inode_same_identity(const struct vfs_inode *left,
 	       left->number == right->number;
 }
 
+/* Propagate changed common metadata to all live wrappers for one inode. */
 static void vfs_inode_sync_metadata(struct vfs_inode *source)
 {
 	struct vfs_inode *inode;
@@ -141,6 +155,7 @@ static void vfs_inode_sync_metadata(struct vfs_inode *source)
 	spinlock_release(&vfs.lock);
 }
 
+/* Invoke setattr and synchronize successful common metadata changes. */
 static int vfs_inode_apply_attributes(
 	struct vfs_inode *inode, const struct vfs_iattr *attributes)
 {
@@ -151,6 +166,7 @@ static int vfs_inode_apply_attributes(
 	return result;
 }
 
+/* Account executable and writable opens, rejecting text-busy conflicts. */
 static int vfs_inode_access_acquire(struct vfs_inode *inode, uint8 access)
 {
 	struct vfs_inode *candidate;
@@ -188,6 +204,7 @@ static int vfs_inode_access_acquire(struct vfs_inode *inode, uint8 access)
 	return result;
 }
 
+/* Drop executable and writable open accounting held by one file. */
 static void vfs_inode_access_release(struct vfs_inode *inode, uint8 access)
 {
 	if (!access)
@@ -204,6 +221,16 @@ static void vfs_inode_access_release(struct vfs_inode *inode, uint8 access)
 	spinlock_release(&vfs.lock);
 }
 
+/**
+ * vfs_file_release_inode_access() - Drop a file's inode access accounting
+ * @file: File with accounted access, or NULL for no operation.
+ *
+ * Clears inode_access after releasing its write/exec open counts. This does
+ * not release the file reference or invoke filesystem/device callbacks.
+ *
+ * Context: Caller serializes access to @file (file_table.lock on close).
+ * Takes vfs.lock and must not sleep; the close path holds a spinlock.
+ */
 void vfs_file_release_inode_access(struct vfs_file *file)
 {
 	struct vfs_inode *inode = 0;
@@ -216,6 +243,17 @@ void vfs_file_release_inode_access(struct vfs_file *file)
 	file->inode_access = 0;
 }
 
+/**
+ * vfs_exec_mapping_get() - Account an executable mapping of a regular file
+ * @file: Referenced regular file with a live path and inode.
+ *
+ * The caller retains its file reference and pairs successful accounting
+ * with vfs_exec_mapping_put(). This does not acquire a file reference.
+ *
+ * Context: Takes vfs.lock; does not sleep.
+ * Return: VFS_OK, VFS_ERR_INVAL for a missing file/inode, VFS_ERR_TXTBSY for
+ * a writable open, or VFS_ERR_MFILE if the access count would overflow.
+ */
 int vfs_exec_mapping_get(struct vfs_file *file)
 {
 	struct vfs_inode *inode;
@@ -226,6 +264,15 @@ int vfs_exec_mapping_get(struct vfs_file *file)
 	return vfs_inode_access_acquire(inode, VFS_INODE_ACCESS_EXEC);
 }
 
+/**
+ * vfs_exec_mapping_put() - Release executable-mapping accounting
+ * @file: Live regular file accounted by vfs_exec_mapping_get().
+ *
+ * Does not release the file reference. Missing inode state or unmatched
+ * accounting is a fatal caller error.
+ *
+ * Context: Takes vfs.lock; does not sleep.
+ */
 void vfs_exec_mapping_put(struct vfs_file *file)
 {
 	struct vfs_inode *inode;
@@ -236,6 +283,7 @@ void vfs_exec_mapping_put(struct vfs_file *file)
 	vfs_inode_access_release(inode, VFS_INODE_ACCESS_EXEC);
 }
 
+/* Clear set-ID bits before modifying a regular file. */
 static int vfs_inode_remove_privileges(struct vfs_inode *inode)
 {
 	struct process_credentials credentials;
@@ -277,6 +325,7 @@ out:
 	return result;
 }
 
+/* Return whether any vector requests a nonzero byte count. */
 static int vfs_iov_has_data(const struct vfs_iovec *iovecs, uint32 count)
 {
 	uint32 index;
@@ -287,6 +336,7 @@ static int vfs_iov_has_data(const struct vfs_iovec *iovecs, uint32 count)
 	}
 	return 0;
 }
+/* Derive owner, group, and setgid inheritance for a new child. */
 static void vfs_creation_credentials(const struct vfs_inode *parent,
 				     uint32 *mode, uint32 *uid,
 				     uint32 *gid, int directory)
@@ -303,6 +353,7 @@ static void vfs_creation_credentials(const struct vfs_inode *parent,
 		*mode &= ~02000;
 }
 
+/* Require writable, searchable directory permission for a namespace change. */
 static int vfs_mutation_permission(const struct vfs_inode *directory)
 {
 	if (!directory || directory->type != VFS_INODE_DIRECTORY)
@@ -311,6 +362,7 @@ static int vfs_mutation_permission(const struct vfs_inode *directory)
 				    VFS_ACCESS_WRITE | VFS_ACCESS_EXEC);
 }
 
+/* Apply sticky-directory ownership restrictions to a removal or rename. */
 static int vfs_sticky_permission(const struct vfs_inode *directory,
 				 const struct vfs_inode *target)
 {
@@ -325,6 +377,7 @@ static int vfs_sticky_permission(const struct vfs_inode *directory,
 	return VFS_ERR_PERM;
 }
 
+/* Return the superblock write lock only for regular-file data changes. */
 static sleeplock_t vfs_inode_write_lock(struct vfs_inode *inode)
 {
 	if (!inode || inode->type != VFS_INODE_REGULAR ||
@@ -333,6 +386,15 @@ static sleeplock_t vfs_inode_write_lock(struct vfs_inode *inode)
 	return &inode->superblock->write_lock;
 }
 
+/**
+ * vfs_file_mark_shared_dirty() - Mark a shared file mapping dirty
+ * @file: Referenced open file; the caller retains its reference.
+ * @offset: Byte offset interpreted by this operation.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ */
 int vfs_file_mark_shared_dirty(struct vfs_file *file, uint64 offset)
 {
 	struct vfs_inode *inode;
@@ -345,6 +407,7 @@ int vfs_file_mark_shared_dirty(struct vfs_file *file, uint64 offset)
 	return result < 0 ? result : page_cache_mark_dirty(file, offset);
 }
 
+/* Truncate a regular inode while holding its superblock write lock. */
 static int vfs_truncate_inode(struct vfs_inode *inode, uint64 size)
 {
 	struct vfs_stat stat;
@@ -411,6 +474,7 @@ int vfs_register_filesystem(struct vfs_filesystem_type *type)
 	return VFS_OK;
 }
 
+/* Find a registered type while registration remains immutable after boot. */
 static struct vfs_filesystem_type *vfs_find_filesystem(const char *name)
 {
 	struct vfs_filesystem_type *type = 0;
@@ -454,6 +518,16 @@ struct vfs_super_block *vfs_super_alloc(struct vfs_filesystem_type *type,
 	return 0;
 }
 
+/**
+ * vfs_super_free() - Return a detached superblock slot to the pool
+ * @superblock: Exclusively owned slot with ref == 1 and root == NULL, or NULL.
+ *
+ * Used after construction failure or final teardown. The caller must first
+ * release filesystem state, inodes and other resources as appropriate; this
+ * helper only clears the slot. A live root or additional references panic.
+ *
+ * Context: Exclusive teardown; takes vfs.lock and does not sleep.
+ */
 void vfs_super_free(struct vfs_super_block *superblock)
 {
 	if (!superblock)
@@ -494,6 +568,15 @@ struct vfs_inode *vfs_inode_get(struct vfs_inode *inode)
 	return inode;
 }
 
+/**
+ * vfs_visit_inodes() - visit inodes
+ * @superblock: Mounted superblock whose lifetime covers this call.
+ * @visit: Callback invoked once for each live inode in @superblock.
+ * @context: Opaque state passed unchanged to @visit.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ */
 int vfs_visit_inodes(struct vfs_super_block *superblock,
 		     vfs_inode_visit_t visit, void *context)
 {
@@ -520,6 +603,13 @@ int vfs_visit_inodes(struct vfs_super_block *superblock,
 	return status;
 }
 
+/**
+ * vfs_inode_put() - inode put
+ * @inode: Referenced inode whose filesystem owns its private state.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ */
 void vfs_inode_put(struct vfs_inode *inode)
 {
 	const struct vfs_super_operations *operations;
@@ -546,6 +636,7 @@ void vfs_inode_put(struct vfs_inode *inode)
 	spinlock_release(&vfs.lock);
 }
 
+/* Release a detached superblock, its root inode, and backing device. */
 static void vfs_super_destroy(struct vfs_super_block *superblock)
 {
 	struct block_device *device;
@@ -564,6 +655,15 @@ static void vfs_super_destroy(struct vfs_super_block *superblock)
 	block_device_close(device);
 }
 
+/**
+ * vfs_inode_stat_default() - inode stat default
+ * @inode: Referenced inode whose filesystem owns its private state.
+ * @stat: Caller-provided VFS metadata result buffer.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ */
 int vfs_inode_stat_default(struct vfs_inode *inode, struct vfs_stat *stat)
 {
 	if (!inode || !stat)
@@ -587,6 +687,15 @@ int vfs_inode_stat_default(struct vfs_inode *inode, struct vfs_stat *stat)
 	return VFS_OK;
 }
 
+/* Maintain timestamps according to the current filesystem policy. */
+/**
+ * vfs_current_time() - current time
+ * @time: Receives realtime seconds and nanoseconds.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ */
 int vfs_current_time(struct vfs_timespec *time)
 {
 	uint64 nanoseconds;
@@ -598,6 +707,7 @@ int vfs_current_time(struct vfs_timespec *time)
 	return VFS_OK;
 }
 
+/* Maintain timestamps according to the current filesystem policy. */
 static int vfs_time_before_or_equal(const struct vfs_timespec *left,
 				    const struct vfs_timespec *right)
 {
@@ -606,6 +716,7 @@ static int vfs_time_before_or_equal(const struct vfs_timespec *left,
 		left->nanoseconds <= right->nanoseconds);
 }
 
+/* Maintain timestamps according to the current filesystem policy. */
 static int vfs_atime_expired(const struct vfs_inode *inode,
 			     const struct vfs_timespec *now)
 {
@@ -617,6 +728,7 @@ static int vfs_atime_expired(const struct vfs_inode *inode,
 	return now->seconds - inode->atime.seconds >= 24 * 60 * 60;
 }
 
+/* Update atime when mount policy and the inode access method permit it. */
 static void vfs_path_accessed(const struct vfs_path *path)
 {
 	struct vfs_timespec now;
@@ -643,12 +755,28 @@ out:
 	sleeplock_release(&inode->superblock->atime_lock);
 }
 
+/**
+ * vfs_file_accessed() - file accessed
+ * @file: Referenced open file; the caller retains its reference.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ */
 void vfs_file_accessed(struct vfs_file *file)
 {
 	if (file)
 		vfs_path_accessed(&file->path);
 }
 
+/**
+ * vfs_inode_stat() - inode stat
+ * @inode: Referenced inode whose filesystem owns its private state.
+ * @stat: Caller-provided VFS metadata result buffer.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ */
 int vfs_inode_stat(struct vfs_inode *inode, struct vfs_stat *stat)
 {
 	if (!inode || !stat)
@@ -660,6 +788,7 @@ int vfs_inode_stat(struct vfs_inode *inode, struct vfs_stat *stat)
 
 static void vfs_dentry_put(struct vfs_dentry *dentry);
 
+/* Evict one unused cached dentry, preferring stale entries. */
 static int vfs_dentry_evict_one(void)
 {
 	struct vfs_dentry *candidate = 0;
@@ -689,6 +818,7 @@ static int vfs_dentry_evict_one(void)
 	return candidate != 0;
 }
 
+/* Allocate a dentry with references to its parent and resolved inode. */
 static struct vfs_dentry *vfs_dentry_alloc(struct vfs_dentry *parent,
 					    const char *name,
 					    struct vfs_inode *inode)
@@ -721,6 +851,7 @@ retry:
 	return 0;
 }
 
+/* Compare dentries by the identity of their parent inode. */
 static int vfs_dentry_same_parent(const struct vfs_dentry *left,
 				  const struct vfs_dentry *right)
 {
@@ -733,6 +864,7 @@ static int vfs_dentry_same_parent(const struct vfs_dentry *left,
 	       left->inode->number == right->inode->number;
 }
 
+/* Insert a dentry in the bounded cache and retain its cache reference. */
 static struct vfs_dentry *vfs_dentry_cache(struct vfs_dentry *dentry)
 {
 	struct vfs_dentry *cached;
@@ -770,6 +902,7 @@ static struct vfs_dentry *vfs_dentry_cache(struct vfs_dentry *dentry)
 	return dentry;
 }
 
+/* Drop a dentry cache reference when it is currently cached. */
 static void vfs_dentry_uncache(struct vfs_dentry *dentry)
 {
 	int put = 0;
@@ -786,6 +919,7 @@ static void vfs_dentry_uncache(struct vfs_dentry *dentry)
 		vfs_dentry_put(dentry);
 }
 
+/* Find a cached child and return it with a caller-owned dentry reference. */
 static struct vfs_dentry *vfs_dentry_lookup(struct vfs_dentry *parent,
 					     const char *name)
 {
@@ -811,6 +945,7 @@ static struct vfs_dentry *vfs_dentry_lookup(struct vfs_dentry *parent,
 	return 0;
 }
 
+/* Advance one superblock generation and discard its stale cached dentries. */
 static void vfs_namespace_changed(struct vfs_inode *inode)
 {
 	struct vfs_super_block *superblock = inode->superblock;
@@ -840,6 +975,7 @@ static void vfs_namespace_changed(struct vfs_inode *inode)
 	}
 }
 
+/* Drop a dentry reference and cascade its parent and inode references. */
 static void vfs_dentry_put(struct vfs_dentry *dentry)
 {
 	struct vfs_dentry *parent;
@@ -864,6 +1000,7 @@ static void vfs_dentry_put(struct vfs_dentry *dentry)
 	}
 }
 
+/* Remove every cache reference belonging to a superblock. */
 static void vfs_dentry_drop_super(struct vfs_super_block *superblock)
 {
 	struct vfs_dentry *dentry;
@@ -886,6 +1023,7 @@ static void vfs_dentry_drop_super(struct vfs_super_block *superblock)
 	}
 }
 
+/* Allocate a detached mount with one reference for its construction path. */
 static struct vfs_mount *vfs_mount_alloc(void)
 {
 	struct vfs_mount *mount;
@@ -904,6 +1042,7 @@ static struct vfs_mount *vfs_mount_alloc(void)
 	return 0;
 }
 
+/* Return an unattached, singly referenced mount slot to the pool. */
 static void vfs_mount_free(struct vfs_mount *mount)
 {
 	if (!mount)
@@ -915,6 +1054,18 @@ static void vfs_mount_free(struct vfs_mount *mount)
 	spinlock_release(&vfs.lock);
 }
 
+/**
+ * vfs_path_copy() - Acquire mount and dentry references for a path copy
+ * @destination: Distinct writable path storage with no owned references.
+ * @source: Live path whose mount and dentry references remain owned by caller.
+ *
+ * Copies the object pointers and acquires a reference to each; it does not
+ * copy or resolve a pathname. Release the copy with vfs_path_put(). Missing
+ * source objects or dead references panic.
+ *
+ * Context: Caller excludes concurrent changes to both path objects. Takes
+ * vfs.lock; does not sleep.
+ */
 void vfs_path_copy(struct vfs_path *destination,
 		   const struct vfs_path *source)
 {
@@ -930,6 +1081,15 @@ void vfs_path_copy(struct vfs_path *destination,
 	spinlock_release(&vfs.lock);
 }
 
+/**
+ * vfs_path_put() - Release a path's owned mount and dentry references
+ * @path: Owned path to clear; NULL or a path without a mount is a no-op.
+ *
+ * Drops the dentry reference, then the mount reference, and clears both
+ * pointers. Last-reference dentry/inode cleanup may invoke the filesystem.
+ *
+ * Context: Exclusive access to @path; may sleep. Do not hold a spinlock.
+ */
 void vfs_path_put(struct vfs_path *path)
 {
 	if (!path || !path->mount)
@@ -944,6 +1104,7 @@ void vfs_path_put(struct vfs_path *path)
 	path->dentry = 0;
 }
 
+/* Tear down a detached mount after its final path reference is gone. */
 static void vfs_mount_destroy(struct vfs_mount *mount)
 {
 	struct vfs_super_block *superblock;
@@ -961,6 +1122,7 @@ static void vfs_mount_destroy(struct vfs_mount *mount)
 	vfs_mount_free(mount);
 }
 
+/* Caller holds the subsystem lock while this helper updates private state. */
 static int vfs_format_path_locked(const struct vfs_path *path,
 				  char *buffer, uint32 size)
 {
@@ -1001,6 +1163,16 @@ static int vfs_format_path_locked(const struct vfs_path *path,
 	return VFS_OK;
 }
 
+/**
+ * vfs_get_root() - Acquire references to the global root path
+ * @path: Non-NULL kernel output with no references that need releasing.
+ *
+ * Context: After vfs_init(); takes vfs.lock without sleeping. Success gives
+ * the caller one mount and one dentry reference, released by vfs_path_put().
+ *
+ * Return: VFS_OK, or VFS_ERR_NOENT if no root is attached. On failure @path
+ * is unchanged; on success it is overwritten, not released first.
+ */
 int vfs_get_root(struct vfs_path *path)
 {
 	spinlock_acquire(&vfs.lock);
@@ -1016,6 +1188,7 @@ int vfs_get_root(struct vfs_path *path)
 	return VFS_OK;
 }
 
+/* Open a required device and invoke one filesystem type's mount method. */
 static int vfs_mount_type(struct vfs_filesystem_type *type,
 			  uint32 device_id, const void *data,
 			  struct vfs_super_block **result)
@@ -1040,6 +1213,7 @@ static int vfs_mount_type(struct vfs_filesystem_type *type,
 	return status;
 }
 
+/* Reject unsupported mount flags and apply filesystem default policy. */
 static int vfs_normalize_mount_flags(struct vfs_filesystem_type *type,
 				     uint32 flags, uint32 *result)
 {
@@ -1122,12 +1296,14 @@ int vfs_mount_root(const char *filesystem, uint32 device_id,
 	return VFS_OK;
 }
 
+/* Compare two wrappers for the same filesystem inode. */
 static int vfs_same_inode(struct vfs_inode *left,
 			  struct vfs_inode *right)
 {
 	return vfs_inode_same_identity(left, right);
 }
 
+/* Test whether a dentry ancestry chain contains an inode. */
 static int vfs_dentry_descends_from(struct vfs_dentry *dentry,
 				    struct vfs_inode *ancestor)
 {
@@ -1138,6 +1314,7 @@ static int vfs_dentry_descends_from(struct vfs_dentry *dentry,
 	return 0;
 }
 
+/* Move cached aliases after a successful backend rename. */
 static void vfs_finish_renamed_dentries(
 	struct vfs_inode *inode, struct vfs_inode *old_parent,
 	const char *old_name, struct vfs_dentry *new_parent,
@@ -1169,6 +1346,7 @@ static void vfs_finish_renamed_dentries(
 	}
 }
 
+/* Caller holds the namespace lock while finding a child mount. */
 static struct vfs_mount *vfs_child_mount_locked(
 	const struct vfs_path *path)
 {
@@ -1185,6 +1363,7 @@ static struct vfs_mount *vfs_child_mount_locked(
 	return 0;
 }
 
+/* Return whether @path is an attachment point for a child mount. */
 static int vfs_has_child_mount(const struct vfs_path *path)
 {
 	int result;
@@ -1195,6 +1374,7 @@ static int vfs_has_child_mount(const struct vfs_path *path)
 	return result;
 }
 
+/* Acquire references for the root dentry of a mount at @path. */
 static int vfs_child_path(const struct vfs_path *path,
 			  struct vfs_path *child)
 {
@@ -1212,6 +1392,7 @@ static int vfs_child_path(const struct vfs_path *path,
 	return mount != 0;
 }
 
+/* Replace a mountpoint path with the root of each mounted child. */
 static void vfs_follow_mount(struct vfs_path *path)
 {
 	struct vfs_path next;
@@ -1222,6 +1403,7 @@ static void vfs_follow_mount(struct vfs_path *path)
 	}
 }
 
+/* Select root, explicit base, or current working directory for a pathname. */
 static int vfs_start_path(const char *name, const struct vfs_path *base,
 			  struct vfs_path *path)
 {
@@ -1244,6 +1426,7 @@ static int vfs_start_path(const char *name, const struct vfs_path *base,
 	return VFS_OK;
 }
 
+/* Replace @path with its parent, crossing out of a child mount if needed. */
 static void vfs_path_parent(struct vfs_path *path)
 {
 	struct vfs_path next, source;
@@ -1262,6 +1445,7 @@ static void vfs_path_parent(struct vfs_path *path)
 	*path = next;
 }
 
+/* Extract one bounded pathname component and report whether it is final. */
 static int vfs_next_component(const char *path, uint32 *offset,
 			      char *name, int *final)
 {
@@ -1289,6 +1473,7 @@ static int vfs_next_component(const char *path, uint32 *offset,
 	return 1;
 }
 
+/* Form one bounded backend path from validated path components. */
 static int vfs_join_link(char *destination, const char *target,
 			 const char *remaining)
 {
@@ -1308,6 +1493,7 @@ static int vfs_join_link(char *destination, const char *target,
 	return VFS_OK;
 }
 
+/* Walk a pathname, checking traversal permissions and resolving symlinks. */
 static int vfs_walk_credentials(
 	const char *name, uint32 flags, struct vfs_path *result, char *last,
 	const struct process_credentials *credentials,
@@ -1470,12 +1656,14 @@ fail:
 	return status;
 }
 
+/* Walk a pathname using the current process credentials. */
 static int vfs_walk(const char *name, uint32 flags, struct vfs_path *result,
 		    char *last)
 {
 	return vfs_walk_credentials(name, flags, result, last, 0, 0);
 }
 
+/* Walk a pathname relative to an already referenced base path. */
 static int vfs_walk_from(const char *name, uint32 flags,
 			 const struct vfs_path *base,
 			 struct vfs_path *result, char *last)
@@ -1483,6 +1671,7 @@ static int vfs_walk_from(const char *name, uint32 flags,
 	return vfs_walk_credentials(name, flags, result, last, 0, base);
 }
 
+/* Walk a pathname using a directory descriptor base when supplied. */
 static int vfs_walk_base(const char *name, uint32 flags,
 			 const struct vfs_path *base,
 			 struct vfs_path *result, char *last)
@@ -1491,6 +1680,7 @@ static int vfs_walk_base(const char *name, uint32 flags,
 		vfs_walk(name, flags, result, last);
 }
 
+/* Caller holds the subsystem lock while this helper updates private state. */
 static int vfs_mount_locked(const char *filesystem,
 			    uint32 device_id,
 			    const char *target, uint32 flags,
@@ -1575,6 +1765,7 @@ int vfs_mount(const char *filesystem, uint32 device_id,
 	return status;
 }
 
+/* Resolve a block-device node and return its registered device ID. */
 static int vfs_block_device_path(const char *source,
 				 uint32 *result)
 {
@@ -1604,6 +1795,21 @@ out:
 	return status;
 }
 
+/**
+ * vfs_mount_path() - Mount a filesystem using a block-device pathname
+ * @filesystem: Kernel-resident NUL-terminated registered filesystem name.
+ * @source: Kernel-resident NUL-terminated block-device pathname, required for
+ * device-backed filesystems; ignored and optionally NULL for other types.
+ * @target: Kernel-resident NUL-terminated mountpoint pathname.
+ * @flags: VFS_MOUNT_* atime-policy bits; unsupported combinations are rejected.
+ * @data: Filesystem-private mount data used only during this call.
+ *
+ * Context: Current process; resolves paths and takes the mount sleeplock,
+ * and may sleep in filesystem/device operations. Callers must copy user
+ * pathnames into kernel memory before calling; no user-copy flag is accepted.
+ * Return: VFS_OK, or a negative VFS error from lookup or mount. An unknown
+ * filesystem or missing required source returns VFS_ERR_NODEV.
+ */
 int vfs_mount_path(const char *filesystem, const char *source,
 		   const char *target, uint32 flags, const void *data)
 {
@@ -1624,6 +1830,7 @@ int vfs_mount_path(const char *filesystem, const char *source,
 	return vfs_mount(filesystem, device_id, target, flags, data);
 }
 
+/* Caller holds the subsystem lock while this helper updates private state. */
 static int vfs_mount_has_children_locked(struct vfs_mount *parent)
 {
 	struct vfs_mount *mount;
@@ -1636,6 +1843,7 @@ static int vfs_mount_has_children_locked(struct vfs_mount *parent)
 	return 0;
 }
 
+/* Caller holds the subsystem lock while this helper updates private state. */
 static int vfs_unmount_locked(const char *target, uint32 flags)
 {
 	struct vfs_super_block *superblock;
@@ -1703,6 +1911,15 @@ int vfs_unmount(const char *target, uint32 flags)
 	return status;
 }
 
+/**
+ * vfs_snapshot_mounts() - snapshot mounts
+ * @snapshots: Caller-provided mount snapshot array.
+ * @capacity: Number of entries available in @snapshots.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ */
 uint32 vfs_snapshot_mounts(struct vfs_mount_snapshot *snapshots,
 			   uint32 capacity)
 {
@@ -1752,6 +1969,7 @@ uint32 vfs_snapshot_mounts(struct vfs_mount_snapshot *snapshots,
 	return count;
 }
 
+/* Install a file in the lowest free current-process descriptor slot. */
 static int fd_alloc(file_t file, int minimum, uint8 flags)
 {
 	process_t process = cur_proc();
@@ -1772,6 +1990,7 @@ static int fd_alloc(file_t file, int minimum, uint8 flags)
 	return -1;
 }
 
+/* Obtain a held file reference from a current-process descriptor. */
 static int fd_get(int fd, file_t *file)
 {
 	process_t process = cur_proc();
@@ -1788,6 +2007,7 @@ static int fd_get(int fd, file_t *file)
 	return VFS_OK;
 }
 
+/* Obtain a held descriptor and require it to name a directory. */
 static int vfs_directory_fd_get(int fd, file_t *directory)
 {
 	int status;
@@ -1804,12 +2024,14 @@ static int vfs_directory_fd_get(int fd, file_t *directory)
 	return VFS_OK;
 }
 
+/* Reject empty, current-directory, and parent-directory leaf names. */
 static int vfs_leaf_valid(const char *name)
 {
 	return name && name[0] && !string_equal(name, ".") &&
 	       !string_equal(name, "..");
 }
 
+/* Create a regular file below @base and return an owned path to it. */
 static int vfs_create_path_from(const char *name, uint32 mode,
 				const struct vfs_path *base,
 				struct vfs_path *result)
@@ -1862,6 +2084,7 @@ static int vfs_create_path_from(const char *name, uint32 mode,
 	return VFS_OK;
 }
 
+/* Create a regular file relative to the current working directory. */
 static int vfs_create_path(const char *name, uint32 mode,
 			   struct vfs_path *result)
 {
@@ -1974,21 +2197,62 @@ struct vfs_file *vfs_file_get(struct vfs_file *file)
 	return file_dup(file);
 }
 
+/**
+ * vfs_file_put() - Release an open-file reference and its access accounting
+ * @file: Non-NULL live reference being consumed.
+ *
+ * On the final reference, invokes release and drops the owned path. The
+ * caller must not use @file afterwards without another reference.
+ *
+ * Context: May sleep in release/path cleanup. NULL or a dead file panics.
+ */
 void vfs_file_put(struct vfs_file *file)
 {
 	file_close(file);
 }
 
+/**
+ * vfs_file_hold() - Retain file storage without inode access accounting
+ * @file: Non-NULL file with a live reference retained by the caller.
+ *
+ * Unlike vfs_file_get(), does not retain writable/exec open accounting.
+ * Pair this reference with vfs_file_unhold(), not vfs_file_put().
+ *
+ * Context: Does not sleep.
+ *
+ * Return: @file with an additional reference. NULL or a dead file panics.
+ */
 struct vfs_file *vfs_file_hold(struct vfs_file *file)
 {
 	return file_hold(file);
 }
 
+/**
+ * vfs_file_unhold() - Release a reference acquired by vfs_file_hold()
+ * @file: Non-NULL live held reference being consumed.
+ *
+ * Leaves inode access accounting alone. The final reference may invoke
+ * release and drop the path; keep a separate reference for further use.
+ *
+ * Context: May sleep in release/path cleanup. NULL or a dead file panics.
+ */
 void vfs_file_unhold(struct vfs_file *file)
 {
 	file_unhold(file);
 }
 
+/**
+ * vfs_file_pread_raw() - Dispatch a positioned read without permission checks
+ * @file: Open file whose reference remains owned by the caller.
+ * @user_destination: Nonzero when @destination is a user virtual address.
+ * @destination: Address of the output buffer.
+ * @count: Maximum number of bytes to read.
+ * @offset: Starting byte offset; never changes file->position.
+ *
+ * Context: May sleep in the file implementation.
+ *
+ * Return: A possibly short byte count, or a negative VFS error.
+ */
 int64 vfs_file_pread_raw(struct vfs_file *file, int user_destination,
 			 uint64 destination, uint64 count, uint64 offset)
 {
@@ -2017,6 +2281,18 @@ int64 vfs_file_pread(struct vfs_file *file, int user_destination,
 	return result;
 }
 
+/**
+ * vfs_file_pwrite_raw() - Dispatch a positioned write without VFS metadata work
+ * @file: Open file whose reference remains owned by the caller.
+ * @user_source: Nonzero when @source is a user virtual address.
+ * @source: Address of the input buffer.
+ * @count: Maximum number of bytes to write.
+ * @offset: Starting byte offset; never changes file->position.
+ *
+ * Context: May sleep in the file implementation.
+ *
+ * Return: A possibly short byte count, or a negative VFS error.
+ */
 int64 vfs_file_pwrite_raw(struct vfs_file *file, int user_source,
 			  uint64 source, uint64 count, uint64 offset)
 {
@@ -2029,6 +2305,7 @@ int64 vfs_file_pwrite_raw(struct vfs_file *file, int user_source,
 	return file_write(file, user_source, source, count, &offset);
 }
 
+/* Implement the backend write operation and preserve partial-I/O results. */
 static int vfs_prepare_positioned_write(file_t file, uint32 flags,
 					uint64 *offset, uint64 *old_size)
 {
@@ -2089,6 +2366,18 @@ out:
 	return result;
 }
 
+/**
+ * vfs_file_preadv() - Read consecutive vectors at an explicit offset
+ * @file: Open readable file whose reference remains owned by the caller.
+ * @user_destination: Nonzero when every iovec base is a user address.
+ * @iovecs: Array of VFS I/O vectors; caller retains the array storage.
+ * @count: Number of entries in @iovecs.
+ * @offset: Initial byte offset; does not change file->position.
+ *
+ * Context: May sleep in the file implementation or page cache.
+ *
+ * Return: Bytes read (possibly short), or a negative VFS error before any data.
+ */
 int64 vfs_file_preadv(struct vfs_file *file, int user_destination,
 			 const struct vfs_iovec *iovecs, uint32 count,
 			 uint64 offset)
@@ -2123,6 +2412,19 @@ out:
 	return result;
 }
 
+/**
+ * vfs_file_pwritev() - Write consecutive vectors at an explicit offset
+ * @file: Open writable file whose reference remains owned by the caller.
+ * @user_source: Nonzero when every iovec base is a user address.
+ * @iovecs: Array of VFS I/O vectors; caller retains the array storage.
+ * @count: Number of entries in @iovecs.
+ * @offset: Initial byte offset; does not change file->position.
+ * @flags: VFS_WRITE_* modifiers, including append control.
+ *
+ * Context: May sleep in the file implementation or page cache.
+ *
+ * Return: Bytes written (possibly short), or a negative VFS error before data.
+ */
 int64 vfs_file_pwritev(struct vfs_file *file, int user_source,
 			  const struct vfs_iovec *iovecs, uint32 count,
 			  uint64 offset, uint32 flags)
@@ -2200,6 +2502,19 @@ int vfs_open(const char *path, uint32 flags, uint32 mode, int *fd_out)
 	return VFS_OK;
 }
 
+/**
+ * vfs_install_file() - Transfer an open-file reference into a descriptor
+ * @file: Owned open-file reference transferred only on success.
+ * @flags: Descriptor flags, normally zero or VFS_FD_CLOEXEC; stored verbatim.
+ * @fd_out: Receives a newly installed descriptor on success.
+ *
+ * Context: Current process; takes files_lock without sleeping. On success the
+ * descriptor owns the supplied reference; the caller must not put it. On
+ * failure ownership and @fd_out are unchanged.
+ *
+ * Return: VFS_OK, VFS_ERR_INVAL for NULL @file or @fd_out, or VFS_ERR_MFILE
+ * when the descriptor table is full.
+ */
 int vfs_install_file(file_t file, uint8 flags, int *fd_out)
 {
 	int fd;
@@ -2213,6 +2528,17 @@ int vfs_install_file(file_t file, uint8 flags, int *fd_out)
 	return VFS_OK;
 }
 
+/**
+ * vfs_get_file_fd() - Pin the file installed at a process descriptor
+ * @fd: Descriptor in the current process descriptor table.
+ * @result: Non-NULL output for a reference released with vfs_file_put().
+ *
+ * Context: Current process; takes files_lock then the file-table spinlock
+ * without sleeping. Does not remove or consume the descriptor's reference.
+ *
+ * Return: VFS_OK, VFS_ERR_INVAL for NULL @result, or VFS_ERR_BADF for an
+ * invalid descriptor. @result is unchanged on failure.
+ */
 int vfs_get_file_fd(int fd, file_t *result)
 {
 	if (!result)
@@ -2220,6 +2546,18 @@ int vfs_get_file_fd(int fd, file_t *result)
 	return fd_get(fd, result);
 }
 
+/**
+ * vfs_file_poll() - Query a referenced file's readiness without consuming data
+ * @file: Referenced open file; the caller retains its reference.
+ * @events: Requested VFS_POLL_* readiness mask.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: VFS_POLL_* readiness bits, including VFS_POLL_NVAL for a NULL file
+ * or missing operations. Without a poll method, read/write methods indicate
+ * readiness for the corresponding requested events.
+ */
 uint32 vfs_file_poll(struct vfs_file *file, uint32 events)
 {
 	uint32 ready = 0;
@@ -2235,6 +2573,19 @@ uint32 vfs_file_poll(struct vfs_file *file, uint32 events)
 	return ready;
 }
 
+/**
+ * vfs_poll() - Wait interruptibly for descriptor readiness
+ * @fds: Non-NULL kernel array whose revents fields are updated in place.
+ * @count: Number of records, from zero through NOFILE.
+ * @timeout_ms: Timeout in milliseconds; a negative value waits indefinitely.
+ *
+ * Context: Current process; pins files during polling and may sleep. Negative
+ * descriptors are ignored; other invalid descriptors report VFS_POLL_NVAL.
+ *
+ * Return: Number of records with events, zero for timeout or no ready records
+ * with a zero timeout, VFS_ERR_INVAL for invalid arguments, or VFS_ERR_INTR
+ * when a signal interrupts the wait.
+ */
 int vfs_poll(struct vfs_pollfd *fds, uint32 count, int timeout_ms)
 {
 	file_t files[NOFILE];
@@ -2291,6 +2642,14 @@ int vfs_poll(struct vfs_pollfd *fds, uint32 count, int timeout_ms)
 	return ready;
 }
 
+/**
+ * vfs_poll_generation() - Snapshot the readiness-notification sequence
+ *
+ * Context: Any context, including hard IRQ; takes poll_state.lock without
+ * sleeping. The caller must not already hold that lock.
+ *
+ * Return: Current sequence value for a later vfs_poll_wait(); never an error.
+ */
 uint64 vfs_poll_generation(void)
 {
 	uint64 generation;
@@ -2301,6 +2660,18 @@ uint64 vfs_poll_generation(void)
 	return generation;
 }
 
+/**
+ * vfs_poll_wait() - Wait unless readiness changed since the supplied snapshot
+ * @generation: Poll generation observed before waiting for a state change.
+ * @timeout_ms: Timeout in milliseconds; a negative value waits indefinitely.
+ *
+ * Context: Current thread; acquires poll_state.lock and sleeps interruptibly
+ * if the generation still matches. Callers must recheck readiness after wakeup.
+ *
+ * Return: Zero if the generation changed or a waiter was woken, -1 on timeout
+ * (including zero timeout with an unchanged generation), or VFS_ERR_INTR on
+ * signal interruption.
+ */
 int vfs_poll_wait(uint64 generation, int timeout_ms)
 {
 	int result = 0;
@@ -2325,6 +2696,13 @@ out:
 	return result;
 }
 
+/**
+ * vfs_poll_notify() - Advance the readiness sequence and wake all poll waiters
+ *
+ * Context: Any context, including hard IRQ. Takes poll_state.lock and wakeup
+ * spinlocks; must not sleep or invoke filesystem/device operations. The caller
+ * must not already hold poll_state.lock.
+ */
 void vfs_poll_notify(void)
 {
 	spinlock_acquire(&poll_state.lock);
@@ -2333,6 +2711,15 @@ void vfs_poll_notify(void)
 	spinlock_release(&poll_state.lock);
 }
 
+/**
+ * vfs_close() - close
+ * @fd: Descriptor in the current process descriptor table.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: VFS_OK on success, otherwise a negative VFS error.
+ */
 int vfs_close(int fd)
 {
 	process_t process = cur_proc();
@@ -2354,6 +2741,18 @@ int vfs_close(int fd)
 	return VFS_OK;
 }
 
+/**
+ * vfs_dup() - dup
+ * @oldfd: Existing descriptor to duplicate.
+ * @minimum: Lowest descriptor number eligible for allocation.
+ * @flags: New descriptor flags, normally zero or VFS_FD_CLOEXEC;
+ * stored verbatim without validation.
+ * @fd_out: Receives a newly installed descriptor on success.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ */
 int vfs_dup(int oldfd, int minimum, uint8 flags, int *fd_out)
 {
 	process_t process = cur_proc();
@@ -2385,6 +2784,17 @@ int vfs_dup(int oldfd, int minimum, uint8 flags, int *fd_out)
 	return VFS_OK;
 }
 
+/**
+ * vfs_dup_to() - dup to
+ * @oldfd: Existing descriptor to duplicate.
+ * @newfd: Destination descriptor to replace or allocate.
+ * @flags: New descriptor flags, normally zero or VFS_FD_CLOEXEC;
+ * stored verbatim without validation.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ */
 int vfs_dup_to(int oldfd, int newfd, uint8 flags)
 {
 	process_t process = cur_proc();
@@ -2410,6 +2820,19 @@ int vfs_dup_to(int oldfd, int newfd, uint8 flags)
 	return VFS_OK;
 }
 
+/* Implement the backend read operation without changing unrelated state. */
+/**
+ * vfs_read() - read
+ * @fd: Descriptor in the current process descriptor table.
+ * @address: User virtual address supplied by the current process.
+ * @length: Requested byte length.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative byte count or value on success, or a
+ * negative VFS error.
+ */
 int vfs_read(int fd, uint64 address, int length)
 {
 	file_t file;
@@ -2432,6 +2855,16 @@ int vfs_read(int fd, uint64 address, int length)
 	return result > 0x7fffffff ? VFS_ERR_INVAL : result;
 }
 
+/**
+ * vfs_readv() - Read vectors using a descriptor's shared file position
+ * @fd: Readable descriptor in the current process descriptor table.
+ * @user_destination: Nonzero when vector bases are user virtual addresses.
+ * @iovecs: Kernel-resident vector array; caller retains its storage.
+ * @count: Number of entries in the supplied vector array.
+ *
+ * Context: Current process; may sleep in cache/filesystem/device operations.
+ * Return: Bytes read, possibly short, or a negative VFS error before data.
+ */
 int64 vfs_readv(int fd, int user_destination,
 		const struct vfs_iovec *iovecs, uint32 count)
 {
@@ -2487,12 +2920,14 @@ out:
 	return result;
 }
 
+/* Implement the backend write operation and preserve partial-I/O results. */
 static int vfs_prepare_write(file_t file, uint64 *old_size)
 {
 	return vfs_prepare_positioned_write(file, 0, &file->position,
 					    old_size);
 }
 
+/* Return the data-write lock for a regular file descriptor. */
 static sleeplock_t vfs_regular_write_lock(file_t file)
 {
 	if (!file->path.dentry)
@@ -2500,6 +2935,24 @@ static sleeplock_t vfs_regular_write_lock(file_t file)
 	return vfs_inode_write_lock(file->path.dentry->inode);
 }
 
+/**
+ * vfs_file_write_current() - Write one byte buffer at the shared file position
+ * @file: Referenced open file; the caller retains its reference.
+ * @user_source: Nonzero when @source is a user virtual address.
+ * @source: Address of the byte buffer selected by @user_source, not an iovec.
+ * @count: Byte length of that buffer, no greater than 0x7fffffff.
+ *
+ * Context: Thread context; may sleep in metadata, cache, and backend I/O.
+ * Holds the superblock write_lock for regular files, but does not acquire
+ * file->position_lock. Callers must serialize other shared-offset mutations
+ * not covered by that write lock. Append selects EOF before backend I/O;
+ * the backend receives and may advance file->position.
+ *
+ * Return: Bytes written, possibly short, or a negative VFS error. A NULL or
+ * non-writable @file returns VFS_ERR_BADF; excessive @count returns
+ * VFS_ERR_INVAL. A positive regular-file write triggers cache refresh, whose
+ * error does not replace the write result.
+ */
 int64 vfs_file_write_current(struct vfs_file *file, int user_source,
 			     uint64 source, uint64 count)
 {
@@ -2533,6 +2986,19 @@ int64 vfs_file_write_current(struct vfs_file *file, int user_source,
 	return result > 0x7fffffff ? VFS_ERR_INVAL : result;
 }
 
+/* Implement the backend write operation and preserve partial-I/O results. */
+/**
+ * vfs_write() - write
+ * @fd: Descriptor in the current process descriptor table.
+ * @address: User virtual address supplied by the current process.
+ * @length: Requested byte length.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative byte count or value on success, or a
+ * negative VFS error.
+ */
 int vfs_write(int fd, uint64 address, int length)
 {
 	file_t file;
@@ -2548,6 +3014,17 @@ int vfs_write(int fd, uint64 address, int length)
 	return result;
 }
 
+/**
+ * vfs_writev() - Write vectors using a descriptor's shared file position
+ * @fd: Writable descriptor in the current process descriptor table.
+ * @user_source: Nonzero when vector bases are user virtual addresses.
+ * @iovecs: Kernel-resident vector array; caller retains its storage.
+ * @count: Number of entries in the supplied vector array.
+ * @flags: Zero, or VFS_WRITE_NOAPPEND to suppress append in scalar fallback.
+ *
+ * Context: Current process; may sleep in cache/filesystem/device operations.
+ * Return: Bytes written, possibly short, or a negative VFS error before data.
+ */
 int64 vfs_writev(int fd, int user_source,
 		 const struct vfs_iovec *iovecs, uint32 count,
 		 uint32 flags)
@@ -2612,6 +3089,18 @@ out_file:
 	return result;
 }
 
+/**
+ * vfs_ftruncate() - Set the length of a writable regular file
+ * @fd: Writable descriptor in the current process descriptor table.
+ * @size: Requested new file length in bytes.
+ *
+ * Writes back cached data and updates file mappings around the backend
+ * truncate operation. A later mapping-invalidation error does not undo an
+ * already completed backend truncate.
+ *
+ * Context: Current process; may sleep in filesystem/cache operations.
+ * Return: VFS_OK on success, or a negative VFS error.
+ */
 int vfs_ftruncate(int fd, uint64 size)
 {
 	struct vfs_inode *inode;
@@ -2632,6 +3121,18 @@ out:
 	return result;
 }
 
+/**
+ * vfs_truncate() - Set a regular file's length through a pathname
+ * @path: NUL-terminated absolute or process-relative pathname.
+ * @size: Requested new file length in bytes.
+ *
+ * Resolves @path, checks write permission and performs the same inode
+ * truncate as vfs_ftruncate(). A failure after backend truncation need not
+ * leave the previous file length intact.
+ *
+ * Context: Current process; may sleep in path, filesystem/cache operations.
+ * Return: VFS_OK on success, or a negative VFS error.
+ */
 int vfs_truncate(const char *path, uint64 size)
 {
 	struct vfs_path resolved;
@@ -2648,6 +3149,18 @@ int vfs_truncate(const char *path, uint64 size)
 	return result;
 }
 
+/**
+ * vfs_fallocate() - fallocate
+ * @fd: Descriptor in the current process descriptor table.
+ * @offset: Byte offset interpreted by this operation.
+ * @length: Requested byte length.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative byte count or value on success, or a
+ * negative VFS error.
+ */
 int vfs_fallocate(int fd, uint64 offset, uint64 length)
 {
 	struct vfs_inode *inode;
@@ -2688,6 +3201,19 @@ out:
 	return result;
 }
 
+/* Translate this control request to the selected backend operation. */
+/**
+ * vfs_ioctl() - ioctl
+ * @fd: Descriptor in the current process descriptor table.
+ * @request: Backend-defined ioctl request number.
+ * @argument: Backend-defined ioctl scalar or user address.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative byte count or value on success, or a
+ * negative VFS error.
+ */
 int64 vfs_ioctl(int fd, uint64 request, uint64 argument)
 {
 	file_t file;
@@ -2700,6 +3226,19 @@ int64 vfs_ioctl(int fd, uint64 request, uint64 argument)
 	return result;
 }
 
+/**
+ * vfs_seek() - seek
+ * @fd: Descriptor in the current process descriptor table.
+ * @offset: Byte offset interpreted by this operation.
+ * @whence: Seek origin defined by the VFS/Linux ABI.
+ * @result: Receives the requested object or scalar result on success.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative byte count or value on success, or a
+ * negative VFS error.
+ */
 int vfs_seek(int fd, int64 offset, int whence, uint64 *result)
 {
 	struct vfs_stat stat;
@@ -2738,6 +3277,15 @@ out:
 	return status;
 }
 
+/**
+ * vfs_stat_fd() - stat fd
+ * @fd: Descriptor in the current process descriptor table.
+ * @stat: Caller-provided VFS metadata result buffer.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ */
 int vfs_stat_fd(int fd, struct vfs_stat *stat)
 {
 	file_t file;
@@ -2757,6 +3305,16 @@ int vfs_stat_fd(int fd, struct vfs_stat *stat)
 	return result;
 }
 
+/**
+ * vfs_stat_path() - stat path
+ * @name: NUL-terminated path or component interpreted by this operation.
+ * @follow_symlink: Nonzero to follow the final symbolic link.
+ * @stat: Caller-provided VFS metadata result buffer.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ */
 int vfs_stat_path(const char *name, int follow_symlink,
 		  struct vfs_stat *stat)
 {
@@ -2771,6 +3329,7 @@ int vfs_stat_path(const char *name, int follow_symlink,
 	return status;
 }
 
+/* Resolve @name relative to @dirfd when it is not an absolute pathname. */
 static int vfs_walk_at(int dirfd, const char *name, uint32 flags,
 		       struct vfs_path *path)
 {
@@ -2785,6 +3344,17 @@ static int vfs_walk_at(int dirfd, const char *name, uint32 flags,
 	return status;
 }
 
+/**
+ * vfs_stat_at() - stat at
+ * @dirfd: Descriptor used as the base for a relative path.
+ * @name: NUL-terminated path or component interpreted by this operation.
+ * @follow_symlink: Nonzero to follow the final symbolic link.
+ * @stat: Caller-provided VFS metadata result buffer.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ */
 int vfs_stat_at(int dirfd, const char *name, int follow_symlink,
 		struct vfs_stat *stat)
 {
@@ -2799,6 +3369,7 @@ int vfs_stat_at(int dirfd, const char *name, int follow_symlink,
 	return status;
 }
 
+/* Invoke statfs or synthesize a minimal result for a superblock. */
 static int vfs_statfs_super(struct vfs_super_block *superblock,
 			    struct vfs_statfs *stat)
 {
@@ -2817,6 +3388,15 @@ static int vfs_statfs_super(struct vfs_super_block *superblock,
 	return VFS_OK;
 }
 
+/**
+ * vfs_statfs_fd() - statfs fd
+ * @fd: Descriptor in the current process descriptor table.
+ * @stat: Caller-provided VFS metadata result buffer.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ */
 int vfs_statfs_fd(int fd, struct vfs_statfs *stat)
 {
 	file_t file;
@@ -2834,6 +3414,15 @@ int vfs_statfs_fd(int fd, struct vfs_statfs *stat)
 	return result;
 }
 
+/**
+ * vfs_statfs_path() - statfs path
+ * @name: NUL-terminated path or component interpreted by this operation.
+ * @stat: Caller-provided VFS metadata result buffer.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ */
 int vfs_statfs_path(const char *name, struct vfs_statfs *stat)
 {
 	struct vfs_path path;
@@ -2846,6 +3435,7 @@ int vfs_statfs_path(const char *name, struct vfs_statfs *stat)
 	return status;
 }
 
+/* Validate requested attributes, then serialize and apply their update. */
 static int vfs_setattr_inode(struct vfs_inode *inode,
 			     const struct vfs_iattr *attributes)
 {
@@ -2914,6 +3504,16 @@ out:
 	return status;
 }
 
+/**
+ * vfs_setattr_path() - setattr path
+ * @name: NUL-terminated path or component interpreted by this operation.
+ * @follow_symlink: Nonzero to follow the final symbolic link.
+ * @attributes: Requested VFS inode attributes selected by its mask.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ */
 int vfs_setattr_path(const char *name, int follow_symlink,
 		     const struct vfs_iattr *attributes)
 {
@@ -2928,6 +3528,17 @@ int vfs_setattr_path(const char *name, int follow_symlink,
 	return status;
 }
 
+/**
+ * vfs_setattr_at() - setattr at
+ * @dirfd: Descriptor used as the base for a relative path.
+ * @name: NUL-terminated path or component interpreted by this operation.
+ * @follow_symlink: Nonzero to follow the final symbolic link.
+ * @attributes: Requested VFS inode attributes selected by its mask.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ */
 int vfs_setattr_at(int dirfd, const char *name, int follow_symlink,
 		   const struct vfs_iattr *attributes)
 {
@@ -2942,6 +3553,15 @@ int vfs_setattr_at(int dirfd, const char *name, int follow_symlink,
 	return status;
 }
 
+/**
+ * vfs_setattr_fd() - setattr fd
+ * @fd: Descriptor in the current process descriptor table.
+ * @attributes: Requested VFS inode attributes selected by its mask.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ */
 int vfs_setattr_fd(int fd, const struct vfs_iattr *attributes)
 {
 	file_t file;
@@ -2958,6 +3578,7 @@ int vfs_setattr_fd(int fd, const struct vfs_iattr *attributes)
 	vfs_file_put(file);
 	return status;
 }
+/* Check ownership or write permission for timestamp updates. */
 static int vfs_time_permission(struct vfs_inode *inode, int owner_only)
 {
 	struct process_credentials credentials;
@@ -2976,6 +3597,7 @@ static int vfs_time_permission(struct vfs_inode *inode, int owner_only)
 						&credentials, 0);
 }
 
+/* Maintain timestamps according to the current filesystem policy. */
 static int vfs_set_times_inode(
 	struct vfs_inode *inode, const struct vfs_timespec times[2],
 	uint32 mask, int owner_only)
@@ -3004,6 +3626,18 @@ out:
 	return status;
 }
 
+/**
+ * vfs_set_times_path() - set times path
+ * @name: NUL-terminated path or component interpreted by this operation.
+ * @follow_symlink: Nonzero to follow the final symbolic link.
+ * @times: Two timestamp values, indexed by access and modification time.
+ * @mask: Bit mask selecting the supplied fields or timestamps.
+ * @owner_only: Nonzero to require inode ownership for timestamp changes.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ */
 int vfs_set_times_path(const char *name, int follow_symlink,
 		       const struct vfs_timespec times[2], uint32 mask,
 		       int owner_only)
@@ -3023,6 +3657,20 @@ int vfs_set_times_path(const char *name, int follow_symlink,
 	return status;
 }
 
+/* Maintain timestamps according to the current filesystem policy. */
+/**
+ * vfs_set_times_at() - set times at
+ * @dirfd: Descriptor used as the base for a relative path.
+ * @name: NUL-terminated path or component interpreted by this operation.
+ * @follow_symlink: Nonzero to follow the final symbolic link.
+ * @times: Two timestamp values, indexed by access and modification time.
+ * @mask: Bit mask selecting the supplied fields or timestamps.
+ * @owner_only: Nonzero to require inode ownership for timestamp changes.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ */
 int vfs_set_times_at(int dirfd, const char *name, int follow_symlink,
 		     const struct vfs_timespec times[2], uint32 mask,
 		     int owner_only)
@@ -3042,6 +3690,18 @@ int vfs_set_times_at(int dirfd, const char *name, int follow_symlink,
 	return status;
 }
 
+/* Maintain timestamps according to the current filesystem policy. */
+/**
+ * vfs_set_times_fd() - set times fd
+ * @fd: Descriptor in the current process descriptor table.
+ * @times: Two timestamp values, indexed by access and modification time.
+ * @mask: Bit mask selecting the supplied fields or timestamps.
+ * @owner_only: Nonzero to require inode ownership for timestamp changes.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ */
 int vfs_set_times_fd(int fd, const struct vfs_timespec times[2],
 		     uint32 mask, int owner_only)
 {
@@ -3064,6 +3724,15 @@ out:
 	return status;
 }
 
+/**
+ * vfs_next_dirent() - next dirent
+ * @file: Referenced open file; the caller retains its reference.
+ * @emit: Directory-entry callback invoked before advancing the cursor.
+ * @context: Opaque callback state passed unchanged to @emit.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ */
 int vfs_next_dirent(struct vfs_file *file, vfs_dirent_emit_t emit,
 		    void *context)
 {
@@ -3104,6 +3773,17 @@ int vfs_next_dirent(struct vfs_file *file, vfs_dirent_emit_t emit,
 	return result;
 }
 
+/* Create a validated backend namespace object. */
+/**
+ * vfs_mkdir() - mkdir
+ * @name: NUL-terminated path or component interpreted by this operation.
+ * @mode: Requested permissions, masked by the process umask
+ * where applicable.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ */
 int vfs_mkdir(const char *name, uint32 mode)
 {
 	struct vfs_inode *inode;
@@ -3146,6 +3826,7 @@ int vfs_mkdir(const char *name, uint32 mode)
 	return status;
 }
 
+/* Create a special inode relative to an optional directory descriptor. */
 static int vfs_mknod_from(const char *name, enum vfs_inode_type type,
 			  uint32 mode, uint64 device,
 			  const struct vfs_path *base)
@@ -3201,12 +3882,42 @@ out:
 	return status;
 }
 
+/* Create a validated backend namespace object. */
+/**
+ * vfs_mknod() - mknod
+ * @name: NUL-terminated path or component interpreted by this operation.
+ * @type: Requested inode or resource type.
+ * @mode: Requested permissions, masked by the process umask
+ * where applicable.
+ * @device: Encoded device number or backend device selected by this interface.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative byte count or value on success, or a
+ * negative VFS error.
+ */
 int vfs_mknod(const char *name, enum vfs_inode_type type, uint32 mode,
 	      uint64 device)
 {
 	return vfs_mknod_from(name, type, mode, device, 0);
 }
 
+/**
+ * vfs_mknod_at() - mknod at
+ * @dirfd: Descriptor used as the base for a relative path.
+ * @name: NUL-terminated path or component interpreted by this operation.
+ * @type: Requested inode or resource type.
+ * @mode: Requested permissions, masked by the process umask
+ * where applicable.
+ * @device: Encoded device number or backend device selected by this interface.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative byte count or value on success, or a
+ * negative VFS error.
+ */
 int vfs_mknod_at(int dirfd, const char *name, enum vfs_inode_type type,
 		 uint32 mode, uint64 device)
 {
@@ -3221,6 +3932,17 @@ int vfs_mknod_at(int dirfd, const char *name, enum vfs_inode_type type,
 	return status;
 }
 
+/* Remove one backend namespace entry after VFS permission checks. */
+/**
+ * vfs_unlink() - unlink
+ * @name: NUL-terminated path or component interpreted by this operation.
+ * @remove_directory: Nonzero to require directory removal semantics.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: VFS_OK on success, otherwise a negative VFS error.
+ */
 int vfs_unlink(const char *name, int remove_directory)
 {
 	struct vfs_path parent, target;
@@ -3277,6 +3999,17 @@ out_unlink:
 	return status;
 }
 
+/**
+ * vfs_link() - link
+ * @old_name: Existing non-directory pathname to link.
+ * @new_name: New pathname whose final component must not exist.
+ * @follow_symlink: Nonzero to follow the final symbolic link.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: VFS_OK on success, otherwise a negative VFS error.
+ */
 int vfs_link(const char *old_name, const char *new_name,
 	     int follow_symlink)
 {
@@ -3324,6 +4057,16 @@ out:
 	return status;
 }
 
+/**
+ * vfs_symlink() - symlink
+ * @target: NUL-terminated destination path or mountpoint.
+ * @link_name: New pathname for the symbolic-link object.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: VFS_OK on success, otherwise a negative VFS error.
+ */
 int vfs_symlink(const char *target, const char *link_name)
 {
 	const struct vfs_inode_operations *operations;
@@ -3360,6 +4103,17 @@ int vfs_symlink(const char *target, const char *link_name)
 	return status;
 }
 
+/* Copy the backend symbolic-link target without following it. */
+/**
+ * vfs_readlink() - readlink
+ * @name: NUL-terminated path or component interpreted by this operation.
+ * @buffer: Caller-provided output buffer.
+ * @size: Capacity of @buffer in bytes.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ */
 int vfs_readlink(const char *name, char *buffer, uint32 size)
 {
 	const struct vfs_inode_operations *operations;
@@ -3385,6 +4139,18 @@ int vfs_readlink(const char *name, char *buffer, uint32 size)
 	return status;
 }
 
+/* Update the backend namespace while preserving VFS rename invariants. */
+/**
+ * vfs_rename() - rename
+ * @old_name: Existing pathname to move.
+ * @new_name: Destination pathname, possibly replacing an existing object.
+ * @flags: VFS operation flags; unsupported bits are rejected by
+ * the implementation.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ */
 int vfs_rename(const char *old_name, const char *new_name,
 	       uint32 flags)
 {
@@ -3485,6 +4251,15 @@ out_source:
 	return status;
 }
 
+/**
+ * vfs_fsync() - fsync
+ * @fd: Descriptor in the current process descriptor table.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: VFS_OK on success, otherwise a negative VFS error.
+ */
 int vfs_fsync(int fd)
 {
 	file_t file;
@@ -3502,6 +4277,15 @@ int vfs_fsync(int fd)
 	return result;
 }
 
+/* Flush adapter-visible state when the backing implementation supports it. */
+/**
+ * vfs_sync() - sync
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: VFS_OK on success, otherwise a negative VFS error.
+ */
 int vfs_sync(void)
 {
 	struct vfs_super_block *superblocks[VFS_SUPER_MAX];
@@ -3531,6 +4315,15 @@ int vfs_sync(void)
 	return first_error;
 }
 
+/**
+ * vfs_chdir() - chdir
+ * @name: NUL-terminated path or component interpreted by this operation.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: VFS_OK on success, otherwise a negative VFS error.
+ */
 int vfs_chdir(const char *name)
 {
 	process_t process = cur_proc();
@@ -3553,6 +4346,7 @@ int vfs_chdir(const char *name)
 	return VFS_OK;
 }
 
+/* Compare the mount and dentry identities held by two paths. */
 static int vfs_path_equal(const struct vfs_path *left,
 			  const struct vfs_path *right)
 {
@@ -3560,6 +4354,15 @@ static int vfs_path_equal(const struct vfs_path *left,
 	       left->dentry == right->dentry;
 }
 
+/**
+ * vfs_getcwd() - getcwd
+ * @buffer: Caller-provided output buffer.
+ * @size: Capacity of @buffer in bytes.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ */
 int vfs_getcwd(char *buffer, uint32 size)
 {
 	process_t process = cur_proc();
@@ -3604,6 +4407,17 @@ int vfs_getcwd(char *buffer, uint32 size)
 	return length;
 }
 
+/**
+ * vfs_access() - access
+ * @name: NUL-terminated path or component interpreted by this operation.
+ * @mode: Requested permissions, masked by the process umask
+ * where applicable.
+ * @use_effective_ids: Nonzero to check effective rather than real credentials.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ */
 int vfs_access(const char *name, uint32 mode, int use_effective_ids)
 {
 	struct process_credentials credentials;
@@ -3624,6 +4438,16 @@ int vfs_access(const char *name, uint32 mode, int use_effective_ids)
 	return status;
 }
 
+/**
+ * vfs_get_fd_flags() - Copy per-descriptor flags to caller storage
+ * @fd: Descriptor in the current process descriptor table.
+ * @flags: Non-NULL kernel output for the descriptor's VFS_FD_* flags.
+ *
+ * Context: Current process; takes files_lock without sleeping. The output
+ * belongs to the caller and is written only on success.
+ *
+ * Return: VFS_OK, or VFS_ERR_BADF for an invalid descriptor.
+ */
 int vfs_get_fd_flags(int fd, uint8 *flags)
 {
 	process_t process = cur_proc();
@@ -3640,6 +4464,16 @@ int vfs_get_fd_flags(int fd, uint8 *flags)
 	return VFS_OK;
 }
 
+/**
+ * vfs_set_fd_flags() - Replace per-descriptor flags
+ * @fd: Descriptor in the current process descriptor table.
+ * @flags: Descriptor flags, normally zero or VFS_FD_CLOEXEC; stored verbatim.
+ *
+ * Context: Current process; takes files_lock without sleeping. Does not
+ * validate flag bits or alter flags shared by the open file.
+ *
+ * Return: VFS_OK, or VFS_ERR_BADF for an invalid descriptor.
+ */
 int vfs_set_fd_flags(int fd, uint8 flags)
 {
 	process_t process = cur_proc();
@@ -3656,6 +4490,18 @@ int vfs_set_fd_flags(int fd, uint8 flags)
 	return VFS_OK;
 }
 
+/**
+ * vfs_get_file_flags() - Copy the open file's status flags to caller storage
+ * @fd: Descriptor in the current process descriptor table.
+ * @flags: Non-NULL kernel output for the file's VFS_OPEN_* flags.
+ *
+ * Context: Current process; pins the file under files_lock, then reads the
+ * flags without serializing concurrent flag changes. Dropping the temporary
+ * reference may sleep on final release. The caller retains output storage.
+ *
+ * Return: VFS_OK, or VFS_ERR_BADF for an invalid descriptor, leaving @flags
+ * unchanged on failure.
+ */
 int vfs_get_file_flags(int fd, uint32 *flags)
 {
 	file_t file;
@@ -3667,6 +4513,19 @@ int vfs_get_file_flags(int fd, uint32 *flags)
 	return VFS_OK;
 }
 
+/**
+ * vfs_set_file_flags() - Update mutable open-file status flags
+ * @fd: Descriptor in the current process descriptor table.
+ * @flags: Desired VFS_OPEN_APPEND and VFS_OPEN_NONBLOCK bits. Other input
+ * bits are ignored, and the file's other flags remain unchanged.
+ *
+ * Context: Current process; pins the file and calls its optional set_flags
+ * method before updating file->flags. May sleep in the backend or final
+ * reference release; does not serialize concurrent flag updates.
+ *
+ * Return: VFS_OK, VFS_ERR_BADF for an invalid descriptor, or a backend error.
+ * A rejected backend change leaves file->flags unchanged.
+ */
 int vfs_set_file_flags(int fd, uint32 flags)
 {
 	const uint32 mutable = VFS_OPEN_APPEND | VFS_OPEN_NONBLOCK;
@@ -3689,6 +4548,12 @@ int vfs_set_file_flags(int fd, uint32 flags)
 	return VFS_OK;
 }
 
+/**
+ * vfs_close_on_exec() - close on exec
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ */
 void vfs_close_on_exec(void)
 {
 	process_t process = cur_proc();

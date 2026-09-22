@@ -1,3 +1,4 @@
+/* Caffeinix fixed-width integer shim required by imported lwext4. */
 #ifndef LWEXT4_COMPAT_STDINT_H
 #define LWEXT4_COMPAT_STDINT_H
 
