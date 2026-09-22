@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -10,6 +11,7 @@
 #include <sys/stat.h>
 #include <sys/sendfile.h>
 #include <sys/syscall.h>
+#include <sys/time.h>
 #include <sys/uio.h>
 #include <unistd.h>
 
@@ -435,6 +437,71 @@ out:
 	return result;
 }
 
+static volatile sig_atomic_t sendfile_alarm;
+
+static void interrupt_sendfile(int signal)
+{
+	sendfile_alarm = signal;
+}
+
+static int test_sendfile_signal(void)
+{
+	const size_t count = 0x7ffff000;
+	struct sigaction action = { 0 }, saved;
+	struct itimerval timer = {
+		.it_value = { .tv_usec = 10000 },
+		.it_interval = { .tv_usec = 10000 },
+	};
+	struct itimerval stopped = { 0 };
+	int input = -1, output = -1, result = -1;
+	off_t offset;
+	ssize_t copied;
+
+	action.sa_handler = interrupt_sendfile;
+	sigemptyset(&action.sa_mask);
+	if (sigaction(SIGALRM, &action, &saved))
+		return -1;
+	input = open("/tmp/io-sendfile-signal",
+	             O_CREAT | O_EXCL | O_RDWR, 0600);
+	output = open("/dev/null", O_WRONLY);
+	if (input < 0 || output < 0 ||
+	    ftruncate(input, (off_t)count + 17))
+		goto out;
+	/* No blocking destination: sendfile itself must notice the signal. */
+	for (int explicit = 0; explicit < 2; explicit++) {
+		if (lseek(input, 17, SEEK_SET) != 17)
+			goto out;
+		offset = 17;
+		sendfile_alarm = 0;
+		if (setitimer(ITIMER_REAL, &timer, NULL))
+			goto out;
+		copied = sendfile(output, input, explicit ? &offset : NULL,
+		                  count);
+		if (copied == -1 && errno == EINTR)
+			copied = 0;
+		else if (copied <= 0)
+			goto out;
+		if (setitimer(ITIMER_REAL, &stopped, NULL) ||
+		    sendfile_alarm != SIGALRM || (size_t)copied >= count)
+			goto out;
+		if (lseek(input, 0, SEEK_CUR) !=
+		    (explicit ? 17 : 17 + copied) ||
+		    offset != (explicit ? 17 + copied : 17))
+			goto out;
+	}
+	result = 0;
+out:
+	setitimer(ITIMER_REAL, &stopped, NULL);
+	sigaction(SIGALRM, &saved, NULL);
+	if (output >= 0)
+		close(output);
+	if (input >= 0) {
+		close(input);
+		unlink("/tmp/io-sendfile-signal");
+	}
+	return result;
+}
+
 int main(void)
 {
 	const char source[] = "abcdefghijklmnopqrstuvwxyz";
@@ -522,6 +589,8 @@ int main(void)
 		return fail("readonly close");
 	if (test_sendfile_read_access())
 		return fail("sendfile read access");
+	if (test_sendfile_signal())
+		return fail("sendfile signal and position");
 
 	output = open("/tmp/io-sendfile", O_CREAT | O_TRUNC | O_RDWR, 0600);
 	if (output < 0 || lseek(input, 3, SEEK_SET) != 3)

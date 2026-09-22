@@ -5,6 +5,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/mman.h>
+#include <sys/sendfile.h>
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
 #include <termios.h>
@@ -293,6 +295,54 @@ static int test_long_output(void)
 	return 0;
 }
 
+static int test_interrupted_output(int use_sendfile)
+{
+	const size_t length = 16 * 1024 * 1024;
+	struct sigaction action = { 0 };
+	off_t offset = 17;
+	void *buffer = MAP_FAILED;
+	ssize_t result;
+	int fd, input = -1;
+
+	fd = open("/dev/ttyS0", O_WRONLY);
+	action.sa_handler = catch_signal;
+	/* A short successful write must not restart, even with SA_RESTART. */
+	action.sa_flags = SA_RESTART;
+	sigemptyset(&action.sa_mask);
+	if (fd < 0 || sigaction(SIGINT, &action, NULL))
+		return fail("output-setup", 80);
+	if (use_sendfile) {
+		input = open("/tmp/tty-output-input",
+		             O_CREAT | O_EXCL | O_RDWR, 0600);
+		if (input < 0 || unlink("/tmp/tty-output-input") ||
+		    ftruncate(input, length + offset) ||
+		    lseek(input, 11, SEEK_SET) != 11)
+			return fail("output-source", 81);
+	} else {
+		buffer = mmap(NULL, length, PROT_READ,
+		              MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+		if (buffer == MAP_FAILED)
+			return fail("output-map", 82);
+	}
+	caught_signal = 0;
+	if (use_sendfile)
+		result = sendfile(fd, input, &offset, length);
+	else
+		result = write(fd, buffer, length);
+	if (caught_signal != SIGINT || result <= 0 ||
+	    (size_t)result >= length)
+		return fail("output-interrupt", 83);
+	if (use_sendfile && (offset != 17 + result ||
+	                    lseek(input, 0, SEEK_CUR) != 11 || close(input)))
+		return fail("output-offset", 84);
+	if (!use_sendfile && munmap(buffer, length))
+		return fail("output-unmap", 85);
+	if (close(fd))
+		return fail("output-close", 86);
+	printf("\nTTY_OUTPUT_OK bytes=%ld\n", (long)result);
+	return 0;
+}
+
 int main(int argc, char **argv)
 {
 	if (argc != 2)
@@ -309,5 +359,9 @@ int main(int argc, char **argv)
 		return test_signals();
 	if (!strcmp(argv[1], "long-output"))
 		return test_long_output();
+	if (!strcmp(argv[1], "output-write"))
+		return test_interrupted_output(0);
+	if (!strcmp(argv[1], "output-sendfile"))
+		return test_interrupted_output(1);
 	return fail("mode", 2);
 }
