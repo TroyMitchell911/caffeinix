@@ -3,6 +3,8 @@
 #include <device.h>
 #include <mystring.h>
 #include <process.h>
+#include <scheduler.h>
+#include <signal.h>
 #include <spinlock.h>
 #include <tty.h>
 
@@ -162,6 +164,8 @@ static int64 tty_write(struct tty *tty, int user_source, uint64 source,
 			       sizeof(buffer) : remaining;
 		int64 written;
 
+		if (signal_pending_unblocked(cur_thread()))
+			return total ? total : VFS_ERR_INTR;
 		if (either_copyin(buffer, user_source, source + total, chunk) < 0)
 			return total ? total : VFS_ERR_FAULT;
 		written = tty->operations->write(tty, buffer, chunk);
