@@ -1,3 +1,10 @@
+/*
+ * Linux futex and robust-list implementation.
+ *
+ * Waiters are keyed by either a process-local virtual address or a shared
+ * physical address. The fixed table is protected by futex_table.lock, which
+ * is held while a waiter is checked, attached, woken, or requeued.
+ */
 #include <debug.h>
 #include <futex.h>
 #include <ktime.h>
@@ -40,6 +47,7 @@ static struct {
 	struct futex_slot slots[FUTEX_SLOT_COUNT];
 } futex_table;
 
+/* Clear a thread's saved restart state; the caller serializes @thread. */
 void futex_restart_cancel(thread_t thread)
 {
 	if (!thread)
@@ -56,6 +64,7 @@ void futex_restart_cancel(thread_t thread)
 	thread->futex_restart_bitset = 0;
 }
 
+/* Select direct resume or sigreturn-mediated resume after signal delivery. */
 void futex_restart_signal(thread_t thread, int through_handler)
 {
 	if (!thread || !thread->futex_restart_active)
@@ -64,6 +73,7 @@ void futex_restart_signal(thread_t thread, int through_handler)
 	thread->futex_restart_resume = !through_handler;
 }
 
+/* Re-arm a saved wait only when sigreturn restored the original syscall. */
 void futex_restart_sigreturn(thread_t thread)
 {
 	if (!thread || !thread->futex_restart_active ||
@@ -79,6 +89,7 @@ void futex_restart_sigreturn(thread_t thread)
 	thread->futex_restart_resume = 1;
 }
 
+/* Consume matching restart state and return its original absolute deadline. */
 static int futex_restart_take(thread_t thread, uint64 address, int private,
 			      uint32 expected, uint64 timeout_address,
 			      uint32 bitset, uint64 *deadline)
@@ -100,6 +111,7 @@ static int futex_restart_take(thread_t thread, uint64 address, int private,
 	return 0;
 }
 
+/* Save enough syscall state to retain a relative timeout across restart. */
 static void futex_restart_set(thread_t thread, uint64 address, int private,
 			      uint32 expected, uint64 timeout_address,
 			      uint32 bitset, uint64 deadline)
@@ -116,6 +128,7 @@ static void futex_restart_set(thread_t thread, uint64 address, int private,
 	thread->futex_restart_bitset = bitset;
 }
 
+/* Compare fully normalized process-private or physical shared keys. */
 static int futex_key_equal(const struct futex_key *left,
 			   const struct futex_key *right)
 {
@@ -124,6 +137,7 @@ static int futex_key_equal(const struct futex_key *left,
 	       left->shared == right->shared;
 }
 
+/* Resolve a validated user word into a private virtual or shared key. */
 static int futex_key_get(process_t process, uint64 address, int private,
 			 struct futex_key *key)
 {
@@ -149,6 +163,7 @@ static int futex_key_get(process_t process, uint64 address, int private,
 	return 0;
 }
 
+/* Find an active slot. futex_table.lock is held. */
 static struct futex_slot *futex_slot_find_locked(
 	const struct futex_key *key)
 {
@@ -165,6 +180,7 @@ static struct futex_slot *futex_slot_find_locked(
 	return 0;
 }
 
+/* Find or allocate a slot. futex_table.lock is held. */
 static struct futex_slot *futex_slot_get_locked(
 	const struct futex_key *key)
 {
@@ -186,6 +202,7 @@ static struct futex_slot *futex_slot_get_locked(
 	return 0;
 }
 
+/* Drop one waiter reference and deactivate an empty slot under table lock. */
 static void futex_slot_put_locked(struct futex_slot *slot)
 {
 	if (!spinlock_holding(&futex_table.lock) || !slot ||
@@ -199,6 +216,7 @@ static void futex_slot_put_locked(struct futex_slot *slot)
 	}
 }
 
+/* Convert a userspace relative timespec to rounded-up milliseconds. */
 static int futex_relative_timeout(process_t process, uint64 address,
 				  uint64 *milliseconds)
 {
@@ -226,6 +244,7 @@ static int futex_relative_timeout(process_t process, uint64 address,
 	return 1;
 }
 
+/* Convert a userspace absolute monotonic timespec to remaining milliseconds. */
 static int futex_absolute_timeout(process_t process, uint64 address,
 				  uint64 *milliseconds)
 {
@@ -254,6 +273,7 @@ static int futex_absolute_timeout(process_t process, uint64 address,
 	return 1;
 }
 
+/* Check @expected and sleep atomically with futex_table.lock held. */
 static int futex_wait(uint64 address, int private, uint32 expected,
 		      uint64 timeout_address, uint32 bitset,
 		      int absolute)
@@ -334,6 +354,7 @@ static int futex_wait(uint64 address, int private, uint32 expected,
 	return result == WAIT_QUEUE_TIMEOUT ? -LINUX_ETIMEDOUT : 0;
 }
 
+/* Wake matching waiters for @key; futex_table.lock is held. */
 static int futex_wake_key_locked(const struct futex_key *key, int count,
 				 uint32 bitset)
 {
@@ -345,6 +366,7 @@ static int futex_wake_key_locked(const struct futex_key *key, int count,
 	return wait_queue_wake_mask(&slot->wait, count, bitset);
 }
 
+/* Resolve a key and wake up to @count matching waiters. */
 static int futex_wake(uint64 address, int private, int count,
 		      uint32 bitset)
 {
@@ -363,6 +385,7 @@ static int futex_wake(uint64 address, int private, int count,
 	return result;
 }
 
+/* Wake source waiters, then move the remainder to a distinct destination. */
 static int futex_requeue(uint64 address, int private, int wake_count,
 			 int requeue_count, uint64 destination,
 			 int compare, uint32 expected)
@@ -426,6 +449,13 @@ static int futex_requeue(uint64 address, int private, int wake_count,
 	return woken + moved;
 }
 
+/**
+ * sys_linux_futex() - Implement the supported Linux futex operations
+ *
+ * Context: User syscall context.
+ * Return: Operation result or a negative Linux errno. Supported waits may be
+ * signal-restarted; unsupported commands fail.
+ */
 uint64 sys_linux_futex(void)
 {
 	uint64 address, destination, timeout_address;
@@ -472,6 +502,12 @@ uint64 sys_linux_futex(void)
 	}
 }
 
+/**
+ * sys_linux_set_robust_list() - Register the current thread's robust list
+ *
+ * Context: User syscall context.
+ * Return: Zero or a negative Linux errno.
+ */
 uint64 sys_linux_set_robust_list(void)
 {
 	thread_t current = cur_thread();
@@ -486,6 +522,12 @@ uint64 sys_linux_set_robust_list(void)
 	return 0;
 }
 
+/**
+ * sys_linux_get_robust_list() - Return a thread's registered robust-list head
+ *
+ * Context: User syscall context.
+ * Return: Zero or a negative Linux errno.
+ */
 uint64 sys_linux_get_robust_list(void)
 {
 	process_t process = cur_proc();
@@ -508,6 +550,7 @@ uint64 sys_linux_get_robust_list(void)
 	return 0;
 }
 
+/* Wake one private and one shared waiter after a robust-word state change. */
 static void futex_wake_address(process_t process, uint64 address)
 {
 	struct futex_key key;
@@ -522,6 +565,7 @@ static void futex_wake_address(process_t process, uint64 address)
 	spinlock_release(&futex_table.lock);
 }
 
+/* Mark a dead owner's robust word and wake its waiters when accessible. */
 static void futex_robust_mark(process_t process, uint64 node,
 			      int64 offset, int tid)
 {
@@ -567,6 +611,7 @@ static void futex_robust_mark(process_t process, uint64 node,
 	}
 }
 
+/* Walk bounded robust-list storage before its address space is destroyed. */
 void futex_thread_exit(thread_t thread)
 {
 	struct linux_robust_list_head head;
@@ -603,6 +648,7 @@ void futex_thread_exit(thread_t thread)
 		futex_wake_address(process, thread->clear_child_tid);
 }
 
+/* Initialize all table slots before threads can issue futex syscalls. */
 void futex_init(void)
 {
 	int index;

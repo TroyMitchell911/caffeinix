@@ -1,3 +1,10 @@
+/*
+ * Wait queue implementation.
+ *
+ * This module serializes queue and timeout-list transitions under a fixed
+ * lock order: timeout queue, wait queue, then thread. Callers retain their
+ * condition lock across every sleep return and must test the condition again.
+ */
 #include <debug.h>
 #include <ktime.h>
 #include <process.h>
@@ -28,6 +35,7 @@ void wait_queue_init(wait_queue_t queue, const char *name)
 	queue->name = name;
 }
 
+/* Insert @thread by ascending deadline; timeout_queue.lock is held. */
 static void timeout_insert_locked(thread_t thread)
 {
 	struct list *node;
@@ -44,6 +52,11 @@ static void timeout_insert_locked(thread_t thread)
 	thread->on_timeout_queue = 1;
 }
 
+/*
+ * Link the current thread before dropping @condition_lock and, on return,
+ * reacquire it. The signal sequence closes the window between the initial
+ * pending-signal test and publishing the waiter.
+ */
 static int wait_queue_sleep_deadline(wait_queue_t queue,
 				     spinlock_t condition_lock,
 				     uint64 deadline, int signal_mode)
@@ -207,6 +220,10 @@ int wait_queue_sleep_interruptible_until(wait_queue_t queue,
 					 WAIT_SIGNAL_INTERRUPTIBLE);
 }
 
+/*
+ * Remove a sleeping thread from @queue and the timeout queue. timeout_queue,
+ * @queue, and @thread locks are held by the caller in that order.
+ */
 static void wait_queue_wake_locked(wait_queue_t queue, thread_t thread,
 				   int result)
 {

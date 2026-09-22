@@ -1,3 +1,10 @@
+/*
+ * Single-worker deferred execution queue.
+ *
+ * system_workqueue.lock serializes pending-list membership and work state.
+ * Callers own work-item storage and must use cancel_work_sync() before it is
+ * reclaimed. Callbacks run without the queue lock in normal thread context.
+ */
 #include <debug.h>
 #include <kernel_config.h>
 #include <scheduler.h>
@@ -13,6 +20,7 @@ static struct {
 	thread_t worker;
 } system_workqueue;
 
+/* Consume pending work serially and signal completion after each callback. */
 static void workqueue_thread(void *argument)
 {
 	(void)argument;
