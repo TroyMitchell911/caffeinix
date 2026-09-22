@@ -1,3 +1,4 @@
+/* S-mode trap dispatch for syscalls, faults, timer, IPI, and external IRQs. */
 #include <trap.h>
 #include <spinlock.h>
 #include <debug.h>
@@ -29,6 +30,7 @@ uint64 trap_interrupt_count(void)
 	return __atomic_load_n(&interrupt_count, __ATOMIC_RELAXED);
 }
 
+/* Advance the CPU0 scheduler tick under its dedicated lock. */
 static void tick_intr(void)
 {
         spinlock_acquire(&tick_lock);
@@ -37,6 +39,7 @@ static void tick_intr(void)
         spinlock_release(&tick_lock);
 }
 
+/* Dispatch a supervisor interrupt as timer, external, or IPI work. */
 static int dev_intr(uint64 scause)
 {
         int irq = 0;
@@ -75,6 +78,17 @@ static int dev_intr(uint64 scause)
         return 0;
 }
 
+/**
+ * kernel_trap() - Dispatch an interrupt taken while executing kernel code.
+ *
+ * The assembly vector has saved the interrupted register frame.  This path
+ * accepts only supervisor-mode interrupts; synchronous kernel faults panic.
+ * It restores the original EPC and SSTATUS after any scheduling decision.
+ *
+ * Context:
+ * Local S-mode trap context with interrupts disabled on entry.  Device IRQ
+ * callbacks run from this path; scheduler yield may switch threads.
+ */
 void kernel_trap(void)
 {
         uint8 which_dev = 0;
@@ -118,6 +132,18 @@ __attribute__((noreturn)) void kernel_stack_overflow(uint64 stack_pointer)
 		;
 }
 
+/**
+ * user_trap_entry() - Handle a trap after trampoline entry from user mode.
+ *
+ * Saves user EPC, dispatches syscalls, turns supported faults into Linux
+ * signals, and accounts timer/IPI work before returning through the
+ * trampoline.  Fatal signal delivery or a scheduler switch may not return to
+ * the same thread.
+ *
+ * Context:
+ * Local S-mode trap context.  Interrupts are enabled only around operations
+ * that may block or need device progress; no caller-owned resources transfer.
+ */
 void user_trap_entry(void)
 {
         int which_dev = 0;
@@ -211,6 +237,18 @@ void user_trap_entry(void)
         user_trap_ret();
 }
 
+/**
+ * user_trap_ret() - Prepare the trampoline and return to the user thread
+ *
+ * Installs the user trap vector, records kernel return state in the current
+ * trapframe, programs SSTATUS/SEPC, and invokes trampoline userret with the
+ * process page-table SATP.  The trampoline executes sret, so this does not
+ * return through its C call site.
+ *
+ * Context:
+ * Local S-mode return path for cur_proc() and cur_thread(); interrupts are
+ * disabled before changing trap CSRs.
+ */
 void user_trap_ret(void)
 {
         process_t p;
@@ -253,14 +291,12 @@ void user_trap_ret(void)
 		satp, TRAPFRAME(cur_thread()->id_p));
 }
 
-/* This function for first hart */
 void trap_init_lock(void)
 {
         spinlock_init(&tick_lock, "trap_tick");
 	interrupt_count = 0;
 }
 
-/* This function for any hart */
 void trap_init(void)
 {
         stvec_w((uint64)kernel_vec);

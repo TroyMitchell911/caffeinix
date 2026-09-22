@@ -1,3 +1,8 @@
+/*
+ * OpenSBI payload layout with separate executable and writable load segments.
+ * Trap and signal trampolines occupy page-aligned text; etext and end delimit
+ * kernel mappings and the physical allocator's reserved kernel extent.
+ */
 OUTPUT_ARCH( "riscv" )
 ENTRY( _entry )
 
@@ -17,7 +22,6 @@ SECTIONS
   .text : {
     *(.text .text.*)
     . = ALIGN(0x1000);
-    /* _trampoline = .; */
     *(trampsec)
     . = ALIGN(0x1000);
     *(sigtrampsec)

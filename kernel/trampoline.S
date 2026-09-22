@@ -1,3 +1,9 @@
+/*
+ * User/kernel trap trampoline mapped at the same virtual address in both
+ * page tables. user_vec saves the complete user register file in the current
+ * thread trap frame before changing SATP; user_ret performs the reverse path.
+ * sscratch carries the trap-frame pointer while user mode is running.
+ */
 #include <riscv.h>
 #include <mem_layout.h>
 
@@ -7,6 +13,10 @@ trampoline:
 .align 4
 .global user_vec
 user_vec:
+	/*
+	 * Entered with sscratch holding the trap frame. Exchange it with user a0
+	 * first, so a0 becomes a usable base before saving the remaining state.
+	 */
 	csrrw a0, sscratch, a0
 
         sd ra, 40(a0)
@@ -93,6 +103,11 @@ user_vec:
 
 .global user_ret
 user_ret:
+	/*
+	 * a0 is the user SATP and a1 is the fully prepared trap-frame address.
+	 * Switch page tables before loading user registers, then restore sscratch
+	 * so the next trap can exchange it with user a0 again.
+	 */
         sfence.vma zero, zero
         csrw satp, a0
         sfence.vma zero, zero

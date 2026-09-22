@@ -1,12 +1,9 @@
 /*
- * @Author: TroyMitchell
- * @Date: 2024-04-30 06:23
- * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-06-01
- * @FilePath: /caffeinix/kernel/main.c
- * @Description: 
- * Words are cheap so I do.
- * Copyright (c) 2024 by TroyMitchell, All Rights Reserved. 
+ * Kernel boot sequencing from firmware handoff through scheduler entry.
+ * CPU0 constructs global state and releases secondary harts only after the
+ * MMU, traps, drivers, filesystems, and initial userspace are ready.
+ *
+ * Copyright (c) 2024 by TroyMitchell, All Rights Reserved.
  */
 #include <mem_layout.h>
 #include <vm.h>
@@ -61,6 +58,7 @@ extern char end[];
 extern void kernel_stack_overflow_test(void);
 #endif
 
+/* Finish CPU0-only subsystem bring-up and enter the scheduler. */
 static void main_boot(void)
 {
 	thread_setup();
@@ -132,6 +130,7 @@ static void main_boot(void)
 		;
 }
 
+/* Finish secondary-hart local setup and join the scheduler. */
 static void main_secondary(void)
 {
 	cpu_secondary_boot_stack_release();
@@ -145,6 +144,18 @@ static void main_secondary(void)
 		;
 }
 
+/**
+ * main() - Select boot-hart or secondary-hart kernel initialization.
+ *
+ * The boot hart consumes setup()'s saved FDT and hart ID, builds global
+ * memory, CPU, SBI, driver, filesystem, and scheduler state, then releases
+ * secondaries.  A secondary waits for that release, enables its local MMU,
+ * interrupt, timer, and scheduler state, and enters the scheduler.
+ *
+ * Context:
+ * Paging-disabled early S-mode entry after setup() or secondary_setup().
+ * This function transfers to a scheduler stack and never returns.
+ */
 void main(void)
 {
 	if (cpuid() == 0) {

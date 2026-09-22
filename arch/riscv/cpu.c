@@ -1,3 +1,8 @@
+/*
+ * RISC-V hart topology, scheduler-stack setup, and cross-hart barriers.
+ * Logical CPU IDs are dense and distinct from firmware hart IDs; tp stores
+ * the logical ID after each hart has completed early boot.
+ */
 #include <cpu.h>
 #include <debug.h>
 #include <kernel_config.h>
@@ -23,6 +28,7 @@ static uint64 membarrier_generation;
 /* Used directly by the trap entry before it can safely use a C stack. */
 uint64 *cpu_overflow_stack_tops;
 
+/* Build dense logical CPU state from enabled DT CPU nodes. */
 void cpu_topology_init(uint64 boot_hart_id)
 {
 	struct device_node *node;
@@ -67,6 +73,7 @@ void cpu_topology_init(uint64 boot_hart_id)
 	logical_cpu_count = count;
 }
 
+/* Return the DT-derived number of logical CPUs. */
 int cpu_count(void)
 {
 	return logical_cpu_count;
@@ -92,6 +99,7 @@ void cpu_membarrier_interrupt(void)
 	__atomic_store_n(&cpu->membarrier_done, request, __ATOMIC_RELEASE);
 }
 
+/* Publish a full memory barrier after every online hart acknowledges an IPI. */
 void cpu_membarrier(void)
 {
 	uint64 generation;
@@ -123,6 +131,7 @@ void cpu_membarrier(void)
 	sleeplock_release(&membarrier_lock);
 }
 
+/* Flush local and online remote TLBs after globally visible PTE changes. */
 void cpu_tlb_flush_all(void)
 {
 	int current = cpuid();
@@ -152,6 +161,7 @@ void cpu_icache_flush_all(void)
 	}
 }
 
+/* Convert a validated logical CPU index to its firmware hart ID. */
 uint64 cpu_hart_id(int logical_id)
 {
 	if (logical_id < 0 || logical_id >= logical_cpu_count)
@@ -166,6 +176,7 @@ struct device_node *cpu_of_node(int logical_id)
 	return cpus[logical_id]->of_node;
 }
 
+/* Map one guarded scheduler stack and its physical overflow emergency page. */
 static void cpu_map_kernel_stack(pagedir_t pgdir, int logical_id)
 {
 	uint64 address = SCHED_STACK(logical_id);
@@ -185,6 +196,7 @@ static void cpu_map_kernel_stack(pagedir_t pgdir, int logical_id)
 	cpu_overflow_stack_tops[logical_id] = physical + PGSIZE;
 }
 
+/* Allocate scheduler and emergency stacks before enabling normal traps. */
 void cpu_map_kernel_stacks(pagedir_t pgdir)
 {
 	int logical;
@@ -199,6 +211,7 @@ void cpu_map_kernel_stacks(pagedir_t pgdir)
 		cpu_map_kernel_stack(pgdir, logical);
 }
 
+/* Verify mapped stack pages have unmapped guard regions on both sides. */
 static int cpu_stack_slot_valid(uint64 address)
 {
 	int page;
@@ -265,6 +278,7 @@ void cpu_secondary_boot_stack_release(void)
 	pfree(stack);
 }
 
+/* Report an SBI hart-start failure with its logical CPU context. */
 static void cpu_start_failed(int logical_id, int64 error)
 {
 	pr_err("CPU: logical=%d hart=%p SBI error=%d", logical_id,

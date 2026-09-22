@@ -1,3 +1,7 @@
+/*
+ * Firmware and HSM assembly entry: establish a temporary stack, then tail
+ * into C.  The secondary record contains logical CPU ID at offset zero.
+ */
 #include <boot.h>
 
 .section .text
