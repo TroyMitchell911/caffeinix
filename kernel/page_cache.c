@@ -1,3 +1,11 @@
+/*
+ * Global cache of file pages shared by buffered I/O and file-backed faults.
+ *
+ * The cache sleeplock protects entries and stays held over cache-fill reads
+ * and writeback I/O. Writeback takes the superblock write lock before it.
+ * Mapped reclaim drops the cache lock before entering mmap code, with the
+ * entry's evicting flag excluding concurrent eviction or cache acquisition.
+ */
 #include <cpu.h>
 #include <list.h>
 #include <mmap.h>
@@ -39,6 +47,7 @@ void page_cache_init(void)
 	page_cache.stats = (struct page_cache_stats){0};
 }
 
+/* Find an entry while page_cache.lock protects the entry list. */
 static struct page_cache_entry *page_cache_find(
 	struct vfs_super_block *superblock, uint64 inode_number,
 	uint64 offset)
@@ -58,6 +67,7 @@ static struct page_cache_entry *page_cache_find(
 	return 0;
 }
 
+/* Compare an entry's stable filesystem identity with an inode. */
 static int page_cache_same_inode(const struct page_cache_entry *entry,
 				 const struct vfs_inode *inode)
 {
@@ -65,6 +75,7 @@ static int page_cache_same_inode(const struct page_cache_entry *entry,
 	       entry->inode_number == inode->number;
 }
 
+/* Drop an unlinked cache entry's VFS and page references under cache lock. */
 static void page_cache_release(struct page_cache_entry *entry)
 {
 	list_remove(&entry->node);
@@ -74,6 +85,7 @@ static void page_cache_release(struct page_cache_entry *entry)
 	page_cache.stats.pages--;
 }
 
+/* Select one clean entry and reserve it against a concurrent eviction. */
 static struct page_cache_entry *page_cache_select_clean_locked(void)
 {
 	struct page_cache_entry *entry;
@@ -90,6 +102,7 @@ static struct page_cache_entry *page_cache_select_clean_locked(void)
 	return 0;
 }
 
+/* Reclaim unmapped clean entries while page_cache.lock is held. */
 static uint64 page_cache_reclaim_locked(uint64 target)
 {
 	list_t node, next;
@@ -111,6 +124,13 @@ static uint64 page_cache_reclaim_locked(uint64 target)
 	return reclaimed;
 }
 
+/**
+ * page_cache_reclaim() - Reclaim clean, unmapped cache pages.
+ * @target: Maximum number of pages to reclaim.
+ *
+ * Context: Thread context; takes the page-cache sleeplock and may sleep.
+ * Return: Number of pages actually reclaimed, from zero through @target.
+ */
 uint64 page_cache_reclaim(uint64 target)
 {
 	uint64 reclaimed;
@@ -121,6 +141,14 @@ uint64 page_cache_reclaim(uint64 target)
 	return reclaimed;
 }
 
+/**
+ * page_cache_reclaim_mapped() - Reclaim clean cache pages after removing
+ * their mappings.
+ * @target: Maximum number of pages to reclaim.
+ *
+ * Context: Thread context; takes the page-cache and mmap locks and may sleep.
+ * Return: Number of pages actually reclaimed, from zero through @target.
+ */
 uint64 page_cache_reclaim_mapped(uint64 target)
 {
 	struct page_cache_entry *entry;
@@ -157,6 +185,13 @@ uint64 page_cache_reclaim_mapped(uint64 target)
 	return reclaimed;
 }
 
+/**
+ * page_cache_reclaim_unmapped() - Reclaim all eligible clean cache pages
+ * without mappings.
+ *
+ * Context: Thread context; takes the page-cache sleeplock and may sleep.
+ * Return: Number of pages reclaimed; never reports an error.
+ */
 uint64 page_cache_reclaim_unmapped(void)
 {
 	struct page_cache_entry *entry;
@@ -180,6 +215,7 @@ uint64 page_cache_reclaim_unmapped(void)
 	return reclaimed;
 }
 
+/* Populate adjacent pages while the cache lock serializes entry creation. */
 static int page_cache_readahead_locked(struct vfs_file *file,
 				       struct vfs_inode *inode,
 				       uint64 offset, uint32 bytes,
@@ -423,6 +459,15 @@ out:
 	return result;
 }
 
+/**
+ * page_cache_mark_executable() - Prevent eviction of an executable cached page.
+ * @file: Non-NULL file owning the cached page.
+ * @offset: Page-aligned byte offset in @file.
+ *
+ * Context: Thread context; takes the page-cache sleeplock and may sleep.
+ * Return: Zero when an extant non-evicting entry was marked, otherwise -1. The
+ * caller retains ownership of @file.
+ */
 int page_cache_mark_executable(struct vfs_file *file, uint64 offset)
 {
 	struct page_cache_entry *entry;
@@ -442,6 +487,21 @@ int page_cache_mark_executable(struct vfs_file *file, uint64 offset)
 	return result;
 }
 
+/**
+ * page_cache_refresh() - Refresh cached bytes after a file write.
+ * @file: Non-NULL file whose cache entries are updated.
+ * @user_source: Nonzero when @source is a user virtual address.
+ * @source: Source address for written bytes.
+ * @offset: Destination byte offset in @file.
+ * @count: Number of bytes written; zero is a no-op.
+ * @old_size: File size before the write, used to zero newly exposed holes.
+ *
+ * Context: Thread context; takes the page-cache sleeplock and may copy from
+ * user
+ * memory or perform raw I/O. Caller retains @file ownership.
+ * Return: Zero on success, or -1 for invalid input, overflow, or copy/I/O
+ * error.
+ */
 int page_cache_refresh(struct vfs_file *file, int user_source,
 		       uint64 source, uint64 offset, uint64 count,
 		       uint64 old_size)
@@ -500,6 +560,7 @@ int page_cache_refresh(struct vfs_file *file, int user_source,
 	return result;
 }
 
+/* Flush one dirty entry with the superblock write and cache locks held. */
 static int page_cache_writeback_entry(struct page_cache_entry *entry)
 {
 	struct vfs_stat stat;
@@ -527,6 +588,7 @@ static int page_cache_writeback_entry(struct page_cache_entry *entry)
 	return 0;
 }
 
+/* Select inode-matching dirty entries under cache lock for writeback. */
 static int page_cache_writeback_locked(struct vfs_inode *inode,
 				       struct vfs_super_block *superblock)
 {
@@ -547,6 +609,15 @@ static int page_cache_writeback_locked(struct vfs_inode *inode,
 	return result;
 }
 
+/**
+ * page_cache_writeback_file() - Write back dirty cached pages for a file.
+ * @file: Non-NULL file whose inode cache entries are flushed.
+ *
+ * Context: Thread context; takes the superblock write lock then the cache
+ * sleeplock and performs filesystem I/O with both held. May sleep.
+ * Return: Zero when @file is invalid, non-regular, or all writeback succeeds;
+ * otherwise -1 when writeback fails.
+ */
 int page_cache_writeback_file(struct vfs_file *file)
 {
 	struct vfs_inode *inode;
@@ -558,6 +629,14 @@ int page_cache_writeback_file(struct vfs_file *file)
 	return page_cache_writeback_inode(inode);
 }
 
+/**
+ * page_cache_writeback_inode() - Write back dirty cached pages for an inode.
+ * @inode: Non-NULL inode whose entries are flushed.
+ *
+ * Context: Thread context; takes the superblock write lock then the cache
+ * sleeplock and performs filesystem I/O with both held. May sleep.
+ * Return: Zero on success, or -1 for invalid input or writeback failure.
+ */
 int page_cache_writeback_inode(struct vfs_inode *inode)
 {
 	int result;
@@ -572,6 +651,16 @@ int page_cache_writeback_inode(struct vfs_inode *inode)
 	return result;
 }
 
+/**
+ * page_cache_writeback_inode_locked() - Flush pages with the write lock held
+ * @inode: Non-NULL inode whose superblock write_lock the caller holds.
+ *
+ * Context: Thread context; acquires the cache sleeplock and performs I/O with
+ * it and the caller's superblock write_lock held. May sleep; does not release
+ * the caller's lock or inode reference.
+ * Return: Zero on success, or -1 for invalid input, a missing write lock, or
+ * writeback failure.
+ */
 int page_cache_writeback_inode_locked(struct vfs_inode *inode)
 {
 	int result;
@@ -585,6 +674,15 @@ int page_cache_writeback_inode_locked(struct vfs_inode *inode)
 	return result;
 }
 
+/**
+ * page_cache_writeback_super() - Write back every dirty cache entry in a
+ * superblock.
+ * @superblock: Non-NULL mounted superblock to flush.
+ *
+ * Context: Thread context; takes the superblock write lock then the cache
+ * sleeplock and performs filesystem I/O with both held. May sleep.
+ * Return: Zero on success, or -1 for invalid input or any writeback failure.
+ */
 int page_cache_writeback_super(struct vfs_super_block *superblock)
 {
 	int result;
@@ -599,6 +697,16 @@ int page_cache_writeback_super(struct vfs_super_block *superblock)
 	return result;
 }
 
+/**
+ * page_cache_evict_super() - Write back and evict all cache entries of a
+ * superblock.
+ * @superblock: Non-NULL unmounting superblock.
+ *
+ * Context: Thread context; may take cache locks and perform filesystem I/O.
+ * Return: VFS_OK when entries were flushed and removed, VFS_ERR_INVAL for a
+ * NULL @superblock, VFS_ERR_BUSY for referenced/evicting entries, or
+ * VFS_ERR_IO when writeback fails.
+ */
 int page_cache_evict_super(struct vfs_super_block *superblock)
 {
 	struct page_cache_entry *entry;
@@ -641,6 +749,18 @@ out:
 	return result;
 }
 
+/**
+ * page_cache_truncate() - Remove or zero cached data made invalid by file
+ * truncation.
+ * @inode: Non-NULL inode whose cache entries are changed.
+ * @old_size: Previous file length in bytes.
+ * @size: New file length in bytes.
+ *
+ * Context: Thread context; takes the page-cache sleeplock and can yield while
+ * waiting for mapped pages to lose references.
+ * Return: PAGE_CACHE_TRUNCATE_OK on completion, PAGE_CACHE_TRUNCATE_RETRY when
+ * another truncation owns an entry, or PAGE_CACHE_TRUNCATE_ERROR for bad input.
+ */
 int page_cache_truncate(struct vfs_inode *inode, uint64 old_size,
 			uint64 size)
 {

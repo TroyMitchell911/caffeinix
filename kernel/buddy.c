@@ -1,3 +1,9 @@
+/*
+ * Internal buddy free-list implementation for the physical page allocator.
+ *
+ * One byte of external state records the head of every allocated or free
+ * block.  The caller serializes every operation on a buddy_allocator.
+ */
 #include <buddy.h>
 #include <riscv.h>
 
@@ -9,11 +15,13 @@ struct buddy_block {
 	struct list node;
 };
 
+/* Convert a buddy order to its byte size. */
 static uint64 buddy_order_size(unsigned int order)
 {
 	return PGSIZE << order;
 }
 
+/* Find the allocator region containing a physical address. */
 static struct buddy_region *buddy_find_region(
 	struct buddy_allocator *allocator, uint64 address)
 {
@@ -28,6 +36,7 @@ static struct buddy_region *buddy_find_region(
 	return 0;
 }
 
+/* Const variant used by validation paths. */
 static const struct buddy_region *buddy_find_region_const(
 	const struct buddy_allocator *allocator, uint64 address)
 {
@@ -42,6 +51,7 @@ static const struct buddy_region *buddy_find_region_const(
 	return 0;
 }
 
+/* Return metadata for a page, rejecting addresses beyond supplied state. */
 static uint8 *buddy_state(struct buddy_region *region, uint64 address)
 {
 	uint64 index = (address - region->start) / PGSIZE;
@@ -51,6 +61,7 @@ static uint8 *buddy_state(struct buddy_region *region, uint64 address)
 	return &region->states[index];
 }
 
+/* Const metadata lookup for allocation validation. */
 static const uint8 *buddy_state_const(const struct buddy_region *region,
 				      uint64 address)
 {
@@ -61,6 +72,7 @@ static const uint8 *buddy_state_const(const struct buddy_region *region,
 	return &region->states[index];
 }
 
+/* Check alignment and bounds before treating an address as an order head. */
 static int buddy_block_fits(const struct buddy_region *region,
 			    uint64 address, unsigned int order)
 {
@@ -74,6 +86,7 @@ static int buddy_block_fits(const struct buddy_region *region,
 	       size <= region->end - address;
 }
 
+/* Put a free block on its order list and mark its head state. */
 static void buddy_list_add(struct buddy_allocator *allocator,
 			   struct buddy_region *region, uint64 address,
 			   unsigned int order)
@@ -87,6 +100,7 @@ static void buddy_list_add(struct buddy_allocator *allocator,
 	*state = BUDDY_STATE_FREE | order;
 }
 
+/* Remove a known free block; its state is updated by the caller. */
 static void buddy_list_remove(struct buddy_allocator *allocator,
 			      uint64 address, unsigned int order)
 {
@@ -96,6 +110,7 @@ static void buddy_list_remove(struct buddy_allocator *allocator,
 	allocator->areas[order].count--;
 }
 
+/* Pick the largest aligned block that fits in the remaining page count. */
 static unsigned int buddy_largest_order(uint64 address, uint64 pages)
 {
 	unsigned int order = 0;

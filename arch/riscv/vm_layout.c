@@ -1,3 +1,4 @@
+/* SV39 leaf-size calculations used by page-table mapping code. */
 #include <riscv.h>
 #include <vm_layout.h>
 

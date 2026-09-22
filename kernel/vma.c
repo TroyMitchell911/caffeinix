@@ -1,3 +1,10 @@
+/*
+ * Virtual-memory-area interval management.
+ *
+ * VMA sets describe user-space intent; page tables are maintained separately.
+ * A live process protects its set with mmap_lock, while temporary sets have
+ * exclusive ownership.  File and anonymous backing references follow areas.
+ */
 #include <linux_uapi.h>
 #include <palloc.h>
 #include <riscv.h>
@@ -12,6 +19,7 @@ static int vma_insert_file_length(struct vma_set *set, uint64 start,
 				  struct vma_backing *backing, uint64 offset,
 				  uint64 file_length);
 
+/* Allocate an area and acquire the backing references described by its type. */
 static struct vm_area *vma_allocate(uint64 start, uint64 end,
 				    uint32 protection, uint32 flags,
 				    enum vma_origin origin,
@@ -45,6 +53,7 @@ static struct vm_area *vma_allocate(uint64 start, uint64 end,
 	return area;
 }
 
+/* Clone the right-hand fragment created by a split at @start. */
 static struct vm_area *vma_allocate_split(const struct vm_area *area,
 					  uint64 start)
 {
@@ -64,6 +73,7 @@ static struct vm_area *vma_allocate_split(const struct vm_area *area,
 			    file_length);
 }
 
+/* Release references acquired by vma_allocate(). */
 static void vma_release(struct vm_area *area)
 {
 	if (area->file) {
@@ -79,6 +89,9 @@ static void vma_release(struct vm_area *area)
 	free(area);
 }
 
+/*
+ * Adjacent areas merge only when offsets and lifetime rules remain identical.
+ */
 static int vma_can_merge(const struct vm_area *left,
 			 const struct vm_area *right)
 {
@@ -105,6 +118,9 @@ static int vma_can_merge(const struct vm_area *left,
 	return 1;
 }
 
+/*
+ * Fold a compatible right neighbor into @left and release its duplicate refs.
+ */
 static struct vm_area *vma_merge_pair(struct vm_area *left,
 				      struct vm_area *right)
 {
@@ -116,6 +132,7 @@ static struct vm_area *vma_merge_pair(struct vm_area *left,
 	return left;
 }
 
+/* Coalesce adjacent compatible areas after an insertion, split, or protect. */
 static void vma_merge_all(struct vma_set *set)
 {
 	struct vm_area *area, *next;
@@ -191,6 +208,7 @@ int vma_set_clone(struct vma_set *destination,
 	return 0;
 }
 
+/* Common insertion path retaining a precise valid file-byte length. */
 static int vma_insert_file_length(struct vma_set *set, uint64 start,
 				  uint64 end, uint32 protection,
 				  uint32 flags, enum vma_origin origin,
@@ -264,6 +282,23 @@ int vma_insert_elf(struct vma_set *set, uint64 start, uint64 end,
 				    end - start);
 }
 
+/**
+ * vma_insert_elf_file() - Insert a file-backed ELF VMA, merging its first
+ * page when legal.
+ * @set: Initialized VMA set, serialized by the caller.
+ * @start: Page-aligned virtual start, below @end and MAXVA.
+ * @end: Page-aligned exclusive virtual end.
+ * @protection: Linux protection bits for the segment.
+ * @file: Non-NULL executable file, borrowed from the caller; newly inserted
+ * portions acquire their own file and executable-mapping references.
+ * @offset: Page-aligned byte offset in @file.
+ * @file_length: Bytes backed by @file, no greater than @end - @start.
+ *
+ * Context: Caller holds the owning process mmap lock or exclusively owns @set.
+ * May allocate and does not sleep while manipulating @set.
+ * Return: Zero on success, or -1 for invalid input, an incompatible overlap, or
+ * allocation failure. The caller retains its @file reference in all cases.
+ */
 int vma_insert_elf_file(struct vma_set *set, uint64 start, uint64 end,
 			 uint32 protection, struct vfs_file *file,
 			 uint64 offset, uint64 file_length)
@@ -361,6 +396,16 @@ int vma_range_free(const struct vma_set *set, uint64 start, uint64 end)
 	return 1;
 }
 
+/**
+ * vma_range_mapped() - Test whether consecutive VMAs cover a byte interval.
+ * @set: Non-NULL initialized VMA set, stable for the duration of the walk.
+ * @start: Inclusive virtual start.
+ * @end: Exclusive virtual end.
+ *
+ * Context: Caller serializes VMA mutation. Does not sleep.
+ * Return: 1 when every byte in [@start, @end) is covered, otherwise 0; an empty
+ * or reversed interval is not mapped.
+ */
 int vma_range_mapped(const struct vma_set *set, uint64 start, uint64 end)
 {
 	uint64 cursor = start;
@@ -384,6 +429,7 @@ int vma_range_mapped(const struct vma_set *set, uint64 start, uint64 end)
 	return 0;
 }
 
+/* Align upward while preserving value modulo @alignment relative to @offset. */
 static int align_up_offset(uint64 value, uint64 alignment, uint64 offset,
 			   uint64 *aligned)
 {
@@ -401,6 +447,7 @@ static int align_up_offset(uint64 value, uint64 alignment, uint64 offset,
 	return 0;
 }
 
+/* Align downward with the mapping's requested alignment offset. */
 static int align_down_offset(uint64 value, uint64 alignment, uint64 offset,
 			     uint64 *aligned)
 {
@@ -413,6 +460,7 @@ static int align_down_offset(uint64 value, uint64 alignment, uint64 offset,
 	return 0;
 }
 
+/* Compute one aligned placement that fits wholly within a candidate gap. */
 static int gap_aligned_address(uint64 start, uint64 end, uint64 length,
 			       uint64 alignment, uint64 align_offset,
 			       uint64 *address)
@@ -427,6 +475,21 @@ static int gap_aligned_address(uint64 start, uint64 end, uint64 length,
 	return 0;
 }
 
+/**
+ * vma_find_gap_aligned() - Find a free aligned VMA interval.
+ * @set: Non-NULL initialized VMA set, stable for the search.
+ * @low: Page-aligned inclusive search bound.
+ * @high: Page-aligned exclusive search bound.
+ * @hint: Optional page-aligned preferred address, or zero.
+ * @length: Nonzero page-aligned byte length to place.
+ * @alignment: Power-of-two alignment of at least PGSIZE.
+ * @align_offset: Page-aligned offset that fixes the result modulo @alignment.
+ * @address: Non-NULL output for the selected page-aligned address.
+ *
+ * Context: Caller serializes VMA mutation. Does not sleep.
+ * Return: Zero and stores a free interval in @address, or -1 for invalid input,
+ * overflow, or no suitable gap.
+ */
 int vma_find_gap_aligned(const struct vma_set *set, uint64 low, uint64 high,
 			 uint64 hint, uint64 length, uint64 alignment,
 			 uint64 align_offset, uint64 *address)
