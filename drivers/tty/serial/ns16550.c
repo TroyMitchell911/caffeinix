@@ -1,3 +1,4 @@
+/* NS16550 platform driver; register ordering and FIFO state stay local here. */
 #include <device_model.h>
 #include <io.h>
 #include <mystring.h>

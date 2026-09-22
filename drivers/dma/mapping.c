@@ -1,3 +1,4 @@
+/* Direct-map coherent DMA implementation with mask and range validation. */
 #include <debug.h>
 #include <device_model.h>
 #include <dma.h>
@@ -6,6 +7,9 @@
 #include <palloc.h>
 #include <vm.h>
 
+/*
+ * Accept only directions whose ownership rules this implementation understands.
+ */
 static int dma_direction_valid(enum dma_data_direction direction)
 {
 	return direction == DMA_BIDIRECTIONAL ||
@@ -13,6 +17,7 @@ static int dma_direction_valid(enum dma_data_direction direction)
 	       direction == DMA_FROM_DEVICE;
 }
 
+/* Check mask coverage and detect the inclusive-end arithmetic overflow. */
 static int dma_range_valid(struct device *device, dma_addr_t address,
 			   uint64 size)
 {

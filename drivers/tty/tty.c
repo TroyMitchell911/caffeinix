@@ -1,4 +1,23 @@
+/* TTY line discipline, character-device bridge, and job-control integration. */
 #include <char_device.h>
+
+/*
+ * tty_default_termios() - Install the initial canonical terminal settings.
+ * tty_from_device() - Resolve a character-device open to its TTY.
+ * tty_device_open() - Establish controlling-terminal state on open.
+ * tty_read() - Consume committed input, optionally sleeping interruptibly.
+ * tty_write() - Copy user output into the backend and preserve short writes.
+ * tty_device_read() - Adapt VFS read to tty_read().
+ * tty_device_write() - Adapt VFS write to tty_write().
+ * tty_device_ioctl() - Implement termios, window, and job-control ioctls.
+ * tty_device_poll() - Report readable input and writable backend state.
+ * tty_echo() - Emit line-discipline echo through backend put_char().
+ * tty_receive_char() - Apply input flags and wake readers or job control.
+ * make_tty_name() - Format a bounded TTY node name.
+ *
+ * These helpers hold the TTY lock only for line-discipline state.  VFS entry
+ * points may sleep; receive callbacks and echo must not sleep while locked.
+ */
 #include <debug.h>
 #include <device.h>
 #include <mystring.h>

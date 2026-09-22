@@ -1,4 +1,23 @@
+/* UART core bridging hardware port operations to TTY and console services. */
 #include <console.h>
+
+/*
+ * uart_start_transmit_locked() - Drain the port's bounded transmit ring.
+ * uart_tty_write() - Queue user output and sleep only when the ring is full.
+ * uart_tty_put_char() - Send one TTY echo character.
+ * uart_console_put_char() - Adapt console output to the UART TTY.
+ * uart_interrupt() - Adapt generic IRQ dispatch to a port.
+ * uart_test_startup() - Provide synthetic startup for the core selftest.
+ * uart_test_shutdown() - Mark synthetic shutdown.
+ * uart_test_tx_ready() - Report synthetic transmitter readiness.
+ * uart_test_put_char() - Capture test output bytes.
+ * uart_test_get_char() - Consume an injected test input byte.
+ * uart_test_rx_irq() - Track synthetic receive IRQ state.
+ * uart_test_tx_irq() - Track synthetic transmit IRQ state.
+ *
+ * Hardware callbacks may run in IRQ context.  The port lock protects ring
+ * indices and IRQ enable state; waiters are woken only after tail advances.
+ */
 #include <char_device.h>
 #include <debug.h>
 #include <device_model.h>

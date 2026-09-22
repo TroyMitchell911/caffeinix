@@ -1,3 +1,4 @@
+/* Goldfish RTC platform driver supplying the wall-clock hardware source. */
 #include <device_model.h>
 #include <goldfish_rtc.h>
 #include <io.h>

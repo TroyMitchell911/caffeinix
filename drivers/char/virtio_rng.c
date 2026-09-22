@@ -1,3 +1,4 @@
+/* One-shot VirtIO entropy seed driver used before userspace begins. */
 #include <ktime.h>
 #include <mystring.h>
 #include <palloc.h>

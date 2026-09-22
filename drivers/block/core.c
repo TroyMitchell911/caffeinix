@@ -1,3 +1,4 @@
+/* Generic block-device registry and synchronous request helpers. */
 #include <block_device.h>
 #include <debug.h>
 #include <spinlock.h>
@@ -7,6 +8,9 @@ static struct {
 	struct block_device *devices[BLOCK_DEVICE_MAX];
 } block_devices;
 
+/*
+ * Run an optional completion callback in process context before waking waiters.
+ */
 static void block_request_end_io_work(struct work_struct *work)
 {
 	struct block_request *request =
@@ -126,6 +130,7 @@ void block_device_close(struct block_device *device)
 	spinlock_release(&block_devices.lock);
 }
 
+/* Validate a non-empty sector interval without overflowing its endpoint. */
 static int block_device_range_valid(struct block_device *device,
 				    uint64 sector, uint32 count)
 {
@@ -158,6 +163,7 @@ void block_request_init(struct block_request *request,
 	work_init(&request->end_io_work, block_request_end_io_work);
 }
 
+/* Validate request ownership, geometry, scatterlist, and sector coverage. */
 static int block_request_validate(struct block_request *request)
 {
 	uint64 count = 0;
@@ -261,6 +267,9 @@ int block_request_wait(struct block_request *request)
 	return status;
 }
 
+/*
+ * Submit a stack-owned request and keep its storage alive through completion.
+ */
 static int block_device_submit_wait(
 	struct block_device *device, enum block_request_operation operation,
 	uint64 sector, const struct block_segment *segments,

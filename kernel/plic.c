@@ -1,3 +1,4 @@
+/* RISC-V PLIC discovery and per-hart supervisor interrupt routing. */
 #include <plic.h>
 #include <cpu.h>
 #include <debug.h>
@@ -11,6 +12,7 @@
 
 static int *plic_contexts;
 
+/* Find the one PLIC controller supported by this platform implementation. */
 static struct device_node *plic_node(void)
 {
 	struct device_node *node = 0;
@@ -24,6 +26,7 @@ static struct device_node *plic_node(void)
 	return 0;
 }
 
+/* Return the FDT interrupt-controller phandle for one logical CPU. */
 static uint32 cpu_interrupt_phandle(int logical)
 {
 	struct device_node *cpu = cpu_of_node(logical);
@@ -37,6 +40,7 @@ static uint32 cpu_interrupt_phandle(int logical)
 	return 0;
 }
 
+/* Decode interrupts-extended to find this CPU's supervisor-external context. */
 static int plic_context_for_cpu(struct device_node *plic, int logical)
 {
 	uint32 cells, interrupt, parent, wanted;
@@ -68,6 +72,7 @@ static int plic_context_for_cpu(struct device_node *plic, int logical)
 	return -1;
 }
 
+/* Resolve the current logical CPU to its discovered PLIC context. */
 static int current_plic_context(void)
 {
 	int logical = cpuid();
@@ -77,6 +82,13 @@ static int current_plic_context(void)
 	return plic_contexts[logical];
 }
 
+/*
+ * plic_init() - Discover FDT contexts and clear source priorities.
+ *
+ * Context:
+ * Boot process context after OF and CPU discovery; allocates context
+ * storage and panics when the required topology is malformed.
+ */
 void plic_init(void)
 {
 	struct device_node *node = plic_node();
@@ -99,6 +111,13 @@ void plic_init(void)
 	pr_info("irq: PLIC configured for %d CPUs", cpu_count());
 }
 
+/*
+ * plic_init_hart() - Disable this hart's source mask and set threshold zero.
+ *
+ * Context:
+ * Per-hart boot context; directly programs PLIC MMIO and does not
+ * sleep.
+ */
 void plic_init_hart(void)
 {
 	int context = current_plic_context();
@@ -110,6 +129,14 @@ void plic_init_hart(void)
 	*(uint32 *)PLIC_THRESHOLD(context) = 0;
 }
 
+/*
+ * plic_enable() - Give a source priority and set its boot-hart enable bit.
+ * @irq: Non-zero source below %IRQ_MAX.
+ *
+ * Context:
+ * Atomic-safe; the initial implementation intentionally enables only
+ * the boot-hart context.
+ */
 void plic_enable(uint32 irq)
 {
 	uint32 *enable;
@@ -122,6 +149,13 @@ void plic_enable(uint32 irq)
 	__sync_fetch_and_or(enable, 1U << (irq % 32));
 }
 
+/*
+ * plic_disable() - Clear the boot-hart enable bit and source priority.
+ * @irq: Non-zero source below %IRQ_MAX.
+ *
+ * Context:
+ * Atomic-safe; does not synchronize an in-flight interrupt.
+ */
 void plic_disable(uint32 irq)
 {
 	uint32 *enable;
@@ -134,7 +168,14 @@ void plic_disable(uint32 irq)
 	*(uint32 *)(PLIC + irq * 4) = 0;
 }
 
-/* ask the PLIC what interrupt we should serve. */
+/*
+ * plic_claim() - Read the current hart's claim/complete register.
+ *
+ * Context:
+ * Supervisor external-interrupt context.
+ * Return:
+ * Claimed source, or zero when none is pending.
+ */
 int plic_claim(void)
 {
 	int context = current_plic_context();
@@ -142,7 +183,13 @@ int plic_claim(void)
         return irq;
 }
 
-/* tell the PLIC we've served this IRQ. */
+/*
+ * plic_complete() - Write a claimed source back to complete handling.
+ * @irq: Source returned by plic_claim().
+ *
+ * Context:
+ * Supervisor external-interrupt context after handler dispatch.
+ */
 void plic_complete(int irq)
 {
 	int context = current_plic_context();

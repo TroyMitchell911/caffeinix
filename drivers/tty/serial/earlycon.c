@@ -1,3 +1,4 @@
+/* Polling NS16550 early console used before normal driver initialization. */
 #include <earlycon.h>
 #include <of.h>
 #include <resource.h>

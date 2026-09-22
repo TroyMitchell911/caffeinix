@@ -1,3 +1,4 @@
+/* Generic bus, device, and driver lifetime management. */
 #include <device_model.h>
 #include <mystring.h>
 
@@ -14,6 +15,7 @@ void driver_core_init(void)
 	driver_core.initialized = 1;
 }
 
+/* Caller holds @bus->lock while checking device-name uniqueness. */
 static int bus_has_name(struct bus_type *bus, const char *name)
 {
 	struct list *node;
@@ -82,6 +84,10 @@ int bus_unregister(struct bus_type *bus)
 	return DRIVER_OK;
 }
 
+/*
+ * Probe one matching driver outside the bus lock and commit the resulting
+ * state.
+ */
 static int device_try_driver(struct device *device,
 			     struct device_driver *driver)
 {

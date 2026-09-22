@@ -1,4 +1,14 @@
+/* VirtIO bus feature negotiation and driver lifecycle orchestration. */
 #include <virtio.h>
+
+/*
+ * virtio_match() - Compare a transport device to a driver's ID table.
+ * virtio_probe() - Execute reset, negotiation, probe, and DRIVER_OK ordering.
+ * virtio_remove() - Reset transport before driver teardown and queue deletion.
+ *
+ * These bus callbacks execute outside generic bus locks.  Driver callbacks
+ * own their allocations, while the transport owns hardware queue operations.
+ */
 
 static int virtio_match(struct device *device,
 			struct device_driver *driver)
