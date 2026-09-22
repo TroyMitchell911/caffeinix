@@ -1,3 +1,10 @@
+/*
+ * RV64 ELF file layout and loader-validation interfaces.
+ *
+ * The structures deliberately match the ELF64 on-disk ABI. Layout helpers
+ * validate arithmetic before exec maps any segment into a process address
+ * space.
+ */
 #ifndef __CAFFEINIX_KERNEL_ELF_H
 #define __CAFFEINIX_KERNEL_ELF_H
 
@@ -94,17 +101,71 @@ struct elf_runtime_layout {
 	uint64 entry;
 };
 
+/**
+ * elf_image_layout_init() - Validate an ELF header and initialize layout data
+ * @layout: Output layout storage.
+ * @header: ELF64 header read from the executable.
+ *
+ * Context: Caller supplies stable kernel memory; does not sleep.
+ * Return: Zero, or -1 for NULL arguments or an unsupported or malformed ELF.
+ */
 int elf_image_layout_init(struct elf_image_layout *layout,
 			  const struct elfhdr *header);
+/**
+ * elf_image_layout_add() - Incorporate one program header into an ELF layout
+ * @layout: Layout initialized by elf_image_layout_init().
+ * @header: Validated owning ELF header.
+ * @program: Program header to validate and account for.
+ *
+ * Context: Does not sleep. Call once for each file-order program header.
+ * Return: Zero or -1; discard the layout after a validation failure.
+ */
 int elf_image_layout_add(struct elf_image_layout *layout,
 			 const struct elfhdr *header,
 			 const struct proghdr *program);
+/**
+ * elf_image_layout_finish() - Check cross-segment ELF layout constraints
+ * @layout: Fully populated ELF image layout.
+ *
+ * Context: Does not sleep.
+ * Return: Zero for a complete valid layout, or -1 for an invalid or NULL one.
+ */
 int elf_image_layout_finish(const struct elf_image_layout *layout);
+/**
+ * elf_runtime_layout() - Choose a runtime placement for a validated image
+ * @image: Finished ELF image layout.
+ * @mapping_start: Candidate lowest mapped user address.
+ * @address_limit: Exclusive upper bound for mappings.
+ * @runtime: Output runtime layout.
+ *
+ * Context: Does not sleep; @runtime may not be NULL.
+ * Return: Zero or -1 for invalid arguments, overflow, or an invalid range.
+ * Output fields may be partially written on failure and must be discarded.
+ */
 int elf_runtime_layout(const struct elf_image_layout *image,
 		       uint64 mapping_start, uint64 address_limit,
 		       struct elf_runtime_layout *runtime);
+/**
+ * elf_relocate_address() - Add a PIE load bias without address overflow
+ * @load_bias: Runtime base selected for the ELF image.
+ * @address: Link-time ELF virtual address.
+ * @relocated: Output relocated address.
+ *
+ * Context: Does not sleep; @relocated may not be NULL.
+ * Return: Zero, or -1 for NULL output or overflow. Discard the output on error.
+ */
 int elf_relocate_address(uint64 load_bias, uint64 address,
 			 uint64 *relocated);
+/**
+ * elf_interpreter_path_valid() - Validate a PT_INTERP byte sequence
+ * @path: Kernel buffer holding interpreter bytes; NULL is invalid.
+ * @size: Exact PT_INTERP file size including required NUL.
+ * @capacity: Capacity of @path in bytes.
+ *
+ * Context: Does not sleep.
+ * Return: 1 for an absolute path with exactly one terminating NUL within
+ * @capacity, or 0 for invalid input. This is a predicate, not an errno result.
+ */
 int elf_interpreter_path_valid(const char *path, uint64 size,
 			       uint64 capacity);
 

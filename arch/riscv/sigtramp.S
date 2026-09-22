@@ -1,3 +1,4 @@
+/* Minimal Linux RISC-V rt_sigreturn veneer mapped into every user process. */
 #define RISCV_LINUX_SYS_RT_SIGRETURN 139
 
 .section sigtrampsec

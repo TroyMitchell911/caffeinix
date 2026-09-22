@@ -1,3 +1,10 @@
+/*
+ * Linux process, identity, time, and scheduler system-call entry points.
+ *
+ * Each handler decodes RISC-V arguments from the current trap frame and
+ * returns either a Linux result or a negative Linux errno. State ownership
+ * remains in the process, scheduler, signal, timer, and VM subsystems.
+ */
 #include <cpu.h>
 #include <ktime.h>
 #include <linux_uapi.h>
@@ -13,6 +20,7 @@
 #include <vm.h>
 #include <wait.h>
 
+/* Validate a Linux timespec and convert its normalized value to nanoseconds. */
 static int linux_timespec_to_ns(const struct linux_timespec *time,
 				uint64 *nanoseconds)
 {
@@ -27,6 +35,7 @@ static int linux_timespec_to_ns(const struct linux_timespec *time,
 	return 0;
 }
 
+/* Convert a validated timeval to timer ticks without overflow. */
 static int linux_timeval_to_ticks(const struct linux_timeval *time,
 				  uint64 *ticks)
 {
@@ -45,6 +54,7 @@ static int linux_timeval_to_ticks(const struct linux_timeval *time,
 	return 0;
 }
 
+/* Serialize an internal tick duration using Linux timeval units. */
 static void linux_ticks_to_timeval(uint64 ticks,
 				   struct linux_timeval *time)
 {
@@ -54,6 +64,7 @@ static void linux_ticks_to_timeval(uint64 ticks,
 	time->microseconds = nanoseconds % NSEC_PER_SEC / 1000;
 }
 
+/* Snapshot the real timer while the target process lock is held. */
 static void linux_getitimer_locked(process_t process,
 				   struct linux_itimerval *timer,
 				   uint64 now)
@@ -66,6 +77,7 @@ static void linux_getitimer_locked(process_t process,
 	linux_ticks_to_timeval(remaining, &timer->value);
 }
 
+/* Read a supported Linux clock in nanoseconds. */
 static int linux_clock_now(int clock, uint64 *nanoseconds)
 {
 	switch (clock) {
@@ -83,6 +95,7 @@ static int linux_clock_now(int clock, uint64 *nanoseconds)
 	}
 }
 
+/* Copy a nanosecond duration to a current-process Linux timespec. */
 static int linux_copy_timespec(uint64 address, uint64 nanoseconds)
 {
 	struct linux_timespec time = {
@@ -94,6 +107,13 @@ static int linux_copy_timespec(uint64 address, uint64 nanoseconds)
 		       sizeof(time)) < 0 ? -LINUX_EFAULT : 0;
 }
 
+/**
+ * sys_linux_clock_gettime() - Implement Linux clock_gettime
+ *
+ * Decodes Linux RISC-V register arguments and copies a timespec to user memory.
+ * Context: User syscall context; may fault on the user copy.
+ * Return: Zero or a negative Linux errno.
+ */
 uint64 sys_linux_clock_gettime(void)
 {
 	uint64 address, nanoseconds;
@@ -105,6 +125,13 @@ uint64 sys_linux_clock_gettime(void)
 	return result < 0 ? result : linux_copy_timespec(address, nanoseconds);
 }
 
+/**
+ * sys_linux_clock_getres() - Implement Linux clock_getres
+ *
+ * Decodes Linux RISC-V register arguments and optionally writes user memory.
+ * Context: User syscall context; may fault on the user copy.
+ * Return: Zero or a negative Linux errno.
+ */
 uint64 sys_linux_clock_getres(void)
 {
 	uint64 address, resolution;
@@ -123,6 +150,7 @@ uint64 sys_linux_clock_getres(void)
 	return linux_copy_timespec(address, resolution);
 }
 
+/* Sleep interruptibly until a deadline, optionally reporting remaining time. */
 static int linux_sleep_until(uint64 deadline, uint64 remaining_address,
 			     int report_remaining)
 {
@@ -147,6 +175,13 @@ static int linux_sleep_until(uint64 deadline, uint64 remaining_address,
 	return -LINUX_EINTR;
 }
 
+/**
+ * sys_linux_nanosleep() - Sleep for a Linux timespec interval
+ *
+ * Decodes Linux RISC-V register arguments and may report remaining time.
+ * Context: User syscall context; sleeps interruptibly.
+ * Return: Zero, or a negative Linux errno including interruption.
+ */
 uint64 sys_linux_nanosleep(void)
 {
 	struct linux_timespec requested;
@@ -174,6 +209,14 @@ uint64 sys_linux_nanosleep(void)
 	return linux_sleep_until(deadline, remaining_address, 1);
 }
 
+/**
+ * sys_linux_getitimer() - Read the calling process real-time interval timer
+ *
+ * Decodes Linux RISC-V register arguments and copies timer state to user
+ * memory.
+ * Context: User syscall context; acquires the process lock and may fault.
+ * Return: Zero or a negative Linux errno.
+ */
 uint64 sys_linux_getitimer(void)
 {
 	struct linux_itimerval timer;
@@ -194,6 +237,14 @@ uint64 sys_linux_getitimer(void)
 	return 0;
 }
 
+/**
+ * sys_linux_setitimer() - Set the calling process real-time interval timer
+ *
+ * Decodes Linux RISC-V register arguments and may copy old state to user
+ * memory.
+ * Context: User syscall context; acquires the process lock and may fault.
+ * Return: Zero or a negative Linux errno.
+ */
 uint64 sys_linux_setitimer(void)
 {
 	struct linux_itimerval requested = { 0 }, previous;
@@ -233,6 +284,13 @@ uint64 sys_linux_setitimer(void)
 	return 0;
 }
 
+/**
+ * sys_linux_clock_nanosleep() - Sleep against a supported Linux clock
+ *
+ * Decodes Linux RISC-V register arguments for relative or absolute waits.
+ * Context: User syscall context; sleeps interruptibly.
+ * Return: Zero, or a negative Linux errno including interruption.
+ */
 uint64 sys_linux_clock_nanosleep(void)
 {
 	struct linux_timespec requested;
@@ -274,6 +332,13 @@ uint64 sys_linux_clock_nanosleep(void)
 				 !(flags & LINUX_TIMER_ABSTIME));
 }
 
+/**
+ * sys_linux_gettimeofday() - Copy current wall-clock time to user memory
+ *
+ * Decodes Linux RISC-V register arguments; timezone output is unsupported.
+ * Context: User syscall context; may fault on the user copy.
+ * Return: Zero or a negative Linux errno.
+ */
 uint64 sys_linux_gettimeofday(void)
 {
 	struct linux_timezone timezone = { 0 };
@@ -299,6 +364,13 @@ uint64 sys_linux_gettimeofday(void)
 	return 0;
 }
 
+/**
+ * sys_linux_uname() - Copy the fixed Caffeinix Linux identity
+ *
+ * Decodes the Linux RISC-V user buffer argument.
+ * Context: User syscall context; may fault on the user copy.
+ * Return: Zero or a negative Linux errno.
+ */
 uint64 sys_linux_uname(void)
 {
 	struct linux_utsname name;
@@ -319,6 +391,13 @@ uint64 sys_linux_uname(void)
 	return 0;
 }
 
+/**
+ * sys_linux_sysinfo() - Report aggregate system information
+ *
+ * Decodes the Linux RISC-V user buffer argument and snapshots kernel state.
+ * Context: User syscall context; may fault on the user copy.
+ * Return: Zero or a negative Linux errno.
+ */
 uint64 sys_linux_sysinfo(void)
 {
 	struct linux_sysinfo information;
@@ -345,6 +424,13 @@ uint64 sys_linux_sysinfo(void)
 	return 0;
 }
 
+/**
+ * sys_linux_sched_getaffinity() - Report the scheduler CPU mask
+ *
+ * Decodes Linux RISC-V register arguments and writes the supported affinity.
+ * Context: User syscall context; may fault on the user copy.
+ * Return: Byte count or a negative Linux errno.
+ */
 uint64 sys_linux_sched_getaffinity(void)
 {
 	process_t process = cur_proc();
@@ -375,6 +461,12 @@ uint64 sys_linux_sched_getaffinity(void)
 	return required;
 }
 
+/**
+ * sys_linux_exit_group() - Terminate the caller's complete thread group
+ *
+ * Decodes the Linux RISC-V wait-status argument.
+ * Context: User syscall context; releases process resources and never returns.
+ */
 uint64 sys_linux_exit_group(void)
 {
 	int status;
@@ -384,6 +476,12 @@ uint64 sys_linux_exit_group(void)
 	return 0;
 }
 
+/**
+ * sys_linux_exit() - Terminate only the calling thread
+ *
+ * Decodes the Linux RISC-V wait-status argument.
+ * Context: User syscall context; never returns to the exiting thread.
+ */
 uint64 sys_linux_exit(void)
 {
 	int status;
@@ -393,6 +491,13 @@ uint64 sys_linux_exit(void)
 	return 0;
 }
 
+/**
+ * sys_linux_set_tid_address() - Record clear-tid storage for thread exit
+ *
+ * Decodes the Linux RISC-V user address argument.
+ * Context: User syscall context; updates only the current thread.
+ * Return: Current thread ID.
+ */
 uint64 sys_linux_set_tid_address(void)
 {
 	uint64 address;
@@ -402,6 +507,14 @@ uint64 sys_linux_set_tid_address(void)
 	return cur_thread()->tid;
 }
 
+/**
+ * sys_linux_prctl() - Handle the supported Linux process-control operations
+ *
+ * Decodes Linux RISC-V register arguments; unsupported operations fail.
+ * Context: User syscall context; operation-specific locks and user copies
+ * apply.
+ * Return: Operation result or a negative Linux errno.
+ */
 uint64 sys_linux_prctl(void)
 {
 	process_t p = cur_proc();
@@ -420,11 +533,23 @@ uint64 sys_linux_prctl(void)
 	return 0;
 }
 
+/**
+ * sys_linux_getpid() - Return the caller's thread-group ID
+ *
+ * Context: User syscall context; does not sleep.
+ * Return: Positive process ID.
+ */
 uint64 sys_linux_getpid(void)
 {
 	return cur_proc()->pid;
 }
 
+/**
+ * sys_linux_getppid() - Return the caller's current parent ID
+ *
+ * Context: User syscall context; serializes with the process list.
+ * Return: Parent process ID, or zero for init.
+ */
 uint64 sys_linux_getppid(void)
 {
 	process_t parent = cur_proc()->parent;
@@ -432,6 +557,12 @@ uint64 sys_linux_getppid(void)
 	return parent ? parent->pid : 0;
 }
 
+/**
+ * sys_linux_getuid() - Return the caller's real user ID
+ *
+ * Context: User syscall context; acquires the process lock.
+ * Return: Real user ID.
+ */
 uint64 sys_linux_getuid(void)
 {
 	struct process_credentials credentials;
@@ -440,6 +571,12 @@ uint64 sys_linux_getuid(void)
 	return credentials.uid;
 }
 
+/**
+ * sys_linux_geteuid() - Return the caller's effective user ID
+ *
+ * Context: User syscall context; acquires the process lock.
+ * Return: Effective user ID.
+ */
 uint64 sys_linux_geteuid(void)
 {
 	struct process_credentials credentials;
@@ -448,6 +585,12 @@ uint64 sys_linux_geteuid(void)
 	return credentials.euid;
 }
 
+/**
+ * sys_linux_getgid() - Return the caller's real group ID
+ *
+ * Context: User syscall context; acquires the process lock.
+ * Return: Real group ID.
+ */
 uint64 sys_linux_getgid(void)
 {
 	struct process_credentials credentials;
@@ -456,6 +599,12 @@ uint64 sys_linux_getgid(void)
 	return credentials.gid;
 }
 
+/**
+ * sys_linux_getegid() - Return the caller's effective group ID
+ *
+ * Context: User syscall context; acquires the process lock.
+ * Return: Effective group ID.
+ */
 uint64 sys_linux_getegid(void)
 {
 	struct process_credentials credentials;
@@ -466,6 +615,7 @@ uint64 sys_linux_getegid(void)
 
 #define LINUX_ID_NO_CHANGE ((uint32)-1)
 
+/* Check whether a requested ID is already one of the caller's saved IDs. */
 static int credentials_id_allowed(uint32 requested, uint32 first,
 				  uint32 second, uint32 third)
 {
@@ -473,6 +623,13 @@ static int credentials_id_allowed(uint32 requested, uint32 first,
 	       requested == second || requested == third;
 }
 
+/**
+ * sys_linux_setuid() - Apply Linux real and effective user-ID rules
+ *
+ * Decodes the Linux RISC-V requested UID argument.
+ * Context: User syscall context; acquires the process lock.
+ * Return: Zero or a negative Linux permission error.
+ */
 uint64 sys_linux_setuid(void)
 {
 	process_t process = cur_proc();
@@ -500,6 +657,13 @@ uint64 sys_linux_setuid(void)
 	return result;
 }
 
+/**
+ * sys_linux_setgid() - Apply Linux real and effective group-ID rules
+ *
+ * Decodes the Linux RISC-V requested GID argument.
+ * Context: User syscall context; acquires the process lock.
+ * Return: Zero or a negative Linux permission error.
+ */
 uint64 sys_linux_setgid(void)
 {
 	process_t process = cur_proc();
@@ -527,6 +691,13 @@ uint64 sys_linux_setgid(void)
 	return result;
 }
 
+/**
+ * sys_linux_setreuid() - Update real and effective user IDs
+ *
+ * Decodes Linux RISC-V UID arguments; -1 preserves an existing value.
+ * Context: User syscall context; acquires the process lock.
+ * Return: Zero or a negative Linux permission/argument error.
+ */
 uint64 sys_linux_setreuid(void)
 {
 	process_t process = cur_proc();
@@ -564,6 +735,13 @@ out:
 	return result;
 }
 
+/**
+ * sys_linux_setregid() - Update real and effective group IDs
+ *
+ * Decodes Linux RISC-V GID arguments; -1 preserves an existing value.
+ * Context: User syscall context; acquires the process lock.
+ * Return: Zero or a negative Linux permission/argument error.
+ */
 uint64 sys_linux_setregid(void)
 {
 	process_t process = cur_proc();
@@ -601,6 +779,13 @@ out:
 	return result;
 }
 
+/**
+ * sys_linux_setresuid() - Update real, effective, and saved user IDs
+ *
+ * Decodes Linux RISC-V UID arguments; -1 preserves an existing value.
+ * Context: User syscall context; acquires the process lock.
+ * Return: Zero or a negative Linux permission/argument error.
+ */
 uint64 sys_linux_setresuid(void)
 {
 	process_t process = cur_proc();
@@ -641,6 +826,13 @@ out:
 	return result;
 }
 
+/**
+ * sys_linux_setresgid() - Update real, effective, and saved group IDs
+ *
+ * Decodes Linux RISC-V GID arguments; -1 preserves an existing value.
+ * Context: User syscall context; acquires the process lock.
+ * Return: Zero or a negative Linux permission/argument error.
+ */
 uint64 sys_linux_setresgid(void)
 {
 	process_t process = cur_proc();
@@ -681,6 +873,7 @@ out:
 	return result;
 }
 
+/* Copy the caller's real, effective, and saved IDs to user memory. */
 static uint64 credentials_copy_ids(int group)
 {
 	struct process_credentials credentials;
@@ -711,16 +904,37 @@ static uint64 credentials_copy_ids(int group)
 	return 0;
 }
 
+/**
+ * sys_linux_getresuid() - Copy real, effective, and saved user IDs
+ *
+ * Decodes three Linux RISC-V user buffer arguments.
+ * Context: User syscall context; acquires the process lock and may fault.
+ * Return: Zero or a negative Linux errno.
+ */
 uint64 sys_linux_getresuid(void)
 {
 	return credentials_copy_ids(0);
 }
 
+/**
+ * sys_linux_getresgid() - Copy real, effective, and saved group IDs
+ *
+ * Decodes three Linux RISC-V user buffer arguments.
+ * Context: User syscall context; acquires the process lock and may fault.
+ * Return: Zero or a negative Linux errno.
+ */
 uint64 sys_linux_getresgid(void)
 {
 	return credentials_copy_ids(1);
 }
 
+/**
+ * sys_linux_setfsuid() - Set filesystem user ID under Linux rules
+ *
+ * Decodes the Linux RISC-V requested UID argument.
+ * Context: User syscall context; acquires the process lock.
+ * Return: Previous filesystem user ID.
+ */
 uint64 sys_linux_setfsuid(void)
 {
 	process_t process = cur_proc();
@@ -741,6 +955,13 @@ uint64 sys_linux_setfsuid(void)
 	return old;
 }
 
+/**
+ * sys_linux_setfsgid() - Set filesystem group ID under Linux rules
+ *
+ * Decodes the Linux RISC-V requested GID argument.
+ * Context: User syscall context; acquires the process lock.
+ * Return: Previous filesystem group ID.
+ */
 uint64 sys_linux_setfsgid(void)
 {
 	process_t process = cur_proc();
@@ -761,6 +982,13 @@ uint64 sys_linux_setfsgid(void)
 	return old;
 }
 
+/**
+ * sys_linux_getgroups() - Report supplementary groups
+ *
+ * Decodes Linux RISC-V count and optional user-buffer arguments.
+ * Context: User syscall context; acquires the process lock and may fault.
+ * Return: Group count or a negative Linux errno.
+ */
 uint64 sys_linux_getgroups(void)
 {
 	struct process_credentials credentials;
@@ -784,6 +1012,13 @@ uint64 sys_linux_getgroups(void)
 	return credentials.group_count;
 }
 
+/**
+ * sys_linux_setgroups() - Replace supplementary groups
+ *
+ * Decodes Linux RISC-V count and user-buffer arguments.
+ * Context: User syscall context; acquires the process lock and may fault.
+ * Return: Zero or a negative Linux permission/argument/fault error.
+ */
 uint64 sys_linux_setgroups(void)
 {
 	process_t process = cur_proc();
@@ -814,11 +1049,24 @@ uint64 sys_linux_setgroups(void)
 	return 0;
 }
 
+/**
+ * sys_linux_gettid() - Return the calling thread ID
+ *
+ * Context: User syscall context; does not sleep.
+ * Return: Positive thread ID.
+ */
 uint64 sys_linux_gettid(void)
 {
 	return cur_thread()->tid;
 }
 
+/**
+ * sys_linux_setpgid() - Assign a process to a process group
+ *
+ * Decodes Linux RISC-V PID and PGID arguments.
+ * Context: User syscall context; takes process-list locks.
+ * Return: Zero or a negative Linux error.
+ */
 uint64 sys_linux_setpgid(void)
 {
 	int pgid, pid;
@@ -828,6 +1076,13 @@ uint64 sys_linux_setpgid(void)
 	return process_setpgid(pid, pgid);
 }
 
+/**
+ * sys_linux_getpgid() - Return a process group identifier
+ *
+ * Decodes the Linux RISC-V PID argument.
+ * Context: User syscall context; takes the process-list lock.
+ * Return: Process group ID or a negative Linux error.
+ */
 uint64 sys_linux_getpgid(void)
 {
 	int pid;
@@ -836,6 +1091,13 @@ uint64 sys_linux_getpgid(void)
 	return process_getpgid(pid);
 }
 
+/**
+ * sys_linux_getsid() - Return a process session identifier
+ *
+ * Decodes the Linux RISC-V PID argument.
+ * Context: User syscall context; takes the process-list lock.
+ * Return: Session ID or a negative Linux error.
+ */
 uint64 sys_linux_getsid(void)
 {
 	int pid;
@@ -844,11 +1106,24 @@ uint64 sys_linux_getsid(void)
 	return process_getsid(pid);
 }
 
+/**
+ * sys_linux_setsid() - Create a session and process group
+ *
+ * Context: User syscall context; takes the process-list lock.
+ * Return: New session ID or a negative Linux permission error.
+ */
 uint64 sys_linux_setsid(void)
 {
 	return process_setsid();
 }
 
+/**
+ * sys_linux_getrandom() - Fill a user buffer from the kernel random source
+ *
+ * Decodes Linux RISC-V buffer, length, and flags arguments.
+ * Context: User syscall context; may fault on the user copy.
+ * Return: Bytes copied or a negative Linux errno.
+ */
 uint64 sys_linux_getrandom(void)
 {
 	uint8 buffer[64];
@@ -882,6 +1157,13 @@ uint64 sys_linux_getrandom(void)
 	return total;
 }
 
+/**
+ * sys_linux_setpriority() - Translate Linux priority to scheduler niceness
+ *
+ * Decodes Linux RISC-V selector, target ID, and priority arguments.
+ * Context: User syscall context; serializes with scheduler state.
+ * Return: Zero or a negative Linux error.
+ */
 uint64 sys_linux_setpriority(void)
 {
 	int which, who, nice;
@@ -898,6 +1180,13 @@ uint64 sys_linux_setpriority(void)
 	return process_set_nice(who, nice);
 }
 
+/**
+ * sys_linux_getpriority() - Translate scheduler niceness to Linux priority
+ *
+ * Decodes Linux RISC-V selector and target ID arguments.
+ * Context: User syscall context; serializes with scheduler state.
+ * Return: Linux priority or a negative Linux error.
+ */
 uint64 sys_linux_getpriority(void)
 {
 	int nice, which, who;
@@ -912,6 +1201,13 @@ uint64 sys_linux_getpriority(void)
 	return 20 - nice;
 }
 
+/**
+ * sys_linux_umask() - Replace the calling process creation mask
+ *
+ * Decodes the Linux RISC-V mask argument.
+ * Context: User syscall context; acquires the process lock.
+ * Return: Previous mask.
+ */
 uint64 sys_linux_umask(void)
 {
 	int mask;
@@ -920,6 +1216,13 @@ uint64 sys_linux_umask(void)
 	return process_umask_set(mask);
 }
 
+/**
+ * sys_linux_riscv_flush_icache() - Synchronize RISC-V instruction caches
+ *
+ * Decodes Linux RISC-V address, length, and flags arguments.
+ * Context: User syscall context; may send cross-hart IPIs.
+ * Return: Zero or a negative Linux argument error.
+ */
 uint64 sys_linux_riscv_flush_icache(void)
 {
 	uint64 end, flags, start;
@@ -940,6 +1243,13 @@ uint64 sys_linux_riscv_flush_icache(void)
 	return 0;
 }
 
+/**
+ * sys_linux_clone() - Create a process or thread from Linux clone arguments
+ *
+ * Decodes Linux RISC-V flags, stack, TID, TLS, and child-TID arguments.
+ * Context: User syscall context; may allocate and sleep.
+ * Return: Child PID/TID or a negative Linux error.
+ */
 uint64 sys_linux_clone(void)
 {
 	const uint64 thread_required =
@@ -974,6 +1284,13 @@ uint64 sys_linux_clone(void)
 	return pid < 0 ? -LINUX_ENOMEM : pid;
 }
 
+/**
+ * sys_linux_wait4() - Observe or reap a child state change
+ *
+ * Decodes Linux RISC-V selector, status, options, and rusage arguments.
+ * Context: User syscall context; may sleep interruptibly.
+ * Return: Child PID, zero for WNOHANG, or a negative Linux error.
+ */
 uint64 sys_linux_wait4(void)
 {
 	uint64 status_address, usage_address;

@@ -1,3 +1,10 @@
+/*
+ * ELF program-image loading and Linux-compatible exec replacement.
+ *
+ * An image is fully parsed and mapped before process_exec_end() commits it.
+ * The loader owns temporary ELF buffers and file references on every failure
+ * path; a successfully installed address space becomes process-owned.
+ */
 #include <elf.h>
 #include <file.h>
 #include <linux_uapi.h>
@@ -35,6 +42,7 @@ struct exec_aslr_layout {
 	uint64 brk_gap;
 };
 
+/* Choose a page-aligned ASLR displacement which leaves room for @size. */
 static int random_page_offset(uint64 size, uint64 *offset)
 {
 	uint64 pages, value;
@@ -47,6 +55,7 @@ static int random_page_offset(uint64 size, uint64 *offset)
 	return 0;
 }
 
+/* Initialize independent randomized hints for PIE and interpreter placement. */
 static int exec_aslr_layout_init(struct exec_aslr_layout *layout)
 {
 	uint64 brk_offset, interpreter_offset, mmap_offset;
@@ -68,6 +77,7 @@ static int exec_aslr_layout_init(struct exec_aslr_layout *layout)
 	return 0;
 }
 
+/* Convert ELF segment flags into the VMA protection representation. */
 static int flags2prot(int flags)
 {
 	int protection = 0;
@@ -81,6 +91,7 @@ static int flags2prot(int flags)
 	return protection;
 }
 
+/* Convert VMA protection bits into hardware PTE permissions. */
 static int protection2perm(uint32 protection)
 {
 	int permissions = PTE_U;
@@ -94,6 +105,7 @@ static int protection2perm(uint32 protection)
 	return permissions;
 }
 
+/* Release every temporary file and program-header allocation owned by image. */
 static void elf_image_close(struct elf_image *image)
 {
 	if (image->programs) {
@@ -106,6 +118,7 @@ static void elf_image_close(struct elf_image *image)
 	}
 }
 
+/* Select a page-allocation order large enough for an ELF header table. */
 static int elf_program_order(uint64 size, unsigned int *order)
 {
 	uint64 capacity = PGSIZE;
@@ -120,6 +133,7 @@ static int elf_program_order(uint64 size, unsigned int *order)
 	return 0;
 }
 
+/* Open and validate an ELF image before any process mapping is changed. */
 static int elf_image_open(const char *path, struct elf_image *image)
 {
 	int64 result;
@@ -184,6 +198,7 @@ fail:
 	return result;
 }
 
+/* Derive exec credentials from a validated image under current policy. */
 static void elf_image_exec_credentials(
 	const struct elf_image *image,
 	struct process_credentials *credentials)
@@ -211,6 +226,7 @@ static void elf_image_exec_credentials(
 	credentials->fsgid = credentials->egid;
 }
 
+/* Extract and validate the single PT_INTERP loader path, if present. */
 static int elf_image_interpreter(const struct elf_image *image, char *path)
 {
 	int64 result;
@@ -228,6 +244,7 @@ static int elf_image_interpreter(const struct elf_image *image, char *path)
 	return 0;
 }
 
+/* Reserve one collision-free runtime range for an image. */
 static int elf_image_place(struct elf_image *image, struct vma_set *vmas,
 			   uint64 hint)
 {
@@ -257,6 +274,7 @@ static int elf_image_place(struct elf_image *image, struct vma_set *vmas,
 				  USER_MMAP_TOP, &image->runtime);
 }
 
+/* Map all PT_LOAD segments after their complete range was reserved. */
 static int elf_image_map(struct elf_image *image, pagedir_t pgdir,
 			 struct vma_set *vmas)
 {
@@ -329,6 +347,7 @@ static int elf_image_map(struct elf_image *image, pagedir_t pgdir,
 	return 0;
 }
 
+/* Build the Linux RISC-V argc/argv/envp/auxv initial stack. */
 static int build_linux_stack(pagedir_t pgdir, uint64 stack_top,
 			     uint64 stack_base, char **argv, char **envp,
 			     const char *execfn,
@@ -421,6 +440,7 @@ static int build_linux_stack(pagedir_t pgdir, uint64 stack_top,
 	return argc;
 }
 
+/* Materialize argv for procfs accounting in one process-owned page. */
 static int copy_process_cmdline(char **argv, void **page_out,
 				uint32 *length_out)
 {
@@ -457,6 +477,7 @@ static int copy_process_cmdline(char **argv, void **page_out,
 	return 0;
 }
 
+/* Replace the current image with a validated ELF executable and loader. */
 static int exec_elf(char *path, const char *execfn, char **argv, char **envp)
 {
 	struct elf_image executable = {0}, interpreter = {0};
@@ -625,6 +646,7 @@ fail:
 static int exec_script_or_elf(char *path, const char *execfn, char **argv,
 			      char **envp, int depth);
 
+/* Parse a shebang and recursively execute its interpreter. */
 static int exec_script(char *path, const char *execfn, char **argv,
 		       char **envp, int depth)
 {
@@ -700,6 +722,7 @@ static int exec_script(char *path, const char *execfn, char **argv,
 				  depth + 1);
 }
 
+/* Select ELF loading or shebang processing from the opened file prefix. */
 static int exec_script_or_elf(char *path, const char *execfn, char **argv,
 			      char **envp, int depth)
 {
@@ -710,6 +733,17 @@ static int exec_script_or_elf(char *path, const char *execfn, char **argv,
 	return exec_script(path, execfn, argv, envp, depth);
 }
 
+/**
+ * exec_linux() - Replace the current process image with a Linux ELF program
+ * @path: NUL-terminated kernel copy of the executable pathname.
+ * @argv: NULL-terminated kernel array of copied argument strings.
+ * @envp: NULL-terminated kernel array of copied environment strings.
+ *
+ * Consumes neither @path nor the argument arrays. The transaction preserves
+ * the old image until a complete replacement image can commit.
+ * Context: Current user process; may allocate, take VFS locks, and sleep.
+ * Return: Zero on successful replacement or a negative Linux-compatible error.
+ */
 int exec_linux(char *path, char **argv, char **envp)
 {
 	return exec_script_or_elf(path, path, argv, envp, 0);

@@ -1,3 +1,12 @@
+/*
+ * Linux signal queuing, selection, and user-frame delivery.
+ *
+ * The process lock serializes dispositions, masks, pending queues, and the
+ * choice of a target for process-directed signals. Standard signals coalesce;
+ * realtime signals retain queue order. Trap return consumes a deliverable
+ * signal, performs default action, or builds an rt_sigframe in user memory.
+ */
+
 #include <debug.h>
 #include <futex.h>
 #include <ktime.h>
@@ -29,23 +38,27 @@ uint64 signal_mask_sanitize(uint64 mask)
 	return mask & ~SIGNAL_UNMASKABLE;
 }
 
+/* Signal numbers are one-based bit positions in the supported 64-bit set. */
 static int signal_valid(int signal)
 {
 	return signal >= 1 && signal <= SIGNAL_COUNT;
 }
 
+/* Classify Linux signals whose default action is to ignore delivery. */
 static int signal_default_ignored(int signal)
 {
 	return signal == LINUX_SIGCHLD || signal == LINUX_SIGURG ||
 	       signal == LINUX_SIGWINCH;
 }
 
+/* Classify Linux signals whose default action stops a process group. */
 static int signal_default_stops(int signal)
 {
 	return signal == LINUX_SIGSTOP || signal == LINUX_SIGTSTP ||
 	       signal == LINUX_SIGTTIN || signal == LINUX_SIGTTOU;
 }
 
+/* Classify fatal default signals which record a core-dump wait status. */
 static int signal_default_cores(int signal)
 {
 	return signal == LINUX_SIGQUIT || signal == LINUX_SIGILL ||
@@ -55,6 +68,7 @@ static int signal_default_cores(int signal)
 	       signal == LINUX_SIGXFSZ || signal == LINUX_SIGSYS;
 }
 
+/* Default disposition classification; process->lock serializes actions. */
 static int signal_fatal_locked(process_t process, int signal)
 {
 	uint64 handler;
@@ -69,12 +83,14 @@ static int signal_fatal_locked(process_t process, int signal)
 	       !signal_default_stops(signal);
 }
 
+/* Initialize an empty pending-signal bitmap and queue. */
 static void signal_pending_init(struct signal_pending *pending)
 {
 	memset(pending, 0, sizeof(*pending));
 	list_init(&pending->realtime);
 }
 
+/* Realtime queue entries own heap storage and must be discarded on teardown. */
 static void signal_pending_destroy(struct signal_pending *pending)
 {
 	while (pending->realtime.next != &pending->realtime) {
@@ -87,6 +103,7 @@ static void signal_pending_destroy(struct signal_pending *pending)
 	signal_pending_init(pending);
 }
 
+/* Reset state that belongs to one thread rather than its process. */
 static void signal_thread_reset(thread_t thread)
 {
 	thread->signal_mask = 0;
@@ -175,6 +192,7 @@ void signal_process_exec(process_t process, thread_t thread)
 	spinlock_release(&process->lock);
 }
 
+/* Clear all queued instances, including realtime entries, of one signal. */
 static void signal_pending_clear(struct signal_pending *pending, int signal)
 {
 	uint64 bit = SIGNAL_BIT(signal);
@@ -197,6 +215,7 @@ static void signal_pending_clear(struct signal_pending *pending, int signal)
 	}
 }
 
+/* Remove one process-directed pending signal while process state is locked. */
 static void signal_clear_locked(process_t process, int signal)
 {
 	int index;
@@ -212,6 +231,7 @@ static void signal_clear_locked(process_t process, int signal)
 	}
 }
 
+/* Test whether a locked thread can receive a process-directed signal. */
 static int signal_thread_targetable_locked(thread_t thread, int signal,
 					   thread_t exclude)
 {
@@ -223,6 +243,7 @@ static int signal_thread_targetable_locked(thread_t thread, int signal,
 	       !(thread->signal_mask & SIGNAL_BIT(signal)));
 }
 
+/* Test whether an old queued process signal was superseded or ignored. */
 static int signal_process_generation_ignored_locked(process_t process,
 					    int signal)
 {
@@ -241,6 +262,7 @@ static int signal_process_generation_ignored_locked(process_t process,
 	return 0;
 }
 
+/* Test whether an old queued thread signal was superseded or ignored. */
 static int signal_thread_generation_ignored_locked(process_t process,
 					   thread_t thread, int signal)
 {
@@ -252,6 +274,7 @@ static int signal_thread_generation_ignored_locked(process_t process,
 	       !(thread->signal_mask & SIGNAL_BIT(signal));
 }
 
+/* Clear cached target selection for a process-directed signal. */
 static void signal_target_clear_locked(process_t process, int signal)
 {
 	uint64 bit = SIGNAL_BIT(signal);
@@ -265,6 +288,7 @@ static void signal_target_clear_locked(process_t process, int signal)
 	}
 }
 
+/* Wake a selected target when a pending signal makes its wait interruptible. */
 static void signal_target_wake_locked(process_t process, thread_t thread,
 				      int signal)
 {
@@ -278,6 +302,7 @@ static void signal_target_wake_locked(process_t process, thread_t thread,
 	scheduler_kick(thread);
 }
 
+/* Assign a process-directed signal to one unmasked, live thread. */
 static void signal_process_retarget_locked(process_t process, int signal,
 					   thread_t exclude)
 {
@@ -342,6 +367,7 @@ void signal_thread_detach_locked(process_t process, thread_t thread)
 	}
 }
 
+/* Apply stop/continue exclusion rules before enqueuing a group signal. */
 static int signal_prepare_group_locked(process_t process, int signal)
 {
 	int resumed = 0;
@@ -365,6 +391,7 @@ static int signal_prepare_group_locked(process_t process, int signal)
 	return resumed;
 }
 
+/* Publish a pending signal and wake its selected target under process lock. */
 static void signal_wake_locked(process_t process, thread_t target,
 			       int signal)
 {
@@ -379,6 +406,7 @@ static void signal_wake_locked(process_t process, thread_t target,
 	signal_target_wake_locked(process, target, signal);
 }
 
+/* Standard signals coalesce; realtime signals allocate one queue entry each. */
 static int signal_store_pending(struct signal_pending *pending, int signal,
 				const struct signal_info *information)
 {
@@ -492,6 +520,7 @@ int signal_fatal_pending(thread_t thread)
 	return !!pending;
 }
 
+/* Remove the lowest-numbered eligible signal and return its saved metadata. */
 static int signal_take_set_locked(process_t process, thread_t thread,
 				  uint64 set,
 				  int honor_process_target,
@@ -549,6 +578,7 @@ static int signal_take_set_locked(process_t process, thread_t thread,
 	return signal;
 }
 
+/* Select and consume one deliverable signal while process state is locked. */
 static int signal_take_unblocked_locked(
 	process_t process, thread_t thread, struct signal_info *information,
 	struct process_signal_action *action)
@@ -600,6 +630,7 @@ void signal_force_fault(int signal, int code, uint64 address)
 	spinlock_release(&process->lock);
 }
 
+/* Keep signal-frame register order independent of the kernel trapframe. */
 static void signal_regs_save(struct linux_user_regs *registers,
 			     trapframe_t trapframe)
 {
@@ -637,6 +668,7 @@ static void signal_regs_save(struct linux_user_regs *registers,
 	registers->t6 = trapframe->t6;
 }
 
+/* Restore user register state from the validated signal frame. */
 static void signal_regs_restore(trapframe_t trapframe,
 				const struct linux_user_regs *registers)
 {
@@ -674,6 +706,7 @@ static void signal_regs_restore(trapframe_t trapframe,
 	trapframe->t6 = registers->t6;
 }
 
+/* Test whether a user stack pointer lies within the enabled alternate stack. */
 static int signal_on_altstack(thread_t thread, uint64 stack_pointer)
 {
 	uint64 end;
@@ -686,6 +719,7 @@ static int signal_on_altstack(thread_t thread, uint64 stack_pointer)
 	       stack_pointer < end;
 }
 
+/* Save current alternate-stack state into a signal frame. */
 static void signal_altstack_save(thread_t thread, uint64 stack_pointer,
 				 struct linux_sigaltstack *stack)
 {
@@ -697,6 +731,7 @@ static void signal_altstack_save(thread_t thread, uint64 stack_pointer,
 		stack->flags |= LINUX_SS_ONSTACK;
 }
 
+/* Restore alternate-stack state after validating sigreturn input. */
 static int signal_altstack_restore(thread_t thread,
 				   const struct linux_sigaltstack *stack)
 {
@@ -718,6 +753,7 @@ static int signal_altstack_restore(thread_t thread,
 	return 0;
 }
 
+/* Convert internal queued-signal metadata to the Linux siginfo ABI. */
 static void signal_info_export(struct linux_siginfo *destination,
 			       const struct signal_info *source)
 {
@@ -738,6 +774,7 @@ static void signal_info_export(struct linux_siginfo *destination,
 	}
 }
 
+/* Build an ABI-aligned rt_sigframe and redirect execution to the handler. */
 static int signal_frame_setup(thread_t thread,
 			      const struct signal_info *information,
 			      const struct process_signal_action *action,
@@ -792,6 +829,7 @@ static int signal_frame_setup(thread_t thread,
 	return 0;
 }
 
+/* Restore syscall state or report EINTR after signal delivery. */
 static void signal_restart_syscall(thread_t thread, int restart,
 				   int through_handler)
 {
@@ -881,6 +919,14 @@ void signal_user_return(int from_syscall)
 	}
 }
 
+/**
+ * sys_linux_rt_sigreturn() - Restore a saved Linux signal frame
+ *
+ * Reads the frame at the user stack pointer and restores register, FP, mask,
+ * altstack, and futex-restart state.
+ * Context: User syscall context; faults are converted to queued SIGSEGV.
+ * Return: Restored user a0 value, or zero after a forced signal fault.
+ */
 uint64 sys_linux_rt_sigreturn(void)
 {
 	struct linux_rt_sigframe frame;
@@ -916,6 +962,13 @@ uint64 sys_linux_rt_sigreturn(void)
 	return trapframe->a0;
 }
 
+/**
+ * sys_linux_rt_sigaction() - Read or install a signal disposition
+ *
+ * Decodes Linux RISC-V signal, new action, old action, and sigset size.
+ * Context: User syscall context; takes the process lock and may fault.
+ * Return: Zero or a negative Linux errno.
+ */
 uint64 sys_linux_rt_sigaction(void)
 {
 	const uint64 supported_flags =
@@ -964,6 +1017,13 @@ uint64 sys_linux_rt_sigaction(void)
 	return 0;
 }
 
+/**
+ * sys_linux_rt_sigprocmask() - Update or read the current signal mask
+ *
+ * Decodes Linux RISC-V operation, input/output masks, and sigset size.
+ * Context: User syscall context; takes the process lock and may fault.
+ * Return: Zero or a negative Linux errno.
+ */
 uint64 sys_linux_rt_sigprocmask(void)
 {
 	process_t process = cur_proc();
@@ -1005,6 +1065,13 @@ uint64 sys_linux_rt_sigprocmask(void)
 	return 0;
 }
 
+/**
+ * sys_linux_rt_sigpending() - Export the current pending signal set
+ *
+ * Decodes Linux RISC-V output buffer and sigset size arguments.
+ * Context: User syscall context; takes the process lock and may fault.
+ * Return: Zero or a negative Linux errno.
+ */
 uint64 sys_linux_rt_sigpending(void)
 {
 	process_t process = cur_proc();
@@ -1025,6 +1092,7 @@ uint64 sys_linux_rt_sigpending(void)
 	return 0;
 }
 
+/* Share common kill/tkill/tgkill argument and permission validation. */
 static int signal_send_syscall(int thread_group, int tid, int signal,
 			       int thread_directed)
 {
@@ -1054,6 +1122,13 @@ static int signal_send_syscall(int thread_group, int tid, int signal,
 	return result < 0 ? -LINUX_ESRCH : 0;
 }
 
+/**
+ * sys_linux_kill() - Deliver a signal using Linux PID selection rules
+ *
+ * Decodes Linux RISC-V PID and signal arguments.
+ * Context: User syscall context; serializes with process and signal state.
+ * Return: Zero or a negative Linux errno.
+ */
 uint64 sys_linux_kill(void)
 {
 	int pid, signal;
@@ -1063,6 +1138,13 @@ uint64 sys_linux_kill(void)
 	return signal_send_syscall(0, pid, signal, 0);
 }
 
+/**
+ * sys_linux_tkill() - Deliver a signal to a selected thread ID
+ *
+ * Decodes Linux RISC-V TID and signal arguments.
+ * Context: User syscall context; serializes with process and signal state.
+ * Return: Zero or a negative Linux errno.
+ */
 uint64 sys_linux_tkill(void)
 {
 	int tid, signal;
@@ -1074,6 +1156,13 @@ uint64 sys_linux_tkill(void)
 	return signal_send_syscall(0, tid, signal, 1);
 }
 
+/**
+ * sys_linux_tgkill() - Deliver a signal to a thread in a required group
+ *
+ * Decodes Linux RISC-V TGID, TID, and signal arguments.
+ * Context: User syscall context; serializes with process and signal state.
+ * Return: Zero or a negative Linux errno.
+ */
 uint64 sys_linux_tgkill(void)
 {
 	int thread_group, tid, signal;
@@ -1086,6 +1175,13 @@ uint64 sys_linux_tgkill(void)
 	return signal_send_syscall(thread_group, tid, signal, 1);
 }
 
+/**
+ * sys_linux_sigaltstack() - Read or configure the alternate signal stack
+ *
+ * Decodes Linux RISC-V new-stack and old-stack user buffer arguments.
+ * Context: User syscall context; takes the process lock and may fault.
+ * Return: Zero or a negative Linux errno.
+ */
 uint64 sys_linux_sigaltstack(void)
 {
 	struct linux_sigaltstack requested, old;
@@ -1134,6 +1230,13 @@ uint64 sys_linux_sigaltstack(void)
 	return 0;
 }
 
+/**
+ * sys_linux_rt_sigsuspend() - Replace a mask and wait for delivery
+ *
+ * Decodes the Linux RISC-V temporary mask and sigset size arguments.
+ * Context: User syscall context; sleeps interruptibly on the signal queue.
+ * Return: Always a negative Linux EINTR after a signal or group exit.
+ */
 uint64 sys_linux_rt_sigsuspend(void)
 {
 	process_t process = cur_proc();
@@ -1162,6 +1265,7 @@ uint64 sys_linux_rt_sigsuspend(void)
 	return -LINUX_EINTR;
 }
 
+/* Validate a timed-wait timeout and convert it to wait-queue milliseconds. */
 static int signal_timeout_ms(const struct linux_timespec *time,
 			     uint64 *milliseconds)
 {
@@ -1177,6 +1281,13 @@ static int signal_timeout_ms(const struct linux_timespec *time,
 	return 0;
 }
 
+/**
+ * sys_linux_rt_sigtimedwait() - Wait for one selected pending signal
+ *
+ * Decodes Linux RISC-V set, siginfo, timeout, and sigset-size arguments.
+ * Context: User syscall context; may sleep while holding signal wait state.
+ * Return: Signal number or a negative Linux errno including EAGAIN timeout.
+ */
 uint64 sys_linux_rt_sigtimedwait(void)
 {
 	struct linux_timespec timeout;

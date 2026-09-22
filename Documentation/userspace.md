@@ -16,6 +16,35 @@ The guest test also compares both binaries' `--list` output with that
 manifest.  This catches accidental Kconfig drift as well as incomplete
 installation.
 
+## Process and program contract
+
+The kernel creates one `kernel-init` process. Its first scheduled entry
+mounts the root, devfs, tmpfs, and procfs, then executes `INIT_PATH` from
+`include/kernel_config.h` (currently `/bin/sh`). It supplies a conventional
+`argv`, a small `PATH`/`HOME`/`TERM` environment, and descriptors 0, 1, and 2
+opened on `/dev/console`. The initial program is responsible for its
+descendants and reaps them through `wait4`.
+
+`execve` accepts RV64 little-endian ELF `ET_EXEC` and `ET_DYN` programs and a
+single `PT_INTERP` dynamic loader. The initial stack follows the Linux RISC-V
+process ABI: `argc`, argv, envp, and auxiliary-vector entries including page
+size, program headers, entry address, random bytes, and loader base where
+applicable. The signal return trampoline is mapped read/execute at the fixed
+user address reserved by the kernel; applications must not map it themselves.
+
+Exec applies set-user-ID and applicable set-group-ID mode bits to process
+credentials. Dynamic linking, shared-library relocations and ELF TLS setup
+are provided by the userspace musl loader, not a kernel dynamic linker. The
+runtime suite covers needed libraries, TLS, `dlopen`, `dlsym`, and `dlclose`.
+
+Fork duplicates the process view required by the current implementation.
+`vfork` normally blocks its parent until child exec or exit; an interrupted
+killable wait can detach the parent instead. Thread-group exit, signal
+termination, stop/continue, process groups, sessions, and a controlling TTY
+are implemented for the BusyBox workflow. Namespaces, cgroups and
+capabilities remain outside the supported contract. See
+[process lifecycle](process-lifecycle.md) for ownership and exit details.
+
 ## Supported families
 
 The QEMU suite checks observable behavior from each enabled family:
