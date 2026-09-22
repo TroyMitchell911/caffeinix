@@ -1,3 +1,4 @@
+# Build and run host checks plus reproducible QEMU guest selftests.
 TOPDIR := $(abspath $(CURDIR)/..)
 TEST_OUTPUT ?= $(TOPDIR)/output/tests
 JOBS ?= $(shell nproc)

@@ -1,3 +1,4 @@
+# Driver subsystem build composition: framework layers precede device users.
 EXTRA_CFLAGS := -I ../kernel/include -I ../arch/riscv/include -I ../include
 obj-y += base/
 obj-y += block/

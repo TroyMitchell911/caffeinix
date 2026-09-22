@@ -1,3 +1,5 @@
+# Local lwext4 feature/cache limits shared by the adapter and imported library.
+# The current adapter supports one registered ext4 device and mount instance.
 LWEXT4_CONFIG_CFLAGS := -DCONFIG_USE_DEFAULT_CFG=1
 LWEXT4_CONFIG_CFLAGS += -DCONFIG_EXT_FEATURE_SET_LVL=4
 LWEXT4_CONFIG_CFLAGS += -DCONFIG_HAVE_OWN_ERRNO=1

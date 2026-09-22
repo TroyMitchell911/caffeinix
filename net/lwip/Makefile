@@ -1,3 +1,4 @@
+# Pinned lwIP import plus Caffeinix-only portability adapter.
 EXTRA_CFLAGS := -I $(TOPDIR)/kernel/include
 EXTRA_CFLAGS += -I $(TOPDIR)/arch/riscv/include -I $(TOPDIR)/include
 EXTRA_CFLAGS += -I $(TOPDIR)/net/lwip/port/include

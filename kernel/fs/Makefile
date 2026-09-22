@@ -1,3 +1,5 @@
+# VFS, descriptor backends, and filesystem adapters. Imported filesystem code
+# is built under its local compatibility headers, not the host libc sysroot.
 EXTRA_CFLAGS := -I ../include -I ../../arch/riscv/include -I ../../include
 CFLAGS_file.o := 
 

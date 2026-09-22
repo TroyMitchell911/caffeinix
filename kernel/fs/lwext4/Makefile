@@ -1,3 +1,4 @@
+# Build the Caffeinix adapter and pinned lwext4 sources with one configuration.
 include config.mk
 
 EXTRA_CFLAGS := -I compat -I include
