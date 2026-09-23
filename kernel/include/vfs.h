@@ -1,3 +1,13 @@
+/*
+ * VFS object model and filesystem-facing contracts.
+ *
+ * Paths own a mount and dentry reference. Files with a path own its references;
+ * inodes only borrow their superblock pointer. The mount/filesystem must keep
+ * that superblock alive until all its inodes are gone. Callers must put every
+ * owned reference acquired by a get/open function. Filesystem methods return
+ * VFS_ERR_* values rather than Linux errno; syscall translation is deliberately
+ * outside this API.
+ */
 #ifndef __CAFFEINIX_KERNEL_VFS_H
 #define __CAFFEINIX_KERNEL_VFS_H
 
@@ -205,6 +215,11 @@ struct vfs_pollfd {
 	uint32 revents;
 };
 
+/*
+ * Methods implemented by a filesystem.  VFS validates names and permissions
+ * before calling them unless noted otherwise.  Returned inodes carry one VFS
+ * reference.  Methods may sleep and must obey their filesystem's locking.
+ */
 struct vfs_inode_operations {
 	int (*lookup)(struct vfs_inode *directory, const char *name,
 	              struct vfs_inode **result);
@@ -241,6 +256,12 @@ struct vfs_inode_operations {
 
 #define VFS_FILE_CAN_PREAD (1U << 0)
 
+/*
+ * Per-open file methods.  user_source/user_destination select user addresses;
+ * the method must copy safely in that case.  Read/write return byte counts or
+ * VFS errors and may return a short successful count.  @position is owned by
+ * VFS or the caller according to the operation invoked.
+ */
 struct vfs_file_operations {
 	uint32 flags;
 	int (*open)(struct vfs_inode *inode, struct vfs_file *file);
@@ -263,6 +284,7 @@ struct vfs_file_operations {
 	uint32 (*poll)(struct vfs_file *file, uint32 events);
 };
 
+/* Filesystem superblock teardown, sync, and capacity methods. */
 struct vfs_super_operations {
 	void (*put_inode)(struct vfs_inode *inode);
 	int (*sync)(struct vfs_super_block *superblock);
@@ -271,6 +293,7 @@ struct vfs_super_operations {
 	void (*unmount)(struct vfs_super_block *superblock);
 };
 
+/* Registered filesystem type.  mount() returns a referenced superblock. */
 struct vfs_filesystem_type {
 	const char *name;
 	uint32 flags;
@@ -365,12 +388,50 @@ struct vfs_file {
 	void *device_private;
 };
 
+/**
+ * vfs_init() - Initialize global namespace and descriptor state
+ *
+ * Context: Boot context, before filesystem registration or process creation.
+ */
 void vfs_init(void);
+
+/**
+ * vfs_register_filesystem() - Publish a filesystem type
+ * @type: Static descriptor whose name and mount method remain valid forever.
+ *
+ * Context: Boot or serialized registration context; does not sleep.
+ * Return: VFS_OK, VFS_ERR_INVAL, VFS_ERR_EXIST, or VFS_ERR_NOSPC.
+ */
 int vfs_register_filesystem(struct vfs_filesystem_type *type);
+
+/**
+ * vfs_super_alloc() - Allocate a VFS superblock owned by a filesystem
+ * @type: Registered filesystem type.
+ * @device: Optional backing device; VFS does not take a device reference here.
+ *
+ * Context: Thread context; may allocate memory.
+ * Return: A zeroed superblock with one reference, or NULL on
+ * allocation failure.
+ */
 struct vfs_super_block *vfs_super_alloc(struct vfs_filesystem_type *type,
 					struct block_device *device);
 void vfs_super_free(struct vfs_super_block *superblock);
+/**
+ * vfs_inode_alloc() - Allocate an inode wrapper for @superblock
+ * @superblock: Live superblock that must outlive the inode; no ref is acquired.
+ *
+ * Context: Thread context; may allocate memory.
+ * Return: An inode with one reference, or NULL on allocation failure.
+ */
 struct vfs_inode *vfs_inode_alloc(struct vfs_super_block *superblock);
+
+/**
+ * vfs_inode_get() - Acquire an inode reference
+ * @inode: Non-NULL inode with a live reference retained by the caller.
+ *
+ * Context: Does not sleep.
+ * Return: @inode with an additional reference. NULL or a dead inode panics.
+ */
 struct vfs_inode *vfs_inode_get(struct vfs_inode *inode);
 void vfs_inode_put(struct vfs_inode *inode);
 typedef int (*vfs_inode_visit_t)(struct vfs_inode *inode, void *context);
@@ -380,12 +441,41 @@ int vfs_inode_stat_default(struct vfs_inode *inode,
 			   struct vfs_stat *stat);
 int vfs_inode_stat(struct vfs_inode *inode, struct vfs_stat *stat);
 
+/**
+ * vfs_mount_root() - Mount the initial root filesystem
+ * @filesystem: Registered filesystem type name.
+ * @device_id: Backing block-device identifier, or zero when not required.
+ * @flags: VFS_MOUNT_* flags.
+ * @data: Filesystem-private immutable mount data, or NULL.
+ *
+ * Context: Serialized namespace context; may sleep in the mount method.
+ * Return: VFS_OK or a VFS error.  It may be called only before a root exists.
+ */
 int vfs_mount_root(const char *filesystem, uint32 device_id,
 		   uint32 flags, const void *data);
+/**
+ * vfs_mount() - Attach a filesystem at an existing directory
+ * @filesystem: Registered filesystem type name.
+ * @device_id: Backing block-device identifier, or zero when not required.
+ * @target: Absolute or process-relative mountpoint path.
+ * @flags: VFS_MOUNT_* flags.
+ * @data: Filesystem-private immutable mount data, or NULL.
+ *
+ * Context: Thread context; may sleep and changes the shared namespace.
+ * Return: VFS_OK or a VFS error; successful mounts remain until unmounted.
+ */
 int vfs_mount(const char *filesystem, uint32 device_id,
 	      const char *target, uint32 flags, const void *data);
 int vfs_mount_path(const char *filesystem, const char *source,
 		   const char *target, uint32 flags, const void *data);
+/**
+ * vfs_unmount() - Detach a mounted filesystem
+ * @target: Path resolving to the mount root.
+ * @flags: Reserved unmount flags; currently must be zero.
+ *
+ * Context: Thread context; may sleep and fails while the mount is busy.
+ * Return: VFS_OK or a VFS error.
+ */
 int vfs_unmount(const char *target, uint32 flags);
 uint32 vfs_snapshot_mounts(struct vfs_mount_snapshot *snapshots,
 			   uint32 capacity);
@@ -394,8 +484,25 @@ void vfs_path_copy(struct vfs_path *destination,
 		   const struct vfs_path *source);
 void vfs_path_put(struct vfs_path *path);
 
+/**
+ * vfs_open_file() - Resolve and open a path without installing an fd
+ * @path: NUL-terminated process-relative or absolute path.
+ * @flags: VFS_OPEN_* access and creation flags.
+ * @mode: Requested permissions when @flags includes VFS_OPEN_CREATE.
+ * @result: Receives a referenced open file on success.
+ *
+ * Context: Thread context; may sleep.  The caller owns *result and must put it.
+ * Return: VFS_OK or a VFS path, permission, or backend error.
+ */
 int vfs_open_file(const char *path, uint32 flags, uint32 mode,
 		  struct vfs_file **result);
+/**
+ * vfs_file_get() - Acquire a file reference
+ * @file: Non-NULL file with a live reference retained by the caller.
+ *
+ * Context: Does not sleep.
+ * Return: @file with an additional reference. NULL or a dead file panics.
+ */
 struct vfs_file *vfs_file_get(struct vfs_file *file);
 void vfs_file_put(struct vfs_file *file);
 struct vfs_file *vfs_file_hold(struct vfs_file *file);
@@ -405,12 +512,35 @@ int vfs_exec_mapping_get(struct vfs_file *file);
 void vfs_exec_mapping_put(struct vfs_file *file);
 int vfs_file_mark_shared_dirty(struct vfs_file *file, uint64 offset);
 void vfs_file_accessed(struct vfs_file *file);
+/**
+ * vfs_file_pread() - Read at an explicit offset
+ * @file: Referenced open file.
+ * @user_destination: Nonzero if @destination is a user virtual address.
+ * @destination: Output address.
+ * @count: Maximum byte count.
+ * @offset: Byte offset; does not change file->position.
+ *
+ * Context: Thread context; may sleep.  The caller retains @file.
+ * Return: Bytes read, possibly short, or a negative VFS error.
+ */
 int64 vfs_file_pread(struct vfs_file *file, int user_destination,
 		     uint64 destination, uint64 count, uint64 offset);
 int64 vfs_file_pread_raw(struct vfs_file *file, int user_destination,
 			 uint64 destination, uint64 count, uint64 offset);
 int64 vfs_file_pwrite_raw(struct vfs_file *file, int user_source,
 			  uint64 source, uint64 count, uint64 offset);
+/**
+ * vfs_file_pwrite() - Write at an explicit offset
+ * @file: Referenced open file.
+ * @user_source: Nonzero if @source is a user virtual address.
+ * @source: Input address.
+ * @count: Maximum byte count.
+ * @offset: Byte offset; does not change file->position.
+ * @flags: VFS_WRITE_* modifiers.
+ *
+ * Context: Thread context; may sleep.  The caller retains @file.
+ * Return: Bytes written, possibly short, or a negative VFS error.
+ */
 int64 vfs_file_pwrite(struct vfs_file *file, int user_source,
 			 uint64 source, uint64 count, uint64 offset,
 			 uint32 flags);
@@ -423,6 +553,17 @@ int64 vfs_file_pwritev(struct vfs_file *file, int user_source,
 int64 vfs_file_write_current(struct vfs_file *file, int user_source,
 			     uint64 source, uint64 count);
 
+/**
+ * vfs_open() - Open a path and install it in the current process
+ * descriptor table
+ * @path: NUL-terminated process-relative or absolute path.
+ * @flags: VFS_OPEN_* access and creation flags.
+ * @mode: Requested permissions for creation.
+ * @fd_out: Receives the new descriptor on success.
+ *
+ * Context: Current process context; may sleep.
+ * Return: VFS_OK or a VFS error.  On success the process owns the descriptor.
+ */
 int vfs_open(const char *path, uint32 flags, uint32 mode, int *fd_out);
 int vfs_install_file(struct vfs_file *file, uint8 flags, int *fd_out);
 int vfs_get_file_fd(int fd, struct vfs_file **result);

@@ -59,13 +59,55 @@ until the scheduler switches away. A parent on another CPU can observe the
 zombie immediately, but cannot reclaim its thread or kernel stack before the
 handoff completes.
 
+## Thread lifecycle
+
+Thread-table entries progress from `THREAD_UNUSED` to `THREAD_ALLOCATED`,
+then to `THREAD_RUNNABLE` once the scheduler queues them. A selected thread is
+temporarily absent from the tree but remains accounted as `cpu->selected`;
+after the context switch it is `THREAD_RUNNING`. Blocking changes a running
+thread to `THREAD_SLEEPING`, and a wakeup requeues it. Exit changes it to
+`THREAD_EXITED`. Reclamation starts only after the old context has switched
+back to the scheduler stack: the scheduler directly reaps kernel threads and
+non-final user threads. The final user thread remains process-owned while its
+group is a zombie, and process reaping later releases its thread storage.
+
+The thread lock protects an entry throughout these transitions. A user thread
+also belongs to a process: paths that need both locks acquire the process lock
+before the thread lock. Reaping follows that order even when it begins with a
+thread lock, by dropping and reacquiring the thread lock before taking the
+process lock. This prevents an exiting thread from being freed while another
+CPU can still switch through its kernel stack.
+
+Kernel threads have negative TIDs and no owning process or trapframe. Their
+entry trampoline releases the thread lock, enables interrupts, calls the
+registered function, and exits through the scheduler. User-thread allocation
+creates a trapframe page and records the entry in its process slot before the
+thread can become runnable. Allocation failure leaves no partially published
+entry.
+
+## Accounting and observability
+
+Runtime is charged at scheduler transitions and on kernel/user mode changes.
+`scheduler_thread_times()` includes time elapsed since the last charge for a
+currently running thread, so process accounting need not force a context
+switch. The aggregate idle-time and context-switch counters are lockless
+observability snapshots; they are monotonic measurements, not synchronization
+primitives.
+
+`scheduler_set_nice()` accepts only Linux nice values -20 through 19. It
+charges a running task before changing its weight, removes and reinserts a
+queued entity to preserve tree ordering, and requests rescheduling if needed.
+There is no affinity API: all runnable work remains eligible for every online
+CPU.
+
 ## Idle policy
 
 An empty CPU publishes itself idle while synchronized with enqueue, then
-executes `WFI` with interrupt sources enabled. CPU 0 retains a 10 ms timer
-because it expires global timed waits. Other idle CPUs use a 100 ms timer;
-an active CPU restores the 10 ms interval. Runnable work wakes an idle CPU
-with an IPI instead of waiting for either timer.
+executes `WFI` with interrupt sources enabled. Logical CPU 0 retains the
+configured 1 ms tick even while idle so it can expire global timed waits.
+Other idle CPUs use the configured 100 ms idle interval; returning to active
+execution restores their 1 ms tick. Runnable work wakes an idle CPU with an
+IPI instead of waiting for either timer.
 
 ## Current limits
 
@@ -81,3 +123,12 @@ and eight guest CPUs, records command medians, and measures idle QEMU CPU
 use. Guest tests cover nice-weight ordering, more runnable processes than
 CPUs, fork/exec/exit/wait, blocking I/O, timed waits, and mixed CPU, network,
 and filesystem pressure.
+
+To reproduce the runtime coverage locally, run:
+
+```sh
+make -C tests qemu
+```
+
+The test harness boots CPU-count and memory-size matrices, runs scheduler
+runtime tests in the guest, and fails on panics, hangs, or accounting errors.

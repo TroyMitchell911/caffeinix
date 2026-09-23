@@ -1,3 +1,4 @@
+/* Caffeinix allocation and sorting declarations required by imported lwext4. */
 #ifndef LWEXT4_COMPAT_STDLIB_H
 #define LWEXT4_COMPAT_STDLIB_H
 

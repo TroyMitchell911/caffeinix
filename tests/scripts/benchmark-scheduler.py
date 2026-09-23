@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Boot QEMU with one/eight harts and measure shell startup, commands, Tab
+# completion, and idle host CPU use against interactive regression budgets.
 
 import argparse
 import json

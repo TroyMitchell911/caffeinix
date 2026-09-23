@@ -1,3 +1,4 @@
+/* Guest pthread regression for musl threading, synchronization, and TLS. */
 #define _GNU_SOURCE
 
 #include <errno.h>

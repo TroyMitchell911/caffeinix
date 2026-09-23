@@ -1,3 +1,9 @@
+/*
+ * In-kernel network-core lifecycle regression test.
+ *
+ * Synthetic devices exercise registration, recursive callback teardown,
+ * packet ownership, and close ordering without hardware or protocol traffic.
+ */
 #include <mystring.h>
 #include <netdevice.h>
 
@@ -30,6 +36,7 @@ struct net_selftest_state {
 
 static struct net_selftest_state selftest;
 
+/* Count a successful synthetic driver open. */
 static int selftest_open(struct net_device *device)
 {
 	(void)device;
@@ -37,18 +44,21 @@ static int selftest_open(struct net_device *device)
 	return 0;
 }
 
+/* Deliberately reject open to cover driver-error rollback. */
 static int selftest_open_failed(struct net_device *device)
 {
 	(void)device;
 	return -1;
 }
 
+/* Count a synthetic driver stop. */
 static void selftest_stop(struct net_device *device)
 {
 	(void)device;
 	selftest.stopped++;
 }
 
+/* Consume a test packet and record a successful transmit. */
 static int selftest_xmit(struct net_device *device,
 			 struct net_packet *packet)
 {
@@ -58,6 +68,7 @@ static int selftest_xmit(struct net_device *device,
 	return 0;
 }
 
+/* Route a test transmit recursively through the receive callback. */
 static int selftest_receive_xmit(struct net_device *device,
 				 struct net_packet *packet)
 {
@@ -66,6 +77,7 @@ static int selftest_receive_xmit(struct net_device *device,
 	return 0;
 }
 
+/* Validate and release one ordinary receive callback packet. */
 static void selftest_receive(struct net_packet *packet, void *argument)
 {
 	if (argument == &selftest && packet && packet->length == 64)
@@ -73,12 +85,14 @@ static void selftest_receive(struct net_packet *packet, void *argument)
 	net_packet_put(packet);
 }
 
+/* Count one ordinary device-state callback. */
 static void selftest_state(struct net_device *device, void *argument)
 {
 	if (argument == &selftest && device)
 		selftest.state_changes++;
 }
 
+/* Unregister receive consumption from inside its own callback. */
 static void selftest_receive_unregister(struct net_packet *packet,
 					void *argument)
 {
@@ -88,6 +102,7 @@ static void selftest_receive_unregister(struct net_packet *packet,
 	net_packet_put(packet);
 }
 
+/* Exercise nested delivery and recursive unregister lifetime accounting. */
 static void selftest_receive_recursive_unregister(struct net_packet *packet,
 						   void *argument)
 {
@@ -127,6 +142,7 @@ static void selftest_receive_recursive_unregister(struct net_packet *packet,
 	net_packet_put(packet);
 }
 
+/* Exercise nested state dispatch and recursive state unregister. */
 static void selftest_state_recursive_unregister(struct net_device *device,
 						 void *argument)
 {
@@ -147,6 +163,7 @@ static void selftest_state_recursive_unregister(struct net_device *device,
 	state->state_depth--;
 }
 
+/* Remove the state callback from within its own invocation. */
 static void selftest_state_unregister(struct net_device *device,
 				      void *argument)
 {
@@ -155,6 +172,7 @@ static void selftest_state_unregister(struct net_device *device,
 	net_state_unregister(selftest_state_unregister, argument);
 }
 
+/* Close the source device from receive context to test deferred stop. */
 static void selftest_receive_close(struct net_packet *packet,
 				   void *argument)
 {
@@ -165,6 +183,7 @@ static void selftest_receive_close(struct net_packet *packet,
 	net_packet_put(packet);
 }
 
+/* Close an active device from its state callback. */
 static void selftest_state_close(struct net_device *device, void *argument)
 {
 	if (argument == &selftest && device && device->up) {
@@ -173,6 +192,7 @@ static void selftest_state_close(struct net_device *device, void *argument)
 	}
 }
 
+/* Reopen a device from state context after a previous close. */
 static void selftest_state_open(struct net_device *device, void *argument)
 {
 	if (argument == &selftest && device && device->registered &&
@@ -183,6 +203,7 @@ static void selftest_state_open(struct net_device *device, void *argument)
 	}
 }
 
+/* Confirm unregister rejects a state callback attempting self-removal. */
 static void selftest_state_device_unregister(struct net_device *device,
 					     void *argument)
 {
@@ -196,6 +217,7 @@ static void selftest_state_device_unregister(struct net_device *device,
 	}
 }
 
+/* Confirm close is harmless after registry removal. */
 static void selftest_state_removed_close(struct net_device *device,
 					 void *argument)
 {
@@ -205,6 +227,7 @@ static void selftest_state_removed_close(struct net_device *device,
 	}
 }
 
+/* Confirm unregister rejects transmit-callback self-removal. */
 static int selftest_unregister_xmit(struct net_device *device,
 				    struct net_packet *packet)
 {

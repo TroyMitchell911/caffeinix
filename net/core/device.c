@@ -1,3 +1,9 @@
+/*
+ * Stack-independent network-device registry and callback serialization.
+ *
+ * The core owns registration, packet handoff, and callback draining; drivers
+ * own hardware and protocol stacks consume packets through one callback.
+ */
 #include <cpu.h>
 #include <debug.h>
 #include <kernel_config.h>
@@ -42,6 +48,7 @@ static struct {
 extern void net_packet_pool_init(void);
 static void net_state_notify_pending(struct net_device *device);
 
+/* Queue one coalesced state callback while network.lock protects the list. */
 static int net_state_queue_locked(struct net_device *device)
 {
 	int queued = 0;
@@ -61,6 +68,7 @@ static int net_state_queue_locked(struct net_device *device)
 	return queued;
 }
 
+/* Remove one deferred state device and clear its queue marker. */
 static struct net_device *net_state_next_queued(void)
 {
 	struct net_device *device;
@@ -80,6 +88,7 @@ static struct net_device *net_state_next_queued(void)
 	return device;
 }
 
+/* Deliver state callbacks from core-owned work rather than driver work. */
 static void net_state_work(struct work_struct *work)
 {
 	struct net_device *device;
@@ -89,6 +98,7 @@ static void net_state_work(struct work_struct *work)
 		net_state_notify_pending(device);
 }
 
+/* Identify callback ownership by current thread, or CPU before threading. */
 static struct net_callback_slot net_callback_slot(void)
 {
 	struct net_callback_slot slot = { .thread = -1, .cpu = -1 };
@@ -107,6 +117,7 @@ static struct net_callback_slot net_callback_slot(void)
 	return slot;
 }
 
+/* Read current execution's nested callback count under network.lock. */
 static uint32 net_callback_owned_locked(uint32 *threads, uint32 *cpus)
 {
 	struct net_callback_slot slot = net_callback_slot();
@@ -118,6 +129,7 @@ static uint32 net_callback_owned_locked(uint32 *threads, uint32 *cpus)
 	return 0;
 }
 
+/* Sleep until no foreign callback is active; network.lock remains held. */
 static void net_callback_wait_turn_locked(uint32 *active, uint32 *threads,
 					  uint32 *cpus,
 					  struct wait_queue *wait)
@@ -126,12 +138,14 @@ static void net_callback_wait_turn_locked(uint32 *active, uint32 *threads,
 		wait_queue_sleep(wait, &network.lock);
 }
 
+/* Read this execution's nested transmit count under device->lock. */
 static uint32 net_device_transmit_owned_locked(struct net_device *device)
 {
 	return net_callback_owned_locked(device->transmit_threads,
 					  device->transmit_cpus);
 }
 
+/* Account for entering a callback while its protecting lock is held. */
 static void net_callback_enter_locked(struct net_callback_slot *slot,
 				      uint32 *threads, uint32 *cpus)
 {
@@ -142,6 +156,7 @@ static void net_callback_enter_locked(struct net_callback_slot *slot,
 		cpus[slot->cpu]++;
 }
 
+/* Drop callback ownership before waking teardown waiters. */
 static void net_callback_leave_locked(struct net_callback_slot *slot,
 				      uint32 *threads, uint32 *cpus)
 {
@@ -151,6 +166,7 @@ static void net_callback_leave_locked(struct net_callback_slot *slot,
 		cpus[slot->cpu]--;
 }
 
+/* Test name uniqueness while network.lock protects the registry. */
 static int net_device_name_exists_locked(const char *name)
 {
 	uint32 index;
@@ -163,6 +179,7 @@ static int net_device_name_exists_locked(const char *name)
 	return 0;
 }
 
+/* Preserve a supplied unique name or allocate the next ethN name. */
 static int net_device_assign_name_locked(struct net_device *device)
 {
 	uint32 number;
@@ -424,6 +441,7 @@ int net_device_open(struct net_device *device)
 	return status;
 }
 
+/* Invoke ->stop after transmit has drained, then publish the state change. */
 static void net_device_finish_close(struct net_device *device)
 {
 	if (device->operations->stop)
@@ -470,6 +488,7 @@ void net_device_close(struct net_device *device)
 	net_device_finish_close(device);
 }
 
+/* Invoke the registered state callback after coalescing device transitions. */
 static void net_state_notify_pending(struct net_device *device)
 {
 	net_state_t state;

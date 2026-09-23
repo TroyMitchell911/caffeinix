@@ -1,12 +1,11 @@
 /*
- * @Author: TroyMitchell
- * @Date: 2024-04-26
- * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-15
- * @FilePath: /caffeinix/kernel/spinlock.c
- * @Description: 
- * Words are cheap so I do.
- * Copyright (c) 2024 by TroyMitchell, All Rights Reserved. 
+ * RISC-V spin lock implementation.
+ *
+ * The lock word provides mutual exclusion while CPU ownership detects misuse.
+ * enter_critical() disables local interrupts before lock acquisition so local
+ * interrupt handlers cannot deadlock on a lock interrupted code already owns.
+ *
+ * Copyright (c) 2024 by TroyMitchell, All Rights Reserved.
  */
 #include <spinlock.h>
 #include <riscv.h>
@@ -15,12 +14,12 @@
 
 void enter_critical(void)
 {
-        /* Get the interrupt status */
+	/*
+	 * Only the outermost nesting level restores the saved interrupt state.
+	 */
         int old = intr_status();
         intr_off();
-        /* Call the function when the interrupt disabled */
         cpu_t cpu = cur_cpu();
-        /* Add the depth */
         if(cpu->lock_nest_depth++ == 0) {
                 cpu->before_lock = old;
         }
@@ -29,7 +28,6 @@ void enter_critical(void)
 void exit_critical(void)
 {
         cpu_t cpu = cur_cpu();
-        /* We shouldn't open the interrupt when we exit the critical */
         if(intr_status()) {
                 PANIC("exit_critical");
         }
@@ -43,7 +41,9 @@ void exit_critical(void)
 
 int spinlock_holding(spinlock_t lock)
 {
-        /* If locked and the CPU that obtained the lock is the current CPU, return 1 */
+	/*
+	 * Ownership is diagnostic; callers still need locking for data access.
+	 */
         return (lock->locked && lock->cpu == cur_cpu());
 }
 
@@ -63,19 +63,9 @@ void spinlock_acquire(spinlock_t lock)
                 PANIC("spainlock_acquire");
         }
                 
-        /*
-                On RISC-V, sync_lock_test_and_set turns into an atomic swap:
-                a5 = 1
-                s1 = &lk->locked
-                amoswap.w.aq a5, a5, (s1) 
-        */
+	/* Atomic exchange serializes contenders before entering the section. */
         while(__sync_lock_test_and_set(&lock->locked, 1) != 0);
-        /*
-                Tell the C compiler and the processor to not move loads or stores
-                past this point, to ensure that the critical section's memory
-                references happen strictly after the lock is acquired.
-                On RISC-V, this emits a fence instruction. 
-        */
+	/* Prevent protected loads and stores from moving before acquisition. */
         __sync_synchronize();
         lock->cpu = cur_cpu();
 }
@@ -111,23 +101,9 @@ void spinlock_release(spinlock_t lock)
        
 
         lock->cpu = 0;
-        /*
-                Tell the C compiler and the processor to not move loads or stores
-                past this point, to ensure that the critical section's memory
-                references happen strictly after the lock is acquired.
-                On RISC-V, this emits a fence instruction. 
-        */
+	/* Publish protected stores before making the lock available. */
         __sync_synchronize();
-        /*
-                Release the lock, equivalent to lk->locked = 0.
-                This code doesn't use a C assignment, since the C standard
-                implies that an assignment might be implemented with
-                multiple store instructions.
-                On RISC-V, sync_lock_release turns into an atomic swap:
-                s1 = &lk->locked
-                amoswap.w zero, zero, (s1) */
+	/* Use the atomic primitive required by the lock-word protocol. */
         __sync_lock_release(&lock->locked);
         exit_critical();
 }
-
-

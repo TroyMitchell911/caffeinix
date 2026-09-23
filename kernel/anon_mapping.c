@@ -1,3 +1,10 @@
+/*
+ * Reference-counted sparse backing for MAP_SHARED anonymous VMAs.
+ *
+ * A mapping owns its backing reference, while each page lookup hands the
+ * fault path an additional page reference.  The sleeplock serializes sparse
+ * page creation and destruction.
+ */
 #include <anon_mapping.h>
 #include <debug.h>
 #include <list.h>
@@ -20,11 +27,13 @@ struct anon_mapping {
 	uint32 references;
 };
 
+/* Recover the private container from the generic VMA backing interface. */
 static struct anon_mapping *to_anon_mapping(struct vma_backing *backing)
 {
 	return container_of(backing, struct anon_mapping, backing);
 }
 
+/* Retain a backing; overflow and resurrection are allocator-corruption bugs. */
 static void anon_mapping_get(struct vma_backing *backing)
 {
 	struct anon_mapping *mapping = to_anon_mapping(backing);
@@ -36,6 +45,7 @@ static void anon_mapping_get(struct vma_backing *backing)
 		PANIC("invalid anonymous mapping reference");
 }
 
+/* Drop the final backing reference and release all sparse pages. */
 static void anon_mapping_put(struct vma_backing *backing)
 {
 	struct anon_mapping *mapping = to_anon_mapping(backing);

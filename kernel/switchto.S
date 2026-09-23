@@ -1,3 +1,10 @@
+/*
+ * Cooperative kernel context switch.
+ *
+ * a0 points at the outgoing struct context and a1 at the incoming one. Only
+ * RISC-V callee-saved registers and the continuation PC are retained; the
+ * scheduler owns all caller-saved state and its locking protocol.
+ */
 .globl switchto
 switchto:
         sd ra, 0(a0)

@@ -1,3 +1,11 @@
+/*
+ * On-demand diagnostic snapshots of CPUs, threads, memory, and I/O.
+ *
+ * Serial break queues a work item so snapshot operations are not run in the
+ * UART interrupt handler. A guard coalesces concurrent dumps; unlocked
+ * thread/CPU fields are best-effort observations, not a globally consistent
+ * scheduler snapshot.
+ */
 #include <block_device.h>
 #include <cpu.h>
 #include <debug.h>
@@ -13,22 +21,42 @@
 static volatile uint8 dumping;
 static struct work_struct dump_work;
 
+/*
+ * Workqueue callback that moves the requested snapshot out of hard IRQ
+ * context; the work item has permanent storage.
+ */
 static void debug_dump_work(struct work_struct *work)
 {
 	(void)work;
 	debug_dump_state();
 }
 
+/**
+ * debug_init() - Initialize the permanent diagnostic work item
+ *
+ * Context: Boot after workqueue initialization, before serial-break requests.
+ */
 void debug_init(void)
 {
 	work_init(&dump_work, debug_dump_work);
 }
 
+/**
+ * debug_dump_state_request() - Queue a deferred diagnostic snapshot
+ *
+ * Repeated requests may coalesce on the single permanent work item.
+ *
+ * Context: Thread or interrupt context after debug_init(); does not sleep.
+ */
 void debug_dump_state_request(void)
 {
 	schedule_work(&dump_work);
 }
 
+/*
+ * Validate table membership and element alignment before diagnostic code
+ * dereferences a possibly stale scheduler thread pointer.
+ */
 static int thread_pointer_valid(thread_t candidate)
 {
 	uint64 address = (uint64)candidate;
@@ -39,11 +67,19 @@ static int thread_pointer_valid(thread_t candidate)
 	       !((address - start) % sizeof(*candidate));
 }
 
+/*
+ * Return a best-effort ID only for a pointer within the fixed thread table;
+ * invalid pointers are rendered as -1.
+ */
 static int thread_id(thread_t candidate)
 {
 	return thread_pointer_valid(candidate) ? candidate->tid : -1;
 }
 
+/*
+ * Render a snapshot state without indexing an unchecked enum value; racing or
+ * corrupt values are labeled invalid.
+ */
 static const char *thread_state_name(thread_state_t state)
 {
 	switch (state) {
@@ -64,6 +100,15 @@ static const char *thread_state_name(thread_state_t state)
 	}
 }
 
+/**
+ * debug_dump_state() - Emit a best-effort system state snapshot
+ *
+ * Concurrent dumps are coalesced. Thread and CPU fields are sampled without a
+ * global stop, so relationships may change while output is emitted.
+ *
+ * Context: Worker/thread context; may acquire subsystem locks. Do not invoke
+ *          while holding the locks of subsystems being inspected.
+ */
 void debug_dump_state(void)
 {
 	struct page_cache_stats page_cache_stats;

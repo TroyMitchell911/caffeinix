@@ -1,12 +1,9 @@
 /*
- * @Author: TroyMitchell
- * @Date: 2024-04-30
- * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-07
- * @FilePath: /caffeinix/kernel/include/mystring.h
- * @Description: 
- * Words are cheap so I do.
- * Copyright (c) 2024 by TroyMitchell, All Rights Reserved. 
+ * Kernel-local string and memory interfaces. Callers provide accessible
+ * storage and serialize concurrent writes; these are not fault-catching
+ * user-copy helpers.
+ *
+ * Copyright (c) 2024 by TroyMitchell, All Rights Reserved.
  */
 #ifndef __CAFFEINIX_KERNEL_MYSTRING_H
 #define __CAFFEINIX_KERNEL_MYSTRING_H

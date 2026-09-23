@@ -1,3 +1,5 @@
+# Common kernel services and architecture-independent syscall implementation.
+# Architecture and filesystem objects are linked by their own recursive lists.
 EXTRA_CFLAGS := -I ./include -I ../arch/riscv/include -I ../include 
 CFLAGS_file.o := 
 

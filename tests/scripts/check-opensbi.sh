@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Host static check that validates OpenSBI firmware selection and handoff image.
 
 set -euo pipefail
 

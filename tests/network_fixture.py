@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Host-local UDP/TCP/HTTP/DNS fixture for guest networking; never contacts
+# Internet.
 
 import socket
 import threading

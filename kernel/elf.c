@@ -1,17 +1,27 @@
+/*
+ * Validation and address-layout arithmetic for RV64 ELF images.
+ *
+ * This file only validates metadata and derives overflow-safe layouts. It
+ * neither reads a file nor installs mappings, keeping ELF policy separate
+ * from exec's VFS and process-lifetime operations.
+ */
 #include <elf.h>
 #include <riscv.h>
 
+/* Add two ELF quantities and report unsigned-address overflow. */
 static int add_overflow(uint64 left, uint64 right, uint64 *sum)
 {
 	*sum = left + right;
 	return *sum < left;
 }
 
+/* Test the alignment constraint used by ELF loadable segments. */
 static int power_of_two(uint64 value)
 {
 	return value && !(value & (value - 1));
 }
 
+/* Check ELF p_vaddr/p_offset congruence for a loadable segment. */
 static int program_alignment_valid(const struct proghdr *program)
 {
 	if (program->align <= 1)
@@ -22,6 +32,7 @@ static int program_alignment_valid(const struct proghdr *program)
 	       (program->off & (program->align - 1));
 }
 
+/* Reject segment sizes and file ranges that overflow ELF address arithmetic. */
 static int program_region_valid(const struct proghdr *program)
 {
 	uint64 end;
@@ -63,6 +74,7 @@ int elf_image_layout_init(struct elf_image_layout *layout,
 	return 0;
 }
 
+/* Accumulate one PT_LOAD range into a checked image-layout envelope. */
 static int elf_load_layout_add(struct elf_image_layout *layout,
 			       const struct elfhdr *header,
 			       const struct proghdr *program)
@@ -170,6 +182,7 @@ int elf_image_layout_finish(const struct elf_image_layout *layout)
 	return 0;
 }
 
+/* Add a PIE bias to an ELF virtual address without wrapping. */
 int elf_relocate_address(uint64 load_bias, uint64 address,
 			 uint64 *relocated)
 {
@@ -178,6 +191,7 @@ int elf_relocate_address(uint64 load_bias, uint64 address,
 	return 0;
 }
 
+/* Select a bounded runtime placement for a completed ELF image layout. */
 int elf_runtime_layout(const struct elf_image_layout *image,
 		       uint64 mapping_start, uint64 address_limit,
 		       struct elf_runtime_layout *runtime)
@@ -207,6 +221,7 @@ int elf_runtime_layout(const struct elf_image_layout *image,
 	return 0;
 }
 
+/* Require PT_INTERP to fit its buffer and end in one terminating NUL. */
 int elf_interpreter_path_valid(const char *path, uint64 size,
 			       uint64 capacity)
 {

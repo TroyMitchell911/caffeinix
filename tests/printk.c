@@ -1,3 +1,4 @@
+/* Host printk formatter unit test for prefixes, levels, and truncation. */
 #include <string.h>
 #include <unistd.h>
 

@@ -1,12 +1,9 @@
 /*
- * @Author: TroyMitchell
- * @Date: 2024-04-17
- * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-17
- * @FilePath: /caffeinix/include/kernel_config.h
- * @Description: 
- * Words are cheap so I do.
- * Copyright (c) 2024 by TroyMitchell, All Rights Reserved. 
+ * Fixed kernel resource limits and boot defaults. CPU topology and usable RAM
+ * come from firmware, not these limits. Tick constants are milliseconds;
+ * INIT_PATH is resolved after the root filesystem is mounted.
+ *
+ * Copyright (c) 2024 by TroyMitchell, All Rights Reserved.
  */
 #ifndef __CAFFEINIX_KERNEL_CONFIG_H
 #define __CAFFEINIX_KERNEL_CONFIG_H
@@ -18,7 +15,7 @@
 
 #define MAXNAME                         16
 
-/* For ms */
+/* Active and idle per-hart timer periods in milliseconds. */
 #define TICK_INTERVAL                   1
 #define IDLE_TICK_INTERVAL              100
 

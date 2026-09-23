@@ -1,3 +1,5 @@
+# Recursive object aggregation. Child builds own source dependencies; this
+# layer orders their relocatable outputs before linking the parent built-in.o.
 PHONY := __build
 __build:
 
@@ -9,40 +11,23 @@ EXTRA_CFLAGS :=
 # engine, so it does not add the top-level bootstrap dependency again.
 KBUILD_RECURSIVE := 1
 
-# include the Makefile in the current directory. 
-# Note that when executing the command, the working directory will be switched through 
-# the make -C command.
-# In other words, Makefile refers to different files under different make command execution paths.
+# Each recursive invocation runs in the directory whose obj-y it consumes.
 include Makefile
 
-#Define immediate variables
-# $(filter %/, $(obj-y)) Filter out directory names ending with "/" from variable obj-y
-# $(patsubst %/,%,$(filter %/, $(obj-y))) Remove "/" from the directory name ending with "/" in obj-y
+# A trailing slash denotes a child directory, not a local object.
 __subdir-y	:= $(patsubst %/,%,$(filter %/, $(obj-y)))
 
-# Append assignment, subdir-y means subdirectory is required
 subdir-y	+= $(__subdir-y)
 
-# foreach(var,list,text), means foreach var in list, change it to text
-# Modify each item (each file name) f in the subdirectory list subdir-y to f/built-in.o
-# In other words, for each subdirectory, a file named "subdirectory name/built-in.o" 
-# will be generated (the .o file is a link file)
 subdir_objs := $(foreach f,$(subdir-y),$(f)/built-in.o)
 
-# a.o b.o
-
-# Define immediate variables, filter out directory names (names ending with "/") 
-# from obj-y, leaving only ordinary files (.o files)
 cur_objs := $(filter-out %/, $(obj-y))
 
-# Replace each file name f in cur_objs with f.d, that is, add the ".d" suffix 
-# to represent the dependent files of the source code file
+# Compiler-generated header dependencies are optional on the first build.
 dep_files := $(foreach f,$(cur_objs),.$(f).d)
 
-# If the dependent files exist, list them and reassign them to dep_files
 dep_files := $(wildcard $(dep_files))
 
-# If the dependent file list is not empty, directly include the dependent file list
 ifneq ($(dep_files),)
   include $(dep_files)
 endif
@@ -51,7 +36,6 @@ endif
 # dependencies live in the child make invocation.
 PHONY += $(subdir_objs)
 
-# Define rules (target: dependencies)
 __build : built-in.o
 
 # Build the object as the recursive target itself.  This makes the producer of
@@ -60,13 +44,8 @@ $(subdir_objs): %/built-in.o:
 	@echo subdir-y = $*
 	$(MAKE) -C $* -f $(TOPDIR)/Makefile.build
 
-# Define built-in.o dependency rules
-# cur_objs Ordinary files (.o files) filtered from obj-y
-# built-in.o in subdir_objs subdirectory
+# Preserve relocation records for the final top-level kernel link.
 built-in.o : $(cur_objs) $(subdir_objs)
-    # LD represents the cross-compiler linker; the -r option represents relocatable output, 
-    # and an output file can be input again as ld
-    # -o Set output file; $@ target name; $^ all non-duplicate dependent files
 	$(LD) $(LDFLAGS) -r -o $@ $^
 
 dep_file = .$@.d
@@ -77,5 +56,4 @@ dep_file = .$@.d
 %.o : %.S
 	$(CC) $(CFLAGS) $(EXTRA_CFLAGS) $(CFLAGS_$@) -Wp,-MD,$(dep_file) -c -o $@ $<
 
-# Define pseudo target
 .PHONY : $(PHONY)

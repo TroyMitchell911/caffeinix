@@ -1,3 +1,4 @@
+/* Device-tree enumeration and matching for non-enumerable platform devices. */
 #include <mystring.h>
 #include <of.h>
 #include <platform_device.h>
@@ -12,6 +13,7 @@ struct platform_slot {
 
 static struct platform_slot platform_devices[PLATFORM_DEVICE_MAX];
 
+/* Find the first compatible OF match entry for an immutable FDT node. */
 static const struct of_device_id *platform_match_id(
 				const struct of_device_id *matches,
 				struct device_node *node)
@@ -25,6 +27,9 @@ static const struct of_device_id *platform_match_id(
 	return 0;
 }
 
+/*
+ * Match an explicit compatible string or the backing FDT node against a driver.
+ */
 static int platform_match(struct device *device,
 			  struct device_driver *driver)
 {
@@ -47,6 +52,7 @@ static int platform_match(struct device *device,
 	                         device->of_node) != 0;
 }
 
+/* Adapt generic device-model probe to the platform-driver callback type. */
 static int platform_probe(struct device *device)
 {
 	struct platform_driver *driver;
@@ -55,6 +61,7 @@ static int platform_probe(struct device *device)
 	return driver->probe ? driver->probe(to_platform_device(device)) : 0;
 }
 
+/* Adapt generic device-model remove to the platform-driver callback type. */
 static void platform_remove(struct device *device)
 {
 	struct platform_driver *driver;
@@ -104,6 +111,7 @@ void platform_driver_unregister(struct platform_driver *driver)
 		driver_unregister(&driver->driver);
 }
 
+/* Return a statically allocated enumeration slot after its final device put. */
 static void platform_device_release(struct device *device)
 {
 	struct platform_slot *slot;
@@ -113,6 +121,7 @@ static void platform_device_release(struct device *device)
 	memset(slot, 0, sizeof(*slot));
 }
 
+/* Reserve one static slot before filling it from an FDT node. */
 static struct platform_slot *platform_slot_alloc(void)
 {
 	int index;
@@ -126,6 +135,7 @@ static struct platform_slot *platform_slot_alloc(void)
 	return 0;
 }
 
+/* Translate one available FDT node into a platform device and its resources. */
 static int platform_device_from_node(struct device_node *node)
 {
 	struct platform_device *device;

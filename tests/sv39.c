@@ -1,3 +1,7 @@
+/*
+ * Host Sv39 leaf-size and alignment tests. Mapping counts verify huge-leaf
+ * selection for large RAM ranges without allocating the represented memory.
+ */
 #include <stdio.h>
 #include <stdlib.h>
 

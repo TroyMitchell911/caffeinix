@@ -1,3 +1,5 @@
+# Freestanding RV64 kernel build and the shared interactive/test QEMU launcher.
+# Userspace images are external inputs; only tests build a musl/BusyBox rootfs.
 ifndef CROSS_COMPILE
 CROSS_COMPILE := riscv64-linux-gnu-
 endif
@@ -43,8 +45,7 @@ export CFLAGS LDFLAGS
 TOPDIR := $(shell pwd)
 export TOPDIR
 
-# Define the subdirectory to be searched for 
-# variable records (the subdirectory must contain a makefile)
+# Ordered recursive link inputs; each directory supplies its own obj-y list.
 obj-y += arch/riscv/boot/
 obj-y += drivers/
 obj-y += net/
@@ -132,7 +133,7 @@ QEMUOPTS += $(QEMU_EXTRA_OPTS)
 ifndef CPUS
 CPUS := 8
 endif
-# try to generate a unique GDB port
+# Derive a stable per-user GDB port to reduce collisions on shared hosts.
 GDBPORT = $(shell expr `id -u` % 5000 + 25000)
 # QEMU's gdb stub command line changed in 0.11
 QEMUGDB = $(shell if "$(QEMU)" -help | grep -q '^-gdb'; \

@@ -1,3 +1,4 @@
+/* Caffeinix freestanding type-format shim required by imported lwext4. */
 #ifndef LWEXT4_COMPAT_INTTYPES_H
 #define LWEXT4_COMPAT_INTTYPES_H
 

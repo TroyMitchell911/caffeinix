@@ -1,3 +1,7 @@
+/*
+ * Guest helper for host memory measurements. It exits once, waits on ready/
+ * release files while the host snapshots memory, or runs fork/exit cycles.
+ */
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>

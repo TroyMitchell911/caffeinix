@@ -1,3 +1,4 @@
+/* Boot-time regression coverage for generic device-model state transitions. */
 #include <device_model.h>
 #include <mystring.h>
 
@@ -5,12 +6,14 @@ static int release_count;
 static int remove_count;
 static int probe_count;
 
+/* Count final releases to verify the core's ownership transition. */
 static void test_release(struct device *device)
 {
 	(void)device;
 	release_count++;
 }
 
+/* Match only the selftest's statically named objects. */
 static int test_match(struct device *device, struct device_driver *driver)
 {
 	if (!strcmp(device->name, "early"))
@@ -23,6 +26,7 @@ static int test_match(struct device *device, struct device_driver *driver)
 	return 0;
 }
 
+/* Record a successful bind for the selftest. */
 static int test_probe(struct device *device)
 {
 	probe_count++;
@@ -30,6 +34,7 @@ static int test_probe(struct device *device)
 	return 0;
 }
 
+/* Exercise probe-failure rollback without retaining private data. */
 static int test_fail_probe(struct device *device)
 {
 	probe_count++;
@@ -37,6 +42,7 @@ static int test_fail_probe(struct device *device)
 	return -1;
 }
 
+/* Record removal after the driver is unbound. */
 static void test_remove(struct device *device)
 {
 	if (dev_get_drvdata(device) == device)

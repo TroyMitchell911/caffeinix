@@ -1,3 +1,9 @@
+/*
+ * Caffeinix configuration supplied to the imported FatFs source.
+ *
+ * This keeps a single writable, long-file-name volume with 512-byte sectors.
+ * FatFs remains non-reentrant; the Caffeinix adapter serializes library calls.
+ */
 #ifndef CAFFEINIX_FATFS_CONFIG_H
 #define CAFFEINIX_FATFS_CONFIG_H
 

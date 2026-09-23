@@ -1,3 +1,10 @@
+/*
+ * VFS-backed Linux IPv4 socket backend.
+ *
+ * Each userspace descriptor owns an anonymous VFS file and private lwIP
+ * socket.  This layer translates UAPI layouts, flags, errors, and option
+ * semantics without exposing stack-native objects beyond the kernel boundary.
+ */
 #include <debug.h>
 #include <file.h>
 #include <ksocket.h>
@@ -84,6 +91,7 @@ void ksocket_init(void)
 	socket_registry.next_inode = 1;
 }
 
+/* Publish a newly installed wrapper for procfs socket snapshots. */
 static void socket_registry_add(struct socket_file *socket)
 {
 	sleeplock_acquire(&socket_registry.lock);
@@ -93,6 +101,7 @@ static void socket_registry_add(struct socket_file *socket)
 	sleeplock_release(&socket_registry.lock);
 }
 
+/* Remove a wrapper before its lwIP descriptor can be released. */
 static void socket_registry_remove(struct socket_file *socket)
 {
 	sleeplock_acquire(&socket_registry.lock);
@@ -103,6 +112,7 @@ static void socket_registry_remove(struct socket_file *socket)
 	sleeplock_release(&socket_registry.lock);
 }
 
+/* Map the current lwIP TCP state to Linux /proc/net state encoding. */
 static uint8 socket_snapshot_state(struct socket_file *socket)
 {
 	socklen_t length = sizeof(int);
@@ -186,6 +196,7 @@ uint32 ksocket_snapshot_type(int type, struct ksocket_snapshot *snapshots,
 	return count;
 }
 
+/* Translate an lwIP errno to the VFS-private negative error namespace. */
 static int socket_vfs_error(int error)
 {
 	switch (error) {
@@ -225,11 +236,13 @@ static int socket_vfs_error(int error)
 	}
 }
 
+/* Return current lwIP errno as a Linux negative errno, falling back to EIO. */
 static int socket_linux_error(void)
 {
 	return errno > 0 ? -errno : -LINUX_EIO;
 }
 
+/* Validate and translate the subset of send flags supported by lwIP. */
 static int socket_send_lwip_flags(int linux_flags, int *lwip_flags)
 {
 	const int supported = LINUX_MSG_DONTWAIT | LINUX_MSG_NOSIGNAL |
@@ -246,6 +259,7 @@ static int socket_send_lwip_flags(int linux_flags, int *lwip_flags)
 	return 0;
 }
 
+/* Validate and translate the subset of receive flags supported by lwIP. */
 static int socket_receive_lwip_flags(int linux_flags, int *lwip_flags)
 {
 	const int supported = LINUX_MSG_PEEK | LINUX_MSG_TRUNC |
@@ -262,6 +276,7 @@ static int socket_receive_lwip_flags(int linux_flags, int *lwip_flags)
 	return 0;
 }
 
+/* Require SO_BROADCAST for datagram/raw traffic to an interface broadcast. */
 static int socket_check_broadcast_permission(struct socket_file *socket,
 					     uint32 address)
 {
@@ -279,6 +294,9 @@ static int socket_check_broadcast_permission(struct socket_file *socket,
 	return enabled ? 0 : -LINUX_EACCES;
 }
 
+/*
+ * Validate Linux timeval input and round it up into bounded lwIP milliseconds.
+ */
 static int socket_timeout_to_lwip(const void *value, uint32 length,
 				  struct timeval *timeout)
 {
@@ -304,6 +322,7 @@ static int socket_timeout_to_lwip(const void *value, uint32 length,
 	return 0;
 }
 
+/* Convert lwIP timeout storage back to the Linux timeval ABI. */
 static void socket_timeout_from_lwip(const struct timeval *timeout,
 				     struct linux_timeval *linux_timeout)
 {
@@ -311,6 +330,7 @@ static void socket_timeout_from_lwip(const struct timeval *timeout,
 	linux_timeout->microseconds = timeout->tv_usec;
 }
 
+/* Convert Linux SO_RCVBUF request to lwIP's doubled bounded buffer value. */
 static int socket_receive_buffer_to_lwip(const void *value, uint32 length,
 					 int *receive_buffer)
 {
@@ -328,6 +348,7 @@ static int socket_receive_buffer_to_lwip(const void *value, uint32 length,
 	return 0;
 }
 
+/* Validate Linux linger ABI and translate it to lwIP's native layout. */
 static int socket_linger_to_lwip(const void *value, uint32 length,
 				  struct linger *linger)
 {
@@ -345,6 +366,7 @@ static int socket_linger_to_lwip(const void *value, uint32 length,
 	return 0;
 }
 
+/* Validate Linux IP_TTL, expanding -1 to lwIP's default TTL. */
 static int socket_ip_ttl_to_lwip(const void *value, uint32 length, int *ttl)
 {
 	int32 requested;
@@ -360,16 +382,19 @@ static int socket_ip_ttl_to_lwip(const void *value, uint32 length, int *ttl)
 	return 0;
 }
 
+/* Read wrapper write-shutdown state while socket->lock is held by caller. */
 static int socket_write_is_shutdown(struct socket_file *socket)
 {
 	return __atomic_load_n(&socket->write_shutdown, __ATOMIC_ACQUIRE);
 }
 
+/* Read wrapper receive-shutdown state while socket->lock is held by caller. */
 static int socket_read_is_shutdown(struct socket_file *socket)
 {
 	return __atomic_load_n(&socket->read_shutdown, __ATOMIC_ACQUIRE);
 }
 
+/* Identify datagram-like writes which require a connected peer. */
 static int socket_write_needs_peer(struct socket_file *socket)
 {
 	return (socket->type == LINUX_SOCK_DGRAM ||
@@ -377,6 +402,7 @@ static int socket_write_needs_peer(struct socket_file *socket)
 		!__atomic_load_n(&socket->has_peer, __ATOMIC_ACQUIRE);
 }
 
+/* Complete or report a nonblocking stream connect before writing. */
 static int socket_stream_prepare_write(struct socket_file *socket)
 {
 	struct sockaddr_in address;
@@ -409,6 +435,7 @@ static int socket_stream_prepare_write(struct socket_file *socket)
 	return error;
 }
 
+/* Select EPIPE, ENOTCONN, or a delayed connect error for a failed write. */
 static int socket_write_error(struct socket_file *socket)
 {
 	if (socket_write_is_shutdown(socket) ||
@@ -417,6 +444,7 @@ static int socket_write_error(struct socket_file *socket)
 	return errno > 0 ? errno : EIO;
 }
 
+/* Raise SIGPIPE for a stream EPIPE unless MSG_NOSIGNAL suppresses it. */
 static int socket_report_write_error(struct socket_file *socket, int error,
 				     int flags)
 {
@@ -426,6 +454,7 @@ static int socket_report_write_error(struct socket_file *socket, int error,
 	return error;
 }
 
+/* Copy a Linux IPv4 sockaddr into lwIP's sockaddr_in representation. */
 static void socket_address_to_lwip(
 	const struct linux_sockaddr_in *linux_address,
 	struct sockaddr_in *lwip_address)
@@ -437,6 +466,7 @@ static void socket_address_to_lwip(
 	lwip_address->sin_addr.s_addr = linux_address->address;
 }
 
+/* Copy an lwIP IPv4 sockaddr into the Linux RISC-V layout. */
 static void socket_address_from_lwip(
 	const struct sockaddr_in *lwip_address,
 	struct linux_sockaddr_in *linux_address)
@@ -447,6 +477,7 @@ static void socket_address_from_lwip(
 	linux_address->address = lwip_address->sin_addr.s_addr;
 }
 
+/* Convert receive peer address, preserving Linux RAW's zero-port rule. */
 static void socket_receive_address_from_lwip(
 	struct socket_file *socket,
 	const struct sockaddr_in *lwip_address,
@@ -457,6 +488,7 @@ static void socket_receive_address_from_lwip(
 		linux_address->port = 0;
 }
 
+/* Save inheritable option state under socket->lock for accepted peers. */
 static void socket_remember_option(struct socket_file *socket, int level,
 				   int option, const void *value)
 {
@@ -507,6 +539,7 @@ static void socket_remember_option(struct socket_file *socket, int level,
 	spinlock_release(&socket->lock);
 }
 
+/* Snapshot inheritable options while holding the wrapper lock. */
 static void socket_snapshot_options(struct socket_file *socket,
 				    struct socket_inherited_options *options)
 {
@@ -515,6 +548,7 @@ static void socket_snapshot_options(struct socket_file *socket,
 	spinlock_release(&socket->lock);
 }
 
+/* Apply one native option and return a Linux negative errno on failure. */
 static int socket_apply_lwip_option(int descriptor, int level, int option,
 				    const void *value, socklen_t length)
 {
@@ -524,6 +558,7 @@ static int socket_apply_lwip_option(int descriptor, int level, int option,
 	return 0;
 }
 
+/* Replay parent options onto an accepted lwIP descriptor. */
 static int socket_apply_inherited_options(
 	int descriptor, const struct socket_inherited_options *options)
 {
@@ -581,6 +616,7 @@ static int socket_apply_inherited_options(
 	return 0;
 }
 
+/* Close the stack descriptor and free a socket wrapper at final VFS release. */
 static void socket_file_release(struct vfs_file *file)
 {
 	struct socket_file *socket = file->private;
@@ -615,6 +651,7 @@ static void socket_file_release(struct vfs_file *file)
 	free(socket);
 }
 
+/* Propagate VFS nonblocking mode to the wrapped lwIP descriptor. */
 static int socket_file_set_flags(struct vfs_file *file, uint32 flags)
 {
 	struct socket_file *socket = file->private;
@@ -627,6 +664,7 @@ static int socket_file_set_flags(struct vfs_file *file, uint32 flags)
 	return VFS_OK;
 }
 
+/* Read up to one page, translating shutdown and copyout semantics for VFS. */
 static int64 socket_file_read(struct vfs_file *file, int user_destination,
 			      uint64 destination, uint64 count,
 			      uint64 *position)
@@ -662,6 +700,7 @@ static int64 socket_file_read(struct vfs_file *file, int user_destination,
 	return result;
 }
 
+/* Receive one record into iovecs after prefaulting user destinations. */
 static int64 socket_file_readv(struct vfs_file *file, int user_destination,
 			       const struct vfs_iovec *iovecs,
 			       uint32 count)
@@ -732,6 +771,7 @@ out:
 	return result;
 }
 
+/* Copy one bounded VFS write into lwIP and preserve SIGPIPE semantics. */
 static int64 socket_file_write(struct vfs_file *file, int user_source,
 			       uint64 source, uint64 count,
 			       uint64 *position)
@@ -782,6 +822,7 @@ static int64 socket_file_write(struct vfs_file *file, int user_source,
 	return result;
 }
 
+/* Gather a bounded iovec write before passing it to the stack. */
 static int64 socket_file_writev(struct vfs_file *file, int user_source,
 				const struct vfs_iovec *iovecs,
 				uint32 count)
@@ -838,6 +879,7 @@ static int64 socket_file_writev(struct vfs_file *file, int user_source,
 	return result;
 }
 
+/* Fill an ifreq sockaddr with a network-order IPv4 address. */
 static void socket_interface_address(struct linux_ifreq *request,
 				     uint32 address)
 {
@@ -849,6 +891,7 @@ static void socket_interface_address(struct linux_ifreq *request,
 	socket_address->address = address;
 }
 
+/* Obtain a stack-thread-consistent interface snapshot for ioctl handlers. */
 static int socket_snapshot_interfaces(
 	struct network_interface_snapshot *interfaces, uint32 *count)
 {
@@ -858,6 +901,7 @@ static int socket_snapshot_interfaces(
 	return VFS_OK;
 }
 
+/* Find a snapshot by NUL-terminated Linux interface name. */
 static struct network_interface_snapshot *socket_find_interface(
 	struct network_interface_snapshot *interfaces, uint32 count,
 	const char *name)
@@ -871,6 +915,7 @@ static struct network_interface_snapshot *socket_find_interface(
 	return 0;
 }
 
+/* Implement SIOCGIFCONF's size query and bounded userspace array copyout. */
 static int64 socket_interface_conf(uint64 argument)
 {
 	struct network_interface_snapshot interfaces[NET_DEVICE_MAX];
@@ -914,6 +959,7 @@ static int64 socket_interface_conf(uint64 argument)
 	return VFS_OK;
 }
 
+/* Implement the supported read-only IPv4 interface ioctl subset. */
 static int64 socket_interface_ioctl(uint64 command, uint64 argument)
 {
 	struct network_interface_snapshot interfaces[NET_DEVICE_MAX];
@@ -988,6 +1034,7 @@ static int64 socket_interface_ioctl(uint64 command, uint64 argument)
 	return VFS_OK;
 }
 
+/* Serve socket FIONBIO/FIONREAD and supported interface ioctl requests. */
 static int64 socket_file_ioctl(struct vfs_file *file, uint64 request,
 			       uint64 argument)
 {
@@ -1023,6 +1070,7 @@ static int64 socket_file_ioctl(struct vfs_file *file, uint64 request,
 	return VFS_ERR_NOTTY;
 }
 
+/* Synthesize stat metadata for an anonymous socket VFS file. */
 static int socket_file_getattr(struct vfs_file *file,
 			       struct vfs_stat *stat)
 {
@@ -1042,6 +1090,7 @@ static int socket_file_getattr(struct vfs_file *file,
 	return VFS_OK;
 }
 
+/* Translate lwIP readiness into VFS poll bits without consuming data. */
 static uint32 socket_file_poll(struct vfs_file *file, uint32 events)
 {
 	struct socket_file *socket = file->private;
@@ -1088,6 +1137,7 @@ static const struct vfs_file_operations socket_file_operations = {
 	.poll = socket_file_poll,
 };
 
+/* Wrap a native descriptor in VFS, closing it on every installation failure. */
 static int socket_install(int descriptor, int family, int type,
 			  int protocol,
 			  const struct socket_inherited_options *inherited,
@@ -1145,6 +1195,7 @@ static int socket_install(int descriptor, int family, int type,
 	return 0;
 }
 
+/* Pin @fd's VFS file and reject descriptors that are not Caffeinix sockets. */
 static int socket_get(int fd, file_t *file_out,
 		      struct socket_file **socket_out)
 {
@@ -1547,6 +1598,7 @@ int64 ksocket_receive(int fd, void *buffer, uint64 length, int flags,
 	return ksocket_receive_message(fd, buffer, length, flags, address, 0);
 }
 
+/* Map the intentionally supported Linux option pair to lwIP constants. */
 static int socket_option(int linux_level, int linux_option,
 			 int *lwip_level, int *lwip_option)
 {
@@ -1582,6 +1634,7 @@ static int socket_option(int linux_level, int linux_option,
 	return -LINUX_ENOPROTOOPT;
 }
 
+/* Return native storage size after successful Linux option translation. */
 static uint32 socket_lwip_option_size(int level, int option)
 {
 	if (level == LINUX_SOL_SOCKET) {

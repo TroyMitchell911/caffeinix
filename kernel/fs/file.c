@@ -1,3 +1,10 @@
+/*
+ * Legacy fixed-size kernel file table.
+ *
+ * This table is used by early kernel code that still consumes file_t handles.
+ * It owns references to VFS files and serializes allocation and release with
+ * file_table.lock; normal process descriptor handling lives in vfs.c.
+ */
 #include <debug.h>
 #include <file.h>
 #include <mystring.h>
@@ -8,11 +15,13 @@ static struct {
 	struct vfs_file files[NFILE];
 } file_table;
 
+/* Initialize the table before any compatibility-handle allocation. */
 void file_init(void)
 {
 	spinlock_init(&file_table.lock, "file table");
 }
 
+/* Reserve a zeroed slot while holding file_table.lock. */
 file_t file_alloc(void)
 {
 	file_t file;
@@ -32,6 +41,7 @@ file_t file_alloc(void)
 	return 0;
 }
 
+/* Increment a valid fixed-table reference under file_table.lock. */
 file_t file_dup(file_t file)
 {
 	spinlock_acquire(&file_table.lock);
@@ -44,6 +54,7 @@ file_t file_dup(file_t file)
 	return file;
 }
 
+/* Release the VFS file only when the final compatibility reference is gone. */
 static void file_release(file_t file, int access)
 {
 	struct vfs_file released;
@@ -72,11 +83,13 @@ static void file_release(file_t file, int access)
 	vfs_path_put(&released.path);
 }
 
+/* Release a fixed-table reference and its VFS access on the final close. */
 void file_close(file_t file)
 {
 	file_release(file, 1);
 }
 
+/* Take a table reference without acquiring an inode access reference. */
 file_t file_hold(file_t file)
 {
 	spinlock_acquire(&file_table.lock);
@@ -87,6 +100,7 @@ file_t file_hold(file_t file)
 	return file;
 }
 
+/* Drop a table reference retained by file_hold(). */
 void file_unhold(file_t file)
 {
 	file_release(file, 0);

@@ -1,3 +1,10 @@
+/*
+ * Read-only process and kernel-state pseudo filesystem.
+ *
+ * procfs materializes text only while a file is open.  Snapshot builders take
+ * the subsystem locks required by their source; procfs itself does not retain
+ * process, socket, or mount references after the read completes.
+ */
 #include <debug.h>
 #include <cpu.h>
 #include <kernel_config.h>
@@ -71,6 +78,7 @@ static const struct vfs_inode_operations procfs_inode_operations;
 static const struct vfs_file_operations procfs_file_operations;
 static const struct vfs_file_operations procfs_directory_operations;
 
+/* Append one formatted character while retaining buffer bounds. */
 static void procfs_emit(int character, void *context)
 {
 	struct procfs_buffer *buffer = context;
@@ -82,6 +90,7 @@ static void procfs_emit(int character, void *context)
 	buffer->data[buffer->length++] = character;
 }
 
+/* Format into bounded procfs buffer through procfs_emit(). */
 static void procfs_printf(struct procfs_buffer *buffer,
 			  const char *format, ...)
 {
@@ -92,6 +101,7 @@ static void procfs_printf(struct procfs_buffer *buffer,
 	va_end(arguments);
 }
 
+/* Parse decimal process directory name and reject malformed identifiers. */
 static int procfs_parse_pid(const char *name, int *pid)
 {
 	uint64 value = 0;
@@ -110,6 +120,7 @@ static int procfs_parse_pid(const char *name, int *pid)
 	return 0;
 }
 
+/* Encode procfs node kind and PID in a stable synthetic inode number. */
 static uint64 procfs_inode_number(enum procfs_kind kind, int pid)
 {
 	if (kind == PROCFS_ROOT)
@@ -117,6 +128,7 @@ static uint64 procfs_inode_number(enum procfs_kind kind, int pid)
 	return ((uint64)(uint32)pid << 8) + kind + 2;
 }
 
+/* Render unsigned value in requested base without overrunning buffer. */
 static uint32 procfs_format_unsigned(char *buffer, uint32 size,
 				     uint64 value)
 {
@@ -132,6 +144,10 @@ static uint32 procfs_format_unsigned(char *buffer, uint32 size,
 	return output;
 }
 
+/*
+ * Construct an ephemeral VFS inode describing one procfs text or directory
+ * node.
+ */
 static struct vfs_inode *procfs_wrap(struct vfs_super_block *superblock,
 				     enum procfs_kind kind, int pid)
 {
@@ -169,6 +185,9 @@ static struct vfs_inode *procfs_wrap(struct vfs_super_block *superblock,
 	return inode;
 }
 
+/*
+ * Resolve fixed root children and live PID directories into synthetic wrappers.
+ */
 static int procfs_lookup_root(struct vfs_inode *directory,
 			      const char *name,
 			      struct vfs_inode **result)
@@ -203,6 +222,7 @@ static int procfs_lookup_root(struct vfs_inode *directory,
 	return *result ? VFS_OK : VFS_ERR_NOMEM;
 }
 
+/* Resolve entries within one live process directory into synthetic wrappers. */
 static int procfs_lookup_pid(struct vfs_inode *directory,
 			     const char *name,
 			     struct vfs_inode **result)
@@ -232,6 +252,7 @@ static int procfs_lookup_pid(struct vfs_inode *directory,
 	return VFS_ERR_NOENT;
 }
 
+/* Resolve the fixed network pseudo-files beneath /proc/net. */
 static int procfs_lookup_net(struct vfs_inode *directory,
 			     const char *name,
 			     struct vfs_inode **result)
@@ -257,6 +278,7 @@ static int procfs_lookup_net(struct vfs_inode *directory,
 	return VFS_ERR_NOENT;
 }
 
+/* Dispatch lookup to the root, PID, or network namespace resolver. */
 static int procfs_lookup(struct vfs_inode *directory, const char *name,
 			 struct vfs_inode **result)
 {
@@ -273,6 +295,7 @@ static int procfs_lookup(struct vfs_inode *directory, const char *name,
 	return VFS_ERR_NOTDIR;
 }
 
+/* Copy the backend symbolic-link target without following it. */
 static int procfs_readlink(struct vfs_inode *inode, char *buffer,
 			   uint32 size)
 {
@@ -284,6 +307,7 @@ static int procfs_readlink(struct vfs_inode *inode, char *buffer,
 	return procfs_format_unsigned(buffer, size, process->pid);
 }
 
+/* Report synthetic metadata for the procfs node type. */
 static int procfs_getattr(struct vfs_inode *inode, struct vfs_stat *stat)
 {
 	struct procfs_node *node = inode->private;
@@ -303,6 +327,7 @@ static const struct vfs_inode_operations procfs_inode_operations = {
 	.getattr = procfs_getattr,
 };
 
+/* Render process scheduler counters in procfs stat format. */
 static void procfs_build_pid_stat(struct procfs_buffer *buffer,
 				  const struct process_snapshot *snapshot)
 {
@@ -328,6 +353,7 @@ static void procfs_build_pid_stat(struct procfs_buffer *buffer,
 		snapshot->signal_ignored, snapshot->signal_caught);
 }
 
+/* Render process credentials and state in procfs status format. */
 static void procfs_build_pid_status(struct procfs_buffer *buffer,
 				    const struct process_snapshot *snapshot)
 {
@@ -363,6 +389,7 @@ static void procfs_build_pid_status(struct procfs_buffer *buffer,
 		snapshot->signal_caught);
 }
 
+/* Emit escaped mount-table field using octal for whitespace and backslashes. */
 static void procfs_emit_mount_field(struct procfs_buffer *buffer,
 				    const char *field)
 {
@@ -388,6 +415,7 @@ static void procfs_emit_mount_field(struct procfs_buffer *buffer,
 	}
 }
 
+/* Snapshot mounts and render current procfs mount view. */
 static void procfs_build_mounts(struct procfs_buffer *buffer)
 {
 	struct vfs_mount_snapshot mounts[16];
@@ -412,6 +440,7 @@ static void procfs_build_mounts(struct procfs_buffer *buffer)
 	}
 }
 
+/* Derive memory counters from page and page-cache snapshots. */
 static void procfs_build_meminfo(struct procfs_buffer *buffer)
 {
 	struct page_cache_stats cache;
@@ -441,6 +470,7 @@ static void procfs_build_meminfo(struct procfs_buffer *buffer)
 		total, free, available, cached);
 }
 
+/* Maintain timestamps according to the current filesystem policy. */
 static void procfs_build_uptime(struct procfs_buffer *buffer)
 {
 	struct process_system_snapshot snapshot;
@@ -455,6 +485,7 @@ static void procfs_build_uptime(struct procfs_buffer *buffer)
 			idle / 100, idle % 100);
 }
 
+/* Render system scheduler counters in procfs stat format. */
 static void procfs_build_stat(struct procfs_buffer *buffer)
 {
 	struct process_system_snapshot snapshot;
@@ -484,6 +515,7 @@ static void procfs_build_stat(struct procfs_buffer *buffer)
 			snapshot.blocked);
 }
 
+/* Render scheduler load averages and process counters from one snapshot. */
 static void procfs_build_loadavg(struct procfs_buffer *buffer)
 {
 	struct process_system_snapshot snapshot;
@@ -501,6 +533,7 @@ static void procfs_build_loadavg(struct procfs_buffer *buffer)
 			snapshot.running, snapshot.processes, snapshot.last_pid);
 }
 
+/* Render interface counters in Linux-compatible net/dev table. */
 static void procfs_build_net_dev(struct procfs_buffer *buffer)
 {
 	struct net_device_stats stats;
@@ -526,6 +559,7 @@ static void procfs_build_net_dev(struct procfs_buffer *buffer)
 	}
 }
 
+/* Snapshot interfaces and emit connected IPv4 routes. */
 static int procfs_build_net_route(struct procfs_buffer *buffer)
 {
 	struct network_interface_snapshot interfaces[NET_DEVICE_MAX];
@@ -561,6 +595,7 @@ static int procfs_build_net_route(struct procfs_buffer *buffer)
 	return VFS_OK;
 }
 
+/* Emit TCP or UDP socket rows selected by procfs node kind. */
 static int procfs_build_net_transport(struct procfs_buffer *buffer,
 				      enum procfs_kind kind)
 {
@@ -597,6 +632,7 @@ static int procfs_build_net_transport(struct procfs_buffer *buffer,
 	return VFS_OK;
 }
 
+/* Generate and retain a stable text snapshot for this open file. */
 static int procfs_file_open(struct vfs_inode *inode, struct vfs_file *file)
 {
 	struct procfs_node *node = inode->private;
@@ -698,12 +734,14 @@ no_process:
 	return VFS_ERR_NOENT;
 }
 
+/* Free the page-backed snapshot allocated at open. */
 static void procfs_file_release(struct vfs_file *file)
 {
 	if (file->private)
 		free_pages(file->private, PROCFS_OPEN_ORDER);
 }
 
+/* Copy bytes from the immutable open-file procfs snapshot. */
 static int64 procfs_file_read(struct vfs_file *file, int user_destination,
 			      uint64 destination, uint64 count,
 			      uint64 *position)
@@ -725,6 +763,7 @@ static int64 procfs_file_read(struct vfs_file *file, int user_destination,
 	return count;
 }
 
+/* Fill one directory entry and advance caller-visible cursor. */
 static int procfs_fill_dirent(struct vfs_file *file,
 			      struct vfs_dirent *result,
 			      uint64 ino, uint8 type, const char *name)
@@ -736,6 +775,7 @@ static int procfs_fill_dirent(struct vfs_file *file,
 	return 1;
 }
 
+/* Select fixed child by file position or report end of directory. */
 static int procfs_readdir_fixed(struct vfs_file *file,
 				struct vfs_dirent *result,
 				const char *const *names,
@@ -752,6 +792,7 @@ static int procfs_readdir_fixed(struct vfs_file *file,
 				   types[position], names[position]);
 }
 
+/* Convert the backend directory cursor into one VFS directory entry. */
 static int procfs_directory_readdir(struct vfs_file *file,
 				    struct vfs_dirent *result)
 {
@@ -838,11 +879,13 @@ static const struct vfs_file_operations procfs_directory_operations = {
 	.readdir = procfs_directory_readdir,
 };
 
+/* Release filesystem-private inode state on the final VFS inode put. */
 static void procfs_put_inode(struct vfs_inode *inode)
 {
 	free(inode->private);
 }
 
+/* procfs exposes live state and has no backing store to flush. */
 static int procfs_sync(struct vfs_super_block *superblock)
 {
 	(void)superblock;
@@ -854,6 +897,7 @@ static const struct vfs_super_operations procfs_super_operations = {
 	.sync = procfs_sync,
 };
 
+/* Create synthetic procfs superblock and root directory. */
 static int procfs_mount(struct vfs_filesystem_type *type,
 			struct block_device *device, const void *data,
 			struct vfs_super_block **result)

@@ -1,3 +1,10 @@
+/*
+ * Caffeinix adapter around the imported FatFs library.
+ *
+ * The adapter converts VFS paths and file objects into FatFs handles.  FatFs
+ * is configured as non-reentrant, so fatfs_port.lock encloses every library
+ * operation and protects adapter-owned inode and open-file state.
+ */
 #include <debug.h>
 #include <fatfs.h>
 #include <ff.h>
@@ -39,6 +46,7 @@ static const struct vfs_inode_operations fatfs_inode_operations;
 static const struct vfs_file_operations fatfs_file_operations;
 static const struct vfs_file_operations fatfs_directory_operations;
 
+/* Convert the backend result to the VFS error domain. */
 static int fatfs_result(FRESULT result)
 {
 	switch (result) {
@@ -76,6 +84,7 @@ static int fatfs_result(FRESULT result)
 	}
 }
 
+/* Hash a FatFs path into a stable nonzero VFS inode number. */
 static uint64 fatfs_inode_number(const char *path)
 {
 	uint64 hash = 1469598103934665603ULL;
@@ -90,6 +99,7 @@ static uint64 fatfs_inode_number(const char *path)
 	return hash ? hash : 1;
 }
 
+/* Form one bounded backend path from validated path components. */
 static int fatfs_join(char *path, const char *directory, const char *name)
 {
 	uint32 directory_length = strlen(directory);
@@ -118,6 +128,7 @@ struct fatfs_path_rebase {
 	int apply;
 };
 
+/* Validate or update cached FatFs paths after a rename. */
 static int fatfs_rebase_inode_path(struct vfs_inode *inode, void *argument)
 {
 	struct fatfs_path_rebase *rebase = argument;
@@ -140,6 +151,7 @@ static int fatfs_rebase_inode_path(struct vfs_inode *inode, void *argument)
 	return VFS_OK;
 }
 
+/* Visit cached inodes to preflight or apply a FatFs pathname rebase. */
 static int fatfs_rebase_paths(struct vfs_super_block *superblock,
 			      const char *old_path, const char *new_path,
 			      int apply)
@@ -153,11 +165,13 @@ static int fatfs_rebase_paths(struct vfs_super_block *superblock,
 	return vfs_visit_inodes(superblock, fatfs_rebase_inode_path, &rebase);
 }
 
+/* Identify the adapter root path, which FatFs cannot stat normally. */
 static int fatfs_path_is_root(const char *path)
 {
 	return !strcmp(path, FATFS_ROOT);
 }
 
+/* Caller holds the subsystem lock while this helper updates private state. */
 static FRESULT fatfs_stat_locked(const char *path, FILINFO *info)
 {
 	if (fatfs_path_is_root(path)) {
@@ -175,6 +189,7 @@ struct fatfs_identity_lookup {
 	int found;
 };
 
+/* Compare paths case-insensitively as required by FatFs names. */
 static int fatfs_path_equal(const char *left, const char *right)
 {
 	uint8 left_character, right_character;
@@ -193,6 +208,7 @@ static int fatfs_path_equal(const char *left, const char *right)
 	}
 }
 
+/* Find matching private state without changing its ownership. */
 static int fatfs_find_inode_identity(struct vfs_inode *inode, void *argument)
 {
 	struct fatfs_identity_lookup *lookup = argument;
@@ -206,6 +222,7 @@ static int fatfs_find_inode_identity(struct vfs_inode *inode, void *argument)
 	return VFS_OK;
 }
 
+/* Reuse inode number of an existing wrapper for the same path. */
 static uint64 fatfs_live_inode_number(struct vfs_super_block *superblock,
 				      struct vfs_inode *candidate,
 				      const char *path)
@@ -220,6 +237,7 @@ static uint64 fatfs_live_inode_number(struct vfs_super_block *superblock,
 	return lookup.number;
 }
 
+/* Caller holds the subsystem lock while this helper updates private state. */
 static void fatfs_refresh_locked(struct vfs_inode *inode)
 {
 	struct fatfs_inode *private = inode->private;
@@ -237,6 +255,9 @@ static void fatfs_refresh_locked(struct vfs_inode *inode)
 		&fatfs_directory_operations : &fatfs_file_operations;
 }
 
+/*
+ * Caller holds fatfs_port.lock while constructing a wrapper for FAT metadata.
+ */
 static struct vfs_inode *fatfs_wrap_locked(
 	struct vfs_super_block *superblock, const char *path)
 {
@@ -267,17 +288,20 @@ static struct vfs_inode *fatfs_wrap_locked(
 	return inode;
 }
 
+/* Release filesystem-private inode state on the final VFS inode put. */
 static void fatfs_put_inode(struct vfs_inode *inode)
 {
 	free(inode->private);
 }
 
+/* Flush the selected FatFs backing block device. */
 static int fatfs_sync(struct vfs_super_block *superblock)
 {
 	return block_device_flush(superblock->device) ?
 		VFS_ERR_IO : VFS_OK;
 }
 
+/* Report FatFs allocation geometry and free-space counters. */
 static int fatfs_statfs(struct vfs_super_block *superblock,
 			struct vfs_statfs *stat)
 {
@@ -302,6 +326,7 @@ static int fatfs_statfs(struct vfs_super_block *superblock,
 	return VFS_OK;
 }
 
+/* Clear mount-private pointer after VFS detaches the volume. */
 static void fatfs_unmount(struct vfs_super_block *superblock)
 {
 	(void)superblock;
@@ -321,6 +346,7 @@ static const struct vfs_super_operations fatfs_super_operations = {
 	.unmount = fatfs_unmount,
 };
 
+/* Stat the path under lock and refresh VFS inode metadata. */
 static int fatfs_getattr(struct vfs_inode *inode, struct vfs_stat *stat)
 {
 	struct fatfs_inode *private = inode->private;
@@ -335,6 +361,9 @@ static int fatfs_getattr(struct vfs_inode *inode, struct vfs_stat *stat)
 		fatfs_result(result);
 }
 
+/*
+ * Join and stat a child under fatfs_port.lock, returning a new inode wrapper.
+ */
 static int fatfs_lookup(struct vfs_inode *directory, const char *name,
 			struct vfs_inode **result)
 {
@@ -360,6 +389,7 @@ static int fatfs_lookup(struct vfs_inode *directory, const char *name,
 	return status;
 }
 
+/* Create a regular FatFs file and initialize its VFS metadata. */
 static int fatfs_create(struct vfs_inode *directory, const char *name,
 			uint32 mode, uint32 uid, uint32 gid,
 			struct vfs_inode **result)
@@ -399,6 +429,7 @@ out:
 	return status;
 }
 
+/* Create a FatFs directory and initialize its VFS metadata. */
 static int fatfs_mkdir(struct vfs_inode *directory, const char *name,
 		       uint32 mode, uint32 uid, uint32 gid,
 		       struct vfs_inode **result)
@@ -434,6 +465,7 @@ out:
 	return status;
 }
 
+/* Remove the named file or directory after verifying its type. */
 static int fatfs_remove(struct vfs_inode *directory, const char *name,
 			int remove_directory)
 {
@@ -464,16 +496,19 @@ out:
 	return status;
 }
 
+/* Remove a non-directory entry through fatfs_remove(). */
 static int fatfs_unlink(struct vfs_inode *directory, const char *name)
 {
 	return fatfs_remove(directory, name, 0);
 }
 
+/* Remove a directory entry through fatfs_remove(). */
 static int fatfs_rmdir(struct vfs_inode *directory, const char *name)
 {
 	return fatfs_remove(directory, name, 1);
 }
 
+/* Rename and rebase cached paths while FatFs is locked. */
 static int fatfs_rename(struct vfs_inode *old_directory,
 			const char *old_name,
 			struct vfs_inode *new_directory,
@@ -548,6 +583,7 @@ out:
 	return status;
 }
 
+/* Resize the FatFs file through a temporary writable handle. */
 static int fatfs_truncate(struct vfs_inode *inode, uint64 size)
 {
 	struct fatfs_inode *private = inode->private;
@@ -584,6 +620,7 @@ static const struct vfs_inode_operations fatfs_inode_operations = {
 	.getattr = fatfs_getattr,
 };
 
+/* Open a FatFs file with flags derived from the VFS open mode. */
 static int fatfs_file_open(struct vfs_inode *inode, struct vfs_file *file)
 {
 	struct fatfs_inode *private = inode->private;
@@ -616,6 +653,7 @@ static int fatfs_file_open(struct vfs_inode *inode, struct vfs_file *file)
 	return VFS_OK;
 }
 
+/* Close and free the per-open FatFs file handle. */
 static void fatfs_file_release(struct vfs_file *file)
 {
 	struct fatfs_file *handle = file->private;
@@ -629,6 +667,7 @@ static void fatfs_file_release(struct vfs_file *file)
 	free(handle);
 }
 
+/* Seek and read under FatFs lock, copying user chunks out. */
 static int64 fatfs_read(struct vfs_file *file, int user_destination,
 			uint64 destination, uint64 count, uint64 *position)
 {
@@ -667,6 +706,7 @@ static int64 fatfs_read(struct vfs_file *file, int user_destination,
 	return result == FR_OK ? 0 : fatfs_result(result);
 }
 
+/* Copy user chunks in before FatFs writes, preserving partial progress. */
 static int64 fatfs_write(struct vfs_file *file, int user_source,
 			 uint64 source, uint64 count, uint64 *position)
 {
@@ -704,6 +744,7 @@ static int64 fatfs_write(struct vfs_file *file, int user_source,
 	return (result == FR_OK || total) ? total : fatfs_result(result);
 }
 
+/* Flush the open FatFs file and its backing device. */
 static int fatfs_file_sync(struct vfs_file *file)
 {
 	struct fatfs_file *handle = file->private;
@@ -726,6 +767,7 @@ static const struct vfs_file_operations fatfs_file_operations = {
 	.fsync = fatfs_file_sync,
 };
 
+/* Open a FatFs directory and retain its iterator in file private data. */
 static int fatfs_directory_open(struct vfs_inode *inode,
 				struct vfs_file *file)
 {
@@ -748,6 +790,7 @@ static int fatfs_directory_open(struct vfs_inode *inode,
 	return VFS_OK;
 }
 
+/* Close and free the per-open FatFs directory iterator. */
 static void fatfs_directory_release(struct vfs_file *file)
 {
 	struct fatfs_directory *handle = file->private;
@@ -760,11 +803,13 @@ static void fatfs_directory_release(struct vfs_file *file)
 	free(handle);
 }
 
+/* Synchronize the directory mount through fatfs_sync(). */
 static int fatfs_directory_sync(struct vfs_file *file)
 {
 	return fatfs_sync(file->path.dentry->inode->superblock);
 }
 
+/* Convert the backend directory cursor into one VFS directory entry. */
 static int fatfs_readdir(struct vfs_file *file,
 			 struct vfs_dirent *result)
 {
@@ -811,6 +856,7 @@ static int fatfs_readdir(struct vfs_file *file,
 	return 1;
 }
 
+/* Reopen and advance FatFs directory stream to requested entry offset. */
 static int fatfs_seekdir(struct vfs_file *file, uint64 position)
 {
 	struct fatfs_directory *handle = file->private;
@@ -841,6 +887,7 @@ static const struct vfs_file_operations fatfs_directory_operations = {
 	.fsync = fatfs_directory_sync,
 };
 
+/* Mount selected volume and create root inode under fatfs_port.lock. */
 static int fatfs_mount(struct vfs_filesystem_type *type,
 		       struct block_device *device, const void *data,
 		       struct vfs_super_block **result)

@@ -1,3 +1,4 @@
+/* OpenSBI v0.2+ client for timers, hart lifecycle, IPIs, and remote fences. */
 #include <debug.h>
 #include <printk.h>
 #include <sbi.h>
@@ -31,6 +32,7 @@ static uint64 sbi_spec_version;
 static uint64 sbi_impl_id;
 static uint64 sbi_impl_version;
 
+/* Marshal one SBI call using the RISC-V a0-a7 calling convention. */
 static struct sbi_return sbi_ecall(uint64 extension, uint64 function,
 				   uint64 argument0, uint64 argument1,
 				   uint64 argument2, uint64 argument3,
@@ -56,11 +58,13 @@ static struct sbi_return sbi_ecall(uint64 extension, uint64 function,
 	return result;
 }
 
+/* Issue a BASE extension query with its single argument. */
 static struct sbi_return sbi_base_call(uint64 function, uint64 argument)
 {
 	return sbi_ecall(SBI_EXT_BASE, function, argument, 0, 0, 0, 0, 0);
 }
 
+/* Return a successful BASE query value or stop boot on a firmware failure. */
 static uint64 sbi_base_value(uint64 function)
 {
 	struct sbi_return result = sbi_base_call(function, 0);
@@ -70,6 +74,7 @@ static uint64 sbi_base_value(uint64 function)
 	return result.value;
 }
 
+/* Probe optional SBI extension support through BASE. */
 static int sbi_extension_available(uint64 extension)
 {
 	struct sbi_return probe;
@@ -78,6 +83,7 @@ static int sbi_extension_available(uint64 extension)
 	return probe.error == SBI_SUCCESS && probe.value;
 }
 
+/* Verify the SBI version and extensions required by configured CPU count. */
 void sbi_init(int requested_cpus)
 {
 	uint64 major, minor;
@@ -108,6 +114,7 @@ void sbi_report(void)
 		(int)major, (int)minor, (int)sbi_impl_id, sbi_impl_version);
 }
 
+/* Program an absolute timebase deadline through SBI TIME. */
 int64 sbi_set_timer(uint64 deadline)
 {
 	struct sbi_return result;

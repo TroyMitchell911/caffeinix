@@ -1,4 +1,5 @@
-.text
+/* Signal ABI probe preserving all registers checked by signal_runtime.c. */
+	.text
 .global signal_register_probe
 .type signal_register_probe, @function
 signal_register_probe:

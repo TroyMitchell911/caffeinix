@@ -47,6 +47,28 @@ Linux constants, structures, errors, flags, and options explicitly.  File
 descriptor allocation, duplication, close-on-exec, ordinary read/write,
 polling, and lifetime remain VFS responsibilities.
 
+## Control flow and synchronization
+
+The core serializes registry mutation with `network.lock` and protects each
+device's lifecycle, queue, and reference state with `device->lock`.  Neither
+lock is held while a driver `start_xmit`, `open`, or `stop` callback runs.
+Unregister first waits for borrowed references, lifecycle transitions, and
+pending state notifications to drain. The device remains registered and lookup
+can acquire new references during this wait. Once it observes those conditions
+clear under the core locks, unregister removes the device from lookup, marks it
+down, and prevents new transmissions. It then drains active transmit callbacks,
+calls the driver's stop method if needed, and emits the final state notification
+before returning. The driver may release private memory only after successful
+unregister, and must not hold a borrowed reference while waiting for that call.
+
+Receive and state notification each have one registered consumer.  The core
+tracks callback ownership per thread and CPU, allowing a consumer to unregister
+its own callback while draining other invocations without waiting for itself.
+This callback removal is distinct from device unregister, which rejects
+recursive teardown from callbacks that would block its progress. State
+callbacks raised from workqueue context are requeued on core-owned work;
+this prevents a driver-private work item from being freed beneath a callback.
+
 ## Packet ownership
 
 `net_packet_alloc()` returns one reference.  A failed
@@ -74,7 +96,8 @@ A new driver should:
    and private driver data;
 3. register it with `net_device_register()`;
 4. transfer packet ownership only after a successful `start_xmit()`;
-5. call `netif_receive()` from deferred context for validated frames;
+5. call `netif_receive()` from sleepable process or deferred context for
+   validated frames, never from hard IRQ;
 6. use `netif_stop_queue()` and `netif_wake_queue()` for backpressure;
 7. report link changes with `net_device_set_carrier()`; and
 8. unregister the network device before releasing queues or private data.
@@ -98,3 +121,11 @@ IPv4, and a 1500-byte Ethernet MTU.  It intentionally omits packed rings,
 indirect descriptors, event index, multiqueue, offloads, hot unplug, IPv6,
 AF_UNIX, packet sockets, netlink, routing configuration, and network
 namespaces.  The copy-based data path favors correctness over throughput.
+
+## Reproducible validation
+
+Run `make -C tests qemu` from the kernel tree.  The harness verifies the
+network core selftest, device enumeration independent of VirtIO MMIO order,
+offline boot, no-DHCP boot, DHCP, and local TCP/UDP/HTTP fixtures.  Fixtures
+run on the host's QEMU user backend; the suite deliberately makes no public
+Internet request and requires neither a TAP device nor elevated privileges.

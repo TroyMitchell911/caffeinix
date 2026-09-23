@@ -1,3 +1,10 @@
+/*
+ * RISC-V Linux system-call dispatch and safe user-argument access.
+ *
+ * The dispatcher preserves the trap-frame ABI, selects an implemented Linux
+ * UAPI handler, and arranges signal/restart processing at trap return. User
+ * pointers are copied only through the current process page table.
+ */
 #include <debug.h>
 #include <linux_uapi.h>
 #include <mystring.h>
@@ -9,6 +16,7 @@
 #include <vfs.h>
 #include <vm.h>
 
+/* Translate internal VFS errors while preserving successful result values. */
 int64 linux_error(int result)
 {
 	switch (result) {
@@ -121,6 +129,18 @@ int64 linux_error(int result)
 	}
 }
 
+/**
+ * copy_user_iov() - Copy Linux iovecs into a page allocation
+ * @address: Current-process user address of the first Linux iovec.
+ * @count: Number of iovecs, from zero through LINUX_IOV_MAX.
+ * @result: Output ownership pointer, set to %NULL on failure or zero count.
+ * @order: Output allocation page order, zero on failure or zero count.
+ *
+ * The caller owns a successful @result and releases it with free_pages() and
+ * the returned @order.
+ * Context: Current user process; may allocate and fault on user memory.
+ * Return: Zero or a negative Linux errno.
+ */
 int copy_user_iov(uint64 address, int count, struct vfs_iovec **result,
 		  unsigned int *order)
 {
@@ -163,6 +183,7 @@ int copy_user_iov(uint64 address, int count, struct vfs_iovec **result,
 	return 0;
 }
 
+/* Return an untyped RISC-V system-call register argument by index. */
 static uint64 argraw(int n)
 {
 	uint64 *args = &cur_thread()->trapframe->a0;
@@ -174,6 +195,7 @@ static uint64 argraw(int n)
 	return 0;
 }
 
+/* Copy one NUL-terminated pathname or argument from current user memory. */
 int fetch_str_from_user(uint64 user_addr, char *buf, int max)
 {
 	process_t p = cur_proc();
@@ -183,6 +205,7 @@ int fetch_str_from_user(uint64 user_addr, char *buf, int max)
 	return strlen(buf);
 }
 
+/* Fetch one machine address from the current process's user page table. */
 int fetch_addr_from_user(uint64 user_addr, uint64 *dst)
 {
         process_t p = cur_proc();
@@ -192,16 +215,39 @@ int fetch_addr_from_user(uint64 user_addr, uint64 *dst)
 	return 0;
 }
 
+/**
+ * argint() - Decode one integer system-call argument
+ * @n: Linux RISC-V argument index from zero through five.
+ * @ip: Output storage for the low integer value.
+ *
+ * Context: Current syscall context; does not sleep. Invalid indices panic.
+ */
 void argint(int n, int *ip)
 {
 	*ip = argraw(n);
 }
 
+/**
+ * argaddr() - Decode one pointer-sized system-call argument
+ * @n: Linux RISC-V argument index from zero through five.
+ * @ap: Output storage for the raw user address.
+ *
+ * Context: Current syscall context; does not validate or dereference @ap.
+ */
 void argaddr(int n, uint64 *ap)
 {
 	*ap = argraw(n);
 }
 
+/**
+ * argstr() - Copy one string system-call argument from user memory
+ * @n: Linux RISC-V argument index from zero through five.
+ * @buf: Kernel destination for the NUL-terminated string.
+ * @max: Capacity of @buf in bytes.
+ *
+ * Context: Current user process; may fault on the user copy.
+ * Return: String length or a negative copy error.
+ */
 int argstr(int n, char *buf, int max)
 {
 	uint64 addr;
@@ -472,6 +518,13 @@ static syscall_t linux_syscalls[LINUX_SYS_pwritev2 + 1] = {
 	[LINUX_SYS_pwritev2] = sys_linux_pwritev2,
 };
 
+/**
+ * syscall() - Dispatch the current trap-frame system call
+ *
+ * Uses the Linux RISC-V syscall number and argument registers in the current
+ * trap frame, writes its result there, and preserves restart semantics.
+ * Context: User trap handling; handlers may sleep and return negative errno.
+ */
 void syscall(void)
 {
 	uint64 result;

@@ -1,12 +1,11 @@
 /*
- * @Author: TroyMitchell
- * @Date: 2024-04-30 06:23
- * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-16
- * @FilePath: /caffeinix/arch/riscv/vm.c
- * @Description: This file about all virtual address
- * Words are cheap so I do.
- * Copyright (c) 2024 by TroyMitchell, All Rights Reserved. 
+ * RISC-V SV39 page-table management and fault-aware user-memory copying.
+ *
+ * User mappings are changed under the owning process mmap_lock.  Kernel page
+ * tables are built before secondary harts consume them; walker allocations
+ * are physical pages and leaf PTEs may use SV39 huge-page levels.
+ *
+ * Copyright (c) 2024 by TroyMitchell, All Rights Reserved.
  */
 #include <palloc.h>
 #include <mem_layout.h>
@@ -22,13 +21,14 @@
 #include <scheduler.h>
 #include <vma.h>
 
-/* Defination in kernel.ld */
+/* Linker-defined end of executable kernel text. */
 extern char etext[];
 
 extern char trampoline[];
 
 static pagedir_t kernel_pgdir;
 
+/* Walk to a requested SV39 level, allocating intermediate tables if allowed. */
 static pte_t *vm_walk(pagedir_t pgdir, uint64 va, int allocate,
 		      int target_level, int *leaf_level)
 {
@@ -36,30 +36,22 @@ static pte_t *vm_walk(pagedir_t pgdir, uint64 va, int allocate,
 	pte_t *pte;
 	pagedir_t next;
 
-        /* The value of va can't be more than MAXVA */
 	if (va >= MAXVA || target_level < 0 ||
 	    target_level > SV39_LEVEL_MAX)
 		return 0;
-        /* 
-                Starting from a high address,
-                retrieve the page table pointed to by the page table entry
-        */
+	/* Descend from the root and optionally allocate intermediate tables. */
 	for (level = SV39_LEVEL_MAX; level > target_level; level--) {
-                /* Get the page table pointed to by the page table entry */
 		pte = &pgdir[PTEX(level, va)];
-                /* If the page-table exists */
 		if (*pte & PTE_V) {
 			if (*pte & (PTE_R | PTE_W | PTE_X)) {
 				if (leaf_level)
 					*leaf_level = level;
 				return pte;
 			}
-                        /* Store the page-table physical address into pgdir. */
 			pgdir = (pagedir_t)PTE2PA(*pte);
                 } else {
 			if (!allocate || (next = palloc_zero()) == 0)
                                 return 0;
-                        /* Store the pte */
 			*pte = PA2PTE(next) | PTE_V;
 			pgdir = next;
                 }
@@ -74,6 +66,7 @@ pte_t *PTE(pagedir_t pgdir, uint64 va, int flag)
 	return vm_walk(pgdir, va, flag, 0, 0);
 }
 
+/* Translate an accessible user page and set accessed/dirty state for writes. */
 static uint64 user_va2pa(pagedir_t pgdir, uint64 va, int permissions)
 {
 	pte_t *pte;
@@ -98,6 +91,7 @@ static uint64 user_va2pa(pagedir_t pgdir, uint64 va, int permissions)
 	       (va & (leaf_size - 1) & ~(PGSIZE - 1));
 }
 
+/* Fault, validate, and pin a user page for one copy operation. */
 static uint64 user_copy_va2pa_pinned(pagedir_t pgdir, uint64 va,
 				     int permissions, int fault,
 				     void **pinned_page)
@@ -130,11 +124,32 @@ static uint64 user_copy_va2pa_pinned(pagedir_t pgdir, uint64 va,
 	}
 }
 
+/**
+ * va2pa() - Find the physical page containing an accessible user address
+ * @pgdir: Stable user page directory.
+ * @va: User virtual address below MAXVA.
+ *
+ * The within-page byte offset is not included. The result is not a retained
+ * page reference and does not establish read or write permission.
+ *
+ * Context: Caller prevents mapping removal; does not allocate or sleep.
+ * Return: Physical 4 KiB page base, or zero if not present and
+ *         user-accessible.
+ */
 uint64 va2pa(pagedir_t pgdir, uint64 va)
 {
 	return user_va2pa(pgdir, va, 0);
 }
 
+/**
+ * kvm_va2pa() - Translate a kernel virtual address including its byte offset
+ * @va: Kernel virtual address below MAXVA.
+ *
+ * Handles huge leaves without allocating or taking a page reference.
+ *
+ * Context: After kernel page-table construction; mappings must remain stable.
+ * Return: Physical byte address, or zero if there is no valid leaf.
+ */
 uint64 kvm_va2pa(uint64 va)
 {
 	pte_t *pte;
@@ -151,6 +166,7 @@ uint64 kvm_va2pa(uint64 va)
 	return PTE2PA(*pte) + (va & (leaf_size - 1));
 }
 
+/* Install one aligned SV39 leaf, rejecting any pre-existing mapping. */
 static int vm_map_leaf(pagedir_t pgdir, uint64 va, uint64 pa, int level,
 		       int perm)
 {
@@ -167,6 +183,7 @@ static int vm_map_leaf(pagedir_t pgdir, uint64 va, uint64 pa, int level,
 	return 0;
 }
 
+/* Cover a range using the largest legal SV39 leaves. */
 static int vm_map_largest(pagedir_t pgdir, uint64 va, uint64 pa,
 			  uint64 size, int perm)
 {
@@ -192,11 +209,9 @@ int vm_map(pagedir_t pgdir, uint64 va, uint64 pa, uint64 size, int perm)
 {
         uint64 start, end;
         pte_t *pte;
-        /* Size can't be 0 */
         if(!size) {
                 PANIC("vm_map size");
         }
-        /* Aligned downward at 4096 bytes */
         start = PGROUNDDOWN(va);
         end = PGROUNDDOWN(va + size - 1);
         
@@ -207,11 +222,9 @@ int vm_map(pagedir_t pgdir, uint64 va, uint64 pa, uint64 size, int perm)
                 */
                 if((pte = PTE(pgdir, start, 1)) == 0)
                         return -1;
-                /* The pte can't include the bit PTE_V */
                 if(*pte & PTE_V) {
                         PANIC("vm_map remap");
                 }
-                /* Set the PTE */
                 *pte = PA2PTE(pa) | PTE_V | perm;
                 if(start == end)
                         break;
@@ -221,22 +234,20 @@ int vm_map(pagedir_t pgdir, uint64 va, uint64 pa, uint64 size, int perm)
         return 0;
 }
 
+/* Build the kernel mapping before it is published in satp. */
 static pagedir_t kernel_pagedir_t_create(void)
 {
 	uint64 finish, start;
 	int i;
 
-        /* Alloc the physical memory for page-table */
 	pagedir_t pgdir = (pagedir_t)palloc_zero();
 
 	if (!pgdir)
 		PANIC("allocate kernel page table");
 
-        /* Map the trampoline */        
         vm_map(pgdir, TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_X | PTE_R);
         /* PLIC */
         vm_map(pgdir, PLIC, PLIC, 0x400000, PTE_R | PTE_W);
-        /* Map the text */
         vm_map(pgdir, KERNEL_BASE, KERNEL_BASE,
                (uint64)etext - KERNEL_BASE, PTE_R | PTE_X);
         /* Map the kernel data and static allocations. */
@@ -259,7 +270,6 @@ static pagedir_t kernel_pagedir_t_create(void)
 
 pagedir_t pagedir_alloc(void)
 {
-        /* Malloc memory for page-talble */
 	pagedir_t pgdir = (pagedir_t)palloc_zero();
         if(!pgdir) {
                 return 0;
@@ -267,13 +277,21 @@ pagedir_t pagedir_alloc(void)
 
         return pgdir;
 }
-/* Recursively free page-table pages. */
+/**
+ * pagedir_free() - Release an empty hierarchy of page-table pages
+ * @pgdir: Non-NULL allocated root whose leaf mappings were removed.
+ *
+ * Recursively frees intermediate tables and the root. A valid remaining leaf
+ * is a fatal caller error; this is not a substitute for releasing mapped
+ * pages.
+ *
+ * Context: Exclusive teardown of a page directory no CPU can still use.
+ */
 void pagedir_free(pagedir_t pgdir)
 {
         int i;
         pte_t pte;
         uint64 sub_pgdir_pa;
-        /* Any PTE occupies 8 bytes */
         for(i = 0; i < PGSIZE / 8; i ++) {
                 pte = pgdir[i];
                 if((pte & PTE_V) && ((pte & (PTE_R|PTE_W|PTE_X)) == 0)) {
@@ -281,10 +299,7 @@ void pagedir_free(pagedir_t pgdir)
                         pagedir_free((pagedir_t)sub_pgdir_pa);
                         pgdir[i] = 0;
                 } else if((pte & PTE_V)) {
-                        /* 
-                                We can't accept a PTE has the flag 'V'.
-                                Clear V in unmap before freeing a page table.
-                        */
+                        /* Leaves must be unmapped before freeing tables. */
                         PANIC("pagedir_free");
                 }
         }
@@ -308,7 +323,7 @@ void vm_unmap(pagedir_t pgdir, uint64 va, uint64 npages, int do_free)
                 if((*pte & PTE_V) == 0) {
                         PANIC("vm_unmap not mapped");
                 }
-                /* Check if the PTE points a page-table */
+                /* A non-leaf entry owns a table, not a mapped data page. */
                 if((*pte & 0x3ff) == PTE_V) {
                         PANIC("vm_unmap not a leaf");
                 }
@@ -327,6 +342,18 @@ int vm_mapped(pagedir_t pgdir, uint64 va)
 	return pte && (*pte & PTE_V) && (*pte & (PTE_R | PTE_W | PTE_X));
 }
 
+/**
+ * vm_unmap_range() - Drop mapped page references across a byte range
+ * @pgdir: User directory containing only 4 KiB leaves in the range.
+ * @va: Virtual start, rounded down to its containing page.
+ * @size: Byte length; zero does nothing. The rounded end must not wrap.
+ *
+ * Skips holes, clears present leaves, drops each physical-page reference, and
+ * flushes online CPUs' TLBs. Intermediate tables remain allocated.
+ *
+ * Context: Caller holds the owning mmap_lock or exclusively owns an
+ *          unpublished page directory.
+ */
 void vm_unmap_range(pagedir_t pgdir, uint64 va, uint64 size)
 {
 	uint64 addr, end, pa;
@@ -348,7 +375,19 @@ void vm_unmap_range(pagedir_t pgdir, uint64 va, uint64 size)
 	cpu_tlb_flush_all();
 }
 
-/* Free page-table from oldsz to newsz */
+/**
+ * vm_dealloc() - Shrink the resident part of a contiguous user allocation
+ * @pgdir: Directory owning 4 KiB user mappings.
+ * @oldsz: Previous allocation end in bytes.
+ * @newsz: Requested smaller byte end.
+ *
+ * Keeps the partial final page containing @newsz, and removes fully trailing
+ * pages. Does not update VMA metadata.
+ *
+ * Context: Caller holds the owning mmap_lock or exclusively owns an
+ *          unpublished page directory.
+ * Return: The new byte end, or @oldsz if @newsz would not shrink it.
+ */
 uint64 vm_dealloc(pagedir_t pgdir, uint64 oldsz, uint64 newsz)
 {
         if(newsz >= oldsz)
@@ -361,6 +400,20 @@ uint64 vm_dealloc(pagedir_t pgdir, uint64 oldsz, uint64 newsz)
 }
 
 
+/**
+ * vm_alloc() - Grow a zero-filled contiguous user allocation
+ * @pgdir: Directory exclusively serialized by the caller.
+ * @oldsz: Old allocation end in bytes.
+ * @newsz: Requested allocation end, with rounding bounded below MAXVA.
+ * @eperm: Additional PTE permission bits; read/user bits are added.
+ *
+ * Allocates missing pages eagerly; callers update VMA metadata separately.
+ * Failure unwinds leaves added by this allocation, not intermediate tables.
+ *
+ * Context: Caller holds the owning mmap_lock or exclusively owns an
+ *          unpublished page directory.
+ * Return: Requested byte end, old end for no growth, or zero on failure.
+ */
 uint64 vm_alloc(pagedir_t pgdir, uint64 oldsz, uint64 newsz, int eperm)
 {
         if(newsz <= oldsz)
@@ -372,12 +425,42 @@ uint64 vm_alloc(pagedir_t pgdir, uint64 oldsz, uint64 newsz, int eperm)
         return newsz;
 }
 
+/**
+ * vm_alloc_range() - Allocate readable user pages with extra permissions
+ * @pgdir: Directory owning the new mappings.
+ * @start: Page-aligned inclusive virtual start.
+ * @end: Page-aligned exclusive virtual end, at most MAXVA.
+ * @eperm: Additional PTE permission bits, such as PTE_W or PTE_X.
+ *
+ * Delegates to vm_alloc_user_range() with PTE_R and PTE_U added.
+ *
+ * Context: Caller holds the owning mmap_lock or exclusively owns an
+ *          unpublished page directory.
+ * Return: Zero on success, -1 for invalid range, conflict, or allocation
+ *         failure.
+ */
 int vm_alloc_range(pagedir_t pgdir, uint64 start, uint64 end, int eperm)
 {
 	return vm_alloc_user_range(pgdir, start, end,
 				   PTE_R | PTE_U | eperm);
 }
 
+/**
+ * vm_alloc_user_range() - Allocate and zero all pages of an unmapped range
+ * @pgdir: Directory owning the resulting page references.
+ * @start: Page-aligned inclusive start.
+ * @end: Page-aligned exclusive end no larger than MAXVA.
+ * @permissions: PTE access bits; at least R/W/X, and W requires R.
+ *
+ * This is eager allocation, not a VMA reservation. Adds PTE_SW_USER for
+ * ownership tracking. Allocation failure drops newly installed leaves but may
+ * retain intermediate tables; callers must not overlap valid hidden mappings.
+ *
+ * Context: Caller holds the owning mmap_lock or exclusively owns an
+ *          unpublished page directory.
+ * Return: Zero on success, -1 for invalid input, existing mapping, or
+ *         exhaustion.
+ */
 int vm_alloc_user_range(pagedir_t pgdir, uint64 start, uint64 end,
 			int permissions)
 {
@@ -411,6 +494,20 @@ fail:
 	return -1;
 }
 
+/**
+ * vm_alloc_load_range() - Merge a loader boundary page then allocate the rest
+ * @pgdir: Unpublished loader page directory.
+ * @start: Page-aligned segment start; only the first page may be shared.
+ * @end: Page-aligned exclusive end no larger than MAXVA.
+ * @permissions: Valid leaf PTE access bits for the load segment.
+ *
+ * An already mapped first page must carry PTE_SW_USER. Permission changes to
+ * that page are not rolled back if allocation of later pages fails; the
+ * loader discards the failed image.
+ *
+ * Context: Exclusive image construction, before user execution.
+ * Return: Zero on success or -1 on invalid layout, conflict, or exhaustion.
+ */
 int vm_alloc_load_range(pagedir_t pgdir, uint64 start, uint64 end,
 			int permissions)
 {
@@ -435,6 +532,17 @@ int vm_alloc_load_range(pagedir_t pgdir, uint64 start, uint64 end,
 	return vm_alloc_user_range(pgdir, start, end, permissions);
 }
 
+/**
+ * vm_user_pa() - Translate an owned user leaf including its byte offset
+ * @pgdir: Stable directory with 4 KiB user leaves.
+ * @va: Virtual address below MAXVA.
+ *
+ * Does not require PTE_U or check requested access permissions; useful for
+ * loader-owned pages hidden from userspace. Takes no page reference.
+ *
+ * Context: Caller keeps the mapping alive; no allocation or sleeping.
+ * Return: Physical byte address, or zero without a valid PTE_SW_USER leaf.
+ */
 uint64 vm_user_pa(pagedir_t pgdir, uint64 va)
 {
 	pte_t *pte;
@@ -448,6 +556,23 @@ uint64 vm_user_pa(pagedir_t pgdir, uint64 va)
 	return PTE2PA(*pte) + (va & (PGSIZE - 1));
 }
 
+/**
+ * vm_protect_user_range() - Apply VMA-derived permissions to resident pages
+ * @pgdir: Process directory whose VMAs already describe the new policy.
+ * @start: Page-aligned inclusive virtual start.
+ * @end: Page-aligned exclusive end; must exceed @start.
+ * @permissions: Valid PTE access bits; hidden pages omit PTE_U.
+ * @vmas: Stable VMA set covering every present user page in the range.
+ *
+ * Skips nonresident pages, preserves COW for shared private pages, and defers
+ * shared-file writable upgrades to the fault path. Missing VMA metadata can
+ * fail after earlier PTE changes; callers must supply complete metadata.
+ * Successful changes flush online CPUs' TLBs.
+ *
+ * Context: Caller holds the owning mmap_lock or exclusively owns an
+ *          unpublished page directory.
+ * Return: Zero on success or -1 on invalid input or inconsistent mappings.
+ */
 int vm_protect_user_range(pagedir_t pgdir, uint64 start, uint64 end,
 			  int permissions, const struct vma_set *vmas)
 {
@@ -536,6 +661,17 @@ int vm_resolve_cow(pagedir_t pgdir, uint64 va)
 	return 1;
 }
 
+/**
+ * vm_clear() - Revoke direct user access to an existing PTE
+ * @pgdir: Directory whose page-table path exists for @va.
+ * @va: Virtual address selecting that PTE.
+ *
+ * Clears only PTE_U. Does not drop a page reference or flush a TLB; the
+ * caller handles publication. A missing page-table path panics.
+ *
+ * Context: Caller holds the owning mmap_lock or exclusively owns an
+ *          unpublished page directory.
+ */
 void vm_clear(pagedir_t pgdir, uint64 va)
 {
         pte_t* pte = PTE(pgdir, va, 0);
@@ -546,6 +682,7 @@ void vm_clear(pagedir_t pgdir, uint64 va)
         }
 }
 
+/* Recursively duplicate page-table structure and establish COW leaf entries. */
 static int vm_copy_walk(pagedir_t old, pagedir_t new, int level,
 			uint64 base, const struct vma_set *vmas,
 			int *parent_changed)
@@ -608,6 +745,7 @@ int vm_copy(pagedir_t old, pagedir_t new, const struct vma_set *vmas)
 	return 0;
 }
 
+/* Recursively count present user leaf pages, including huge leaves. */
 static uint64 vm_user_resident_walk(pagedir_t pgdir, int level)
 {
 	uint64 pages = 0;
@@ -630,11 +768,22 @@ static uint64 vm_user_resident_walk(pagedir_t pgdir, int level)
 	return pages;
 }
 
+/**
+ * vm_user_resident_pages() - Count present user-accessible leaf pages
+ * @pgdir: Stable process directory, or NULL for an empty count.
+ *
+ * Counts only PTE_U leaves, not hidden PTE_SW_USER-only pages or page-table
+ * storage. Does not acquire references.
+ *
+ * Context: Caller prevents concurrent mapping changes; does not sleep.
+ * Return: Resident page count in 4 KiB units, including huge-leaf spans.
+ */
 uint64 vm_user_resident_pages(pagedir_t pgdir)
 {
 	return pgdir ? vm_user_resident_walk(pgdir, SV39_LEVEL_MAX) : 0;
 }
 
+/* Drop user leaves; leave the table hierarchy for pagedir_free(). */
 static void vm_free_user_walk(pagedir_t pgdir, int level)
 {
 	pte_t pte;
@@ -657,11 +806,23 @@ static void vm_free_user_walk(pagedir_t pgdir, int level)
 	}
 }
 
+/**
+ * vm_free_user() - Release owned user leaf pages during teardown
+ * @pgdir: Non-NULL directory containing user 4 KiB mappings.
+ *
+ * Clears PTE_U/PTE_SW_USER leaves and drops their references. Keeps
+ * intermediate tables and kernel-only leaves; does not perform TLB
+ * invalidation. pagedir_free() is a separate final step after remaining
+ * leaves are unmapped.
+ *
+ * Context: Exclusive teardown or serialized removal with no executing users.
+ */
 void vm_free_user(pagedir_t pgdir)
 {
 	vm_free_user_walk(pgdir, 2);
 }
 
+/* Copy to user memory, optionally faulting pages before each chunk. */
 static int copyout_internal(pagedir_t pgdir, uint64 dstva, char *src,
 			    uint64 len, int fault)
 {
@@ -692,11 +853,39 @@ int copyout(pagedir_t pgdir, uint64 dstva, char *src, uint64 len)
 	return copyout_internal(pgdir, dstva, src, len, 1);
 }
 
+/**
+ * copyout_nofault() - Copy only through present writable user mappings
+ * @pgdir: Directory retained by the caller during the copy.
+ * @dstva: User destination byte address.
+ * @src: Kernel source readable for @len bytes.
+ * @len: Byte count; zero leaves pointers untouched.
+ *
+ * Pins and revalidates each physical page but does not fault missing or COW
+ * pages. Holding the mapping stable for an atomic operation remains the
+ * caller's responsibility.
+ *
+ * Context: Non-sleeping copy path; takes page-reference spinlocks.
+ * Return: Zero on a full copy, -1 on an inaccessible page; a prefix may be
+ *         written.
+ */
 int copyout_nofault(pagedir_t pgdir, uint64 dstva, char *src, uint64 len)
 {
 	return copyout_internal(pgdir, dstva, src, len, 0);
 }
 
+/**
+ * vm_prefault_user_write() - Resolve writable pages before a later user copy
+ * @pgdir: Current process directory for fault resolution.
+ * @address: User byte-range start below MAXVA.
+ * @length: Byte length; zero succeeds, wraparound is rejected.
+ *
+ * References are dropped after each check. This does not pin the complete
+ * range or guarantee a later copy cannot fail if a sibling changes mappings.
+ *
+ * Context: Sleepable thread context; do not hold mmap_lock across fault
+ *          resolution.
+ * Return: Zero if each page was writable when checked, otherwise -1.
+ */
 int vm_prefault_user_write(pagedir_t pgdir, uint64 address, uint64 length)
 {
 	void *pinned_page;
@@ -716,6 +905,19 @@ int vm_prefault_user_write(pagedir_t pgdir, uint64 address, uint64 length)
 	return 0;
 }
 
+/**
+ * copyin() - Copy readable user bytes into kernel storage
+ * @pgdir: Retained user directory; faults are resolved only for cur_proc().
+ * @dst: Kernel destination writable for @len bytes.
+ * @srcva: User source byte address.
+ * @len: Requested byte count; zero is a no-op.
+ *
+ * Pins and validates one page at a time. A different process's directory must
+ * already contain the required readable mappings.
+ *
+ * Context: Sleepable thread context for demand faults; do not hold mmap_lock.
+ * Return: Zero on a full copy or -1 after any successfully copied prefix.
+ */
 int copyin(pagedir_t pgdir, char* dst, uint64 srcva, uint64 len)
 {
 	void *pinned_page;
@@ -740,6 +942,20 @@ int copyin(pagedir_t pgdir, char* dst, uint64 srcva, uint64 len)
         return 0;
 }
 
+/**
+ * copyinstr() - Copy a terminated user string within a byte bound
+ * @pgdir: Retained user directory; only the current process may fault.
+ * @dst: Kernel destination with room for @max bytes.
+ * @srcva: User string start address.
+ * @max: Maximum copied bytes including the NUL terminator.
+ *
+ * On failure a copied prefix need not be NUL-terminated. Each page is pinned
+ * only while its bytes are inspected.
+ *
+ * Context: Sleepable thread context for demand faults; do not hold mmap_lock.
+ * Return: Zero including NUL, -1 on inaccessible input or no NUL within the
+ *         bound.
+ */
 int copyinstr(pagedir_t pgdir, char *dst, uint64 srcva, uint64 max)
 {
 	void *pinned_page;
@@ -790,16 +1006,22 @@ void kvm_create(void)
 void kvm_init(void)
 {
         
-        /* Wait page-table operation */
+        /* Publish preceding page-table stores before enabling this root. */
         sfence_vma();
 
-        /* Load it */
         satp_w(MAKE_SATP(kernel_pgdir));
 
-        /* Refresh the 'satp' register */
+        /* Discard translations cached under the previous address space. */
         sfence_vma(); 
 }
 
+/**
+ * kvm_mapping_selftest() - Check direct-map endpoints and huge-leaf selection
+ *
+ * Context: Early boot after kernel mapping construction; does not allocate.
+ * Return: Zero when managed-region endpoints and eligible 1 GiB leaves match,
+ *         else -1.
+ */
 int kvm_mapping_selftest(void)
 {
 	uint64 candidate, end, start;
@@ -823,6 +1045,20 @@ int kvm_mapping_selftest(void)
 	return 0;
 }
 
+/**
+ * kvm_map_mmio() - Add identity-mapped writable kernel MMIO pages
+ * @address: Physical byte address below MAXVA.
+ * @size: Nonzero byte extent; address plus size must not overflow MAXVA.
+ *
+ * Rounds to page boundaries and skips already mapped pages without changing
+ * their attributes. Flushes only the local TLB; caller must arrange safe
+ * publication to other CPUs.
+ *
+ * Context: Serialized driver/early boot setup after kvm_create(); may
+ *          allocate tables.
+ * Return: Zero or -1 on invalid extent or mapping failure; earlier pages
+ *         remain mapped.
+ */
 int kvm_map_mmio(uint64 address, uint64 size)
 {
 	uint64 end, page;

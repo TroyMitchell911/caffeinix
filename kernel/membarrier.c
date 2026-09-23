@@ -1,9 +1,22 @@
+/*
+ * Linux membarrier syscall subset.
+ *
+ * Only private expedited barriers are supported. Registration is per process;
+ * the actual cross-CPU ordering operation is provided by cpu_membarrier().
+ */
 #include <cpu.h>
 #include <linux_uapi.h>
 #include <process.h>
 #include <scheduler.h>
 #include <syscall.h>
 
+/**
+ * sys_linux_membarrier() - Implement Linux private expedited membarrier
+ *
+ * Context: User syscall context.
+ * Return: Zero or a negative Linux errno.
+ * Registration precedes every private expedited barrier for the process.
+ */
 uint64 sys_linux_membarrier(void)
 {
 	process_t process = cur_proc();

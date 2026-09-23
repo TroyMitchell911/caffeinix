@@ -1,3 +1,4 @@
+/* VFS-facing constants and operation vector for built-in character devices. */
 #ifndef __CAFFEINIX_KERNEL_DEVICE_H
 #define __CAFFEINIX_KERNEL_DEVICE_H
 

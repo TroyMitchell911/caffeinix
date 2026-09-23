@@ -1,3 +1,7 @@
+/*
+ * Guest terminal job-control fixture coordinated by the interactive QEMU
+ * harness.
+ */
 #include <errno.h>
 #include <poll.h>
 #include <signal.h>

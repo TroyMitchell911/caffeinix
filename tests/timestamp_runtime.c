@@ -1,3 +1,7 @@
+/*
+ * Guest inode timestamp tests: explicit/automatic updates, nanoseconds,
+ * symlinks, dirfd lookup, UTIME_OMIT, and credential-change races.
+ */
 #define _GNU_SOURCE
 
 #include <errno.h>

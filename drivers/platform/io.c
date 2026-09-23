@@ -1,3 +1,7 @@
+/*
+ * Identity mappings for platform MMIO resources. Callers serialize setup;
+ * mappings and any allocated page tables persist after iounmap().
+ */
 #include <io.h>
 #include <vm.h>
 

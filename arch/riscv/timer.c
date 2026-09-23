@@ -1,3 +1,4 @@
+/* Per-hart SBI timer programming using the DT timebase clock. */
 #include <cpu.h>
 #include <debug.h>
 #include <kernel_config.h>

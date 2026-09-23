@@ -1,3 +1,6 @@
+/*
+ * Shared-object fixture for constructor, TLS, relocation, and destructor tests.
+ */
 static int constructor_value;
 static __thread int fixture_tls = 29;
 

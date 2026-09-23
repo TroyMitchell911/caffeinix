@@ -1,12 +1,7 @@
 /*
- * @Author: TroyMitchell
- * @Date: 2024-05-11
- * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-16
- * @FilePath: /caffeinix/arch/riscv/include/typedefs.h
- * @Description: 
- * Words are cheap so I do.
- * Copyright (c) 2024 by TroyMitchell, All Rights Reserved. 
+ * Freestanding fixed-width scalar aliases used before any C library exists.
+ *
+ * Copyright (c) 2024 by TroyMitchell, All Rights Reserved.
  */
 #ifndef __CAFFEINIX_ARCH_RISCV_TYPEDEFS_H
 #define __CAFFEINIX_ARCH_RISCV_TYPEDEFS_H

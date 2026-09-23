@@ -1,3 +1,10 @@
+/*
+ * Block-device VFS files.
+ *
+ * Adapt registered block devices to ordinary VFS file operations.  Per-open
+ * bounce buffers serialize block I/O and keep user-copy failures from being
+ * passed to a driver.  This layer does not cache blocks or own the device.
+ */
 #include <block_device.h>
 #include <linux_uapi.h>
 #include <palloc.h>
@@ -10,6 +17,7 @@ struct block_device_file {
 	void *buffer;
 };
 
+/* Open and retain a block device, allocating a per-open bounce buffer. */
 static int block_file_open(struct vfs_inode *inode, struct vfs_file *file)
 {
 	struct block_device_file *open;
@@ -46,6 +54,9 @@ static int block_file_open(struct vfs_inode *inode, struct vfs_file *file)
 	return VFS_OK;
 }
 
+/*
+ * Return the bounce buffer and device reference acquired by block_file_open().
+ */
 static void block_file_release(struct vfs_file *file)
 {
 	struct block_device_file *open = file->private;
@@ -58,6 +69,9 @@ static void block_file_release(struct vfs_file *file)
 	file->private = 0;
 }
 
+/*
+ * Perform aligned block reads through the per-open, serialized bounce buffer.
+ */
 static int64 block_file_read_locked(struct vfs_file *file,
 				    int user_destination,
 				    uint64 destination, uint64 count,
@@ -100,6 +114,7 @@ static int64 block_file_read_locked(struct vfs_file *file,
 	return total;
 }
 
+/* Serialize reads around the per-open bounce buffer. */
 static int64 block_file_read(struct vfs_file *file, int user_destination,
 			     uint64 destination, uint64 count,
 			     uint64 *position)
@@ -116,6 +131,9 @@ static int64 block_file_read(struct vfs_file *file, int user_destination,
 	return result;
 }
 
+/*
+ * Perform aligned block writes through the per-open, serialized bounce buffer.
+ */
 static int64 block_file_write_locked(struct vfs_file *file, int user_source,
 				     uint64 source, uint64 count,
 				     uint64 *position)
@@ -161,6 +179,7 @@ static int64 block_file_write_locked(struct vfs_file *file, int user_source,
 	return total;
 }
 
+/* Serialize writes around the per-open bounce buffer. */
 static int64 block_file_write(struct vfs_file *file, int user_source,
 			      uint64 source, uint64 count, uint64 *position)
 {
@@ -178,6 +197,7 @@ static int64 block_file_write(struct vfs_file *file, int user_source,
 	return result;
 }
 
+/* Translate this control request to the selected backend operation. */
 static int64 block_file_ioctl(struct vfs_file *file, uint64 request,
 			      uint64 argument)
 {
@@ -201,6 +221,7 @@ static int64 block_file_ioctl(struct vfs_file *file, uint64 request,
 	return VFS_ERR_NOTTY;
 }
 
+/* Flush the retained block device. */
 static int block_file_sync(struct vfs_file *file)
 {
 	struct block_device_file *open = file->private;

@@ -1,3 +1,8 @@
+/*
+ * Polling console registry and early-to-normal console handoff. Drivers
+ * retain ownership of registered console objects; implementations in
+ * console.c define registration and output lifetime constraints.
+ */
 #ifndef __CAFFEINIX_KERNEL_CONSOLE_H
 #define __CAFFEINIX_KERNEL_CONSOLE_H
 

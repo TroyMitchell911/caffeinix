@@ -1,12 +1,11 @@
 /*
- * @Author: TroyMitchell
- * @Date: 2024-05-11
- * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-27
- * @FilePath: /caffeinix/kernel/palloc.c
- * @Description: 
- * Words are cheap so I do.
- * Copyright (c) 2024 by TroyMitchell, All Rights Reserved. 
+ * Physical-page allocator and compact kernel heap implementation.
+ *
+ * Firmware memory ranges are normalized, reserved kernel memory is excluded,
+ * and per-page references are kept out of managed pages.  page_lock protects
+ * the buddy allocator and references; heap_lock protects heap page bitmaps.
+ *
+ * Copyright (c) 2024 by TroyMitchell, All Rights Reserved.
  */
 #include <buddy.h>
 #include <palloc.h>
@@ -82,6 +81,7 @@ extern char end[];
 
 static void palloc_heap_alignment_selftest(void);
 
+/* Locate out-of-line reference storage for a managed physical page. */
 static struct page_ref_region *page_ref_find(uint64 address)
 {
 	int index;
@@ -95,6 +95,7 @@ static struct page_ref_region *page_ref_find(uint64 address)
 	return 0;
 }
 
+/* Validate a page address before returning its reference-count slot. */
 static uint32 *page_ref_pointer(void *page)
 {
 	struct page_ref_region *region;
@@ -135,6 +136,7 @@ uint64 palloc_free_pages(void)
 	return pages;
 }
 
+/* Derive allocator regions and metadata reservations from device-tree RAM. */
 static void palloc_discover_memory(void)
 {
 	struct of_memory_range range;
@@ -190,7 +192,6 @@ static void palloc_discover_memory(void)
 	heap_start = kernel_end;
 }
 
-/* Init the physical memory */
 void palloc_init(void)
 {
 	uint64 finish, metadata_bytes, pages, refs_offset, start;
@@ -379,12 +380,7 @@ void *palloc_zero(void)
 	return alloc_pages(0, PALLOC_ZERO);
 }
 
-/**
- * @description: Malloc core function: Set the bitmap of page.
- * @param {page_t} page: Where the memory that will be alloced belongs to 
- * @param {uint64} blocks: The blocks number of memory that will be alloced 
- * @return {*} -1: Failed Other: offset in page
- */
+/* Reserve @blocks aligned heap blocks in one pool page, if possible. */
 static uint64 malloc_core(page_t page, uint64 blocks)
 {
         int i, j, mask;
@@ -411,7 +407,6 @@ static uint64 malloc_core(page_t page, uint64 blocks)
                                                 page->bitmap[k / 8] |= (0x80 >> (k % 8));
                                         }
                                         page->used += blocks;
-                                        // printf("malloc_core: %d->%d\n", start, start + blocks);
                                         return start + PAGE_BLOCK;
                                 }
                         } else {
@@ -424,13 +419,7 @@ static uint64 malloc_core(page_t page, uint64 blocks)
         return -1;
 }
 
-/**
- * @description: Free core function: Clean the bitmap of page.
- * @param {page_t} page: Where the memory that will be freed belongs to 
- * @param {char*} start: The beginning of memory address
- * @param {uint64} blocks: The blocks number of memory that will be freed 
- * @return {*}
- */
+/* Clear a heap allocation and return an empty pool page to palloc. */
 static void free_core(page_t page, char* start, uint64 blocks)
 {
         uint64 s, e, i;
@@ -439,8 +428,6 @@ static void free_core(page_t page, char* start, uint64 blocks)
         s = (uint64)start - (uint64)page - PAGE_BLOCK;
         e = s + blocks;
 
-        // printf("free_core: %d->%d\n", e, s);
-
         for(i = s; i < e; i++) {
                 page->bitmap[i / 8] &= ~((0x80) >> (i % 8));
         }
@@ -448,7 +435,6 @@ static void free_core(page_t page, char* start, uint64 blocks)
         page->used -= blocks;
 
         if(page->used == 0) {
-                /* Free the page */
                 if(page != pool.list) {
                        for(pg = pool.list; pg; pg = pg->next) {
                                 if(pg->next == page) {
@@ -468,11 +454,7 @@ static void free_core(page_t page, char* start, uint64 blocks)
         }
 }
 
-/**
- * @description: Malloc a page
-                 This function will insert page to pool.list
- * @return {*} The pointer of page that be alloced
- */
+/* Allocate and link a zeroed heap page while heap_lock is held. */
 static page_t malloc_page(void)
 {
         page_t page;
@@ -488,13 +470,6 @@ static page_t malloc_page(void)
         return page;
 }
 
-/**
- * @description: Malloc memory (byte-level).
-                 This function will call malloc_page to grow up
-                 if the pool does not have pages that have enough space.
- * @param {uint64} size: How much memory
- * @return {*}: The pointer of memory that be alloced
- */
 void* malloc(uint64 size)
 {
 	uint64 allocation_blocks, use_blocks;
@@ -529,13 +504,10 @@ re:
 	}
                 
         
-        /* Get the memory that the caller uses */
         info = (block_info_t)(ret + (uint64)page);
         
-        /* Get the memory of block_info */
         p = (void*)((uint64)info + INFO_BLOCK * MIN_SIZE); 
 
-        /* Change information */
 	info->used = allocation_blocks - INFO_BLOCK;
         info->magic = MAGIC_NUMBER;
         info->addr = p;
@@ -559,11 +531,6 @@ void* calloc(size_t count, size_t size)
 	return pointer;
 }
 
-/**
- * @description: Free memory. (The address of memory has to be alloced by malloc).
- * @param {void*} p: The address of pointer
- * @return {*}
- */
 void free(void* p)
 {
         block_info_t info;
@@ -579,7 +546,6 @@ void free(void* p)
            (char*)p > (char*)page + PGSIZE || 
            p != info->addr || 
            info->magic != MAGIC_NUMBER) {
-                /* Illegal address */
                 printf("free: Illegal address\n");
 		spinlock_release(&heap_lock);
                 return;
@@ -589,6 +555,7 @@ void free(void* p)
 	spinlock_release(&heap_lock);
 }
 
+/* Assert the heap returns pointers aligned for all supported scalar objects. */
 static void palloc_heap_alignment_selftest(void)
 {
 	static const uint64 sizes[] = { 1, 3, 7, 15, 17, 31, 33, 127 };

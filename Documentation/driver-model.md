@@ -20,6 +20,38 @@ FDT/OF -> platform bus -> NS16550 driver -> UART core -> TTY core
 - The character-device core owns major/minor ranges and operation dispatch.
 - devfs exposes names registered by character drivers.
 
+## Lifetime and probe rules
+
+The driver core retains a registration reference on every device. Callers
+acquire additional references with `device_get()` only while the device and bus
+are live and acquisition is serialized against unregistration. It is not a
+concurrent lookup primitive: its registration check precedes the bus lock.
+Pair successful acquisition with `device_put()`. The reference protects device
+storage but does not prevent driver removal or keep driver-private state alive.
+The release callback is the sole authority that may free device storage.
+Bus locks protect registry state only: match is checked while
+the bus is stable, then `probe()` and `remove()` run without that lock so they
+may sleep.  Drivers must leave no asynchronous callback or DMA request
+referencing private state when remove returns.
+
+Platform enumeration happens once from available FDT nodes.  `reg` properties
+become inclusive memory resources and `interrupts` becomes IRQ resources.
+`ioremap()` installs missing identity mappings and may allocate page tables;
+callers serialize this setup after kernel page-table creation, outside IRQ
+context. It does not choose a separate virtual address, and `iounmap()` leaves
+the mappings intact. The initial IRQ implementation has exclusive handlers and
+routes enabled sources through the boot-hart PLIC context.
+
+## TTY and UART rules
+
+The UART core owns its bounded transmit ring under the port lock.  Hardware
+drivers supply register operations and acknowledge their controller-specific
+IRQ state before returning.  The TTY core owns termios and input state under
+its TTY lock; process-table state owns foreground process groups.  Blocking
+user writes may return short counts when a pending signal interrupts a full
+transmit queue.  A serial driver must stop receive/transmit IRQs before it
+unregisters the TTY so no callback can retain the port.
+
 The polling early console is selected from `/chosen/stdout-path` before page
 tables, allocation, and interrupts are ready. The matching normal UART takes
 over kernel output after its platform probe. `/dev/console` forwards user I/O
@@ -58,3 +90,11 @@ A new UART controller needs a hardware driver with `struct uart_operations`.
 It reuses the platform, IRQ, UART, TTY, character-device, console, and devfs
 layers. The initial IRQ implementation routes external device interrupts to
 the boot hart and does not support shared IRQs or hot removal.
+
+## Tests
+
+`make -C tests qemu` runs boot-time driver-core, platform, UART, block, and
+VirtIO selftests before exercising `/dev`, terminal, storage, and networking
+runtime paths.  See `Documentation/block-devices.md` for block request
+lifetime details and `Documentation/networking/virtio.md` for DMA and queue
+ordering.

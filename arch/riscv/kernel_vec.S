@@ -1,3 +1,7 @@
+/*
+ * Kernel trap vector: preserves registers before C handling and keeps tp as
+ * the logical CPU ID. Stack-slot alignment detects guard-page overflow.
+ */
 #include <mem_layout.h>
 
 .global kernel_trap

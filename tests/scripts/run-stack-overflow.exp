@@ -1,4 +1,6 @@
 #!/usr/bin/expect -f
+# QEMU regression proving protected kernel stacks fault rather than corrupt
+# data.
 
 proc abort_test {message} {
 	puts stderr "Kernel stack guard test failed: $message"

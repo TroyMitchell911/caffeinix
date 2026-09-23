@@ -1,3 +1,4 @@
+/* Guest DNS resolver regression using the host-local QEMU network fixture. */
 #include <arpa/inet.h>
 #include <errno.h>
 #include <netdb.h>

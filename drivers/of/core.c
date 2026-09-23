@@ -1,7 +1,45 @@
+/* Read-only flattened Device Tree facade over imported libfdt boot data. */
 #include <libfdt.h>
 #include <mystring.h>
 #include <of.h>
 #include <resource.h>
+
+/*
+ * Internal helpers: of_read_number() decodes big-endian cells; of_cells()
+ * validates cell-count properties; of_reg_info() validates a reg layout; and
+ * of_node_is_type() identifies FDT node types.  They operate only on the
+ * immutable validated boot blob.
+ *
+ * of_init() - Validate and index the boot FDT.
+ * of_fdt() - Return the immutable indexed FDT blob.
+ * of_root_node() - Return the indexed root node.
+ * of_machine_model() - Return the optional root model string.
+ * of_next_node() - Iterate the fixed node index in preorder.
+ * of_find_node_by_path() - Find an indexed absolute FDT path.
+ * of_get_property() - Return an immutable raw property and length.
+ * of_property_count_u32() - Count complete 32-bit property cells.
+ * of_property_read_u32_index() - Read one big-endian property cell.
+ * of_property_read_u32() - Read property cell zero.
+ * of_node_phandle() - Return a node's phandle or zero.
+ * of_find_node_by_phandle() - Resolve a non-zero phandle.
+ * of_device_is_available() - Interpret an FDT status property.
+ * of_device_is_compatible() - Test a compatible string list.
+ * of_node_path() - Copy the absolute path into caller storage.
+ * of_stdout_node() - Resolve /chosen stdout-path and its alias.
+ * of_address_to_resource() - Convert one reg tuple to inclusive resource.
+ * of_irq_get() - Return one legacy interrupt cell.
+ * of_alias_get_id() - Find a numeric alias for a node and stem.
+ * of_memory_range_count() - Count usable memory reg entries.
+ * of_memory_range_get() - Return one usable memory range.
+ * of_reserved_tree_range_count() - Count reserved-memory tree entries.
+ * of_reserved_memory_range_count() - Count memreserve and tree ranges.
+ * of_reserved_memory_range_get() - Return one reserved physical range.
+ * of_cpu_count() - Count available CPU nodes.
+ * of_cpu_get() - Return one CPU node and its hart ID.
+ *
+ * All exported OF accessors are non-sleeping, accept only indexed nodes, and
+ * return negative values or NULL for malformed/missing optional data.
+ */
 
 #define OF_DTB_MAX_SIZE (64 * 1024)
 
@@ -10,6 +48,7 @@ static struct device_node of_nodes[OF_MAX_NODES];
 static const void *of_blob;
 static int of_node_count;
 
+/* Decode a bounded sequence of big-endian FDT address or size cells. */
 static uint64 of_read_number(const fdt32_t *cells, int count)
 {
 	uint64 value = 0;
@@ -19,6 +58,7 @@ static uint64 of_read_number(const fdt32_t *cells, int count)
 	return value;
 }
 
+/* Read a node's one-cell address or size declaration with a default. */
 static int of_cells(const struct device_node *node, const char *name,
 		    int default_value)
 {
@@ -35,6 +75,7 @@ static int of_cells(const struct device_node *node, const char *name,
 	return value <= 2 ? value : -1;
 }
 
+/* Validate a parent's address/size cells and a child's reg property layout. */
 static int of_reg_info(const struct device_node *node, const fdt32_t **reg,
 		       int *address_cells, int *size_cells)
 {
@@ -54,6 +95,7 @@ static int of_reg_info(const struct device_node *node, const fdt32_t **reg,
 	return length / (entry_cells * sizeof(**reg));
 }
 
+/* Test a node's device_type property without accepting malformed strings. */
 static int of_node_is_type(const struct device_node *node, const char *type)
 {
 	const char *property;

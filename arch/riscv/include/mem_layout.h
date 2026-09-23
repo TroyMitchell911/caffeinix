@@ -1,12 +1,10 @@
 /*
- * @Author: TroyMitchell
- * @Date: 2024-04-18
- * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-15
- * @FilePath: /caffeinix/arch/riscv/include/mem_layout.h
- * @Description: 
- * Words are cheap so I do.
- * Copyright (c) 2024 by TroyMitchell, All Rights Reserved. 
+ * RISC-V virtual-address layout shared by boot, traps, and user mappings.
+ *
+ * Constants below reserve non-overlapping windows for randomized user images,
+ * the user stack, and per-thread kernel stacks.  They are SV39 addresses.
+ *
+ * Copyright (c) 2024 by TroyMitchell, All Rights Reserved.
  */
 #ifndef __CAFFEINIX_ARCH_RISCV_MEM_LAYOUT_H
 #define __CAFFEINIX_ARCH_RISCV_MEM_LAYOUT_H

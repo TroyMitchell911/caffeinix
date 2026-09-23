@@ -1,3 +1,8 @@
+/*
+ * Severity-tagged bounded log records and sequence-based readers. Records are
+ * copied out, never lent to readers; callers must tolerate ring overwrite
+ * between sequence queries.
+ */
 #ifndef __CAFFEINIX_KERNEL_PRINTK_H
 #define __CAFFEINIX_KERNEL_PRINTK_H
 

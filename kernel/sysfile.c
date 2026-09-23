@@ -1,3 +1,10 @@
+/*
+ * Linux RISC-V file-system system-call translation.
+ *
+ * This file validates Linux UAPI arguments, performs user-memory copies, and
+ * translates VFS results to Linux errno values.  Namespace policy belongs to
+ * VFS; this layer must preserve Linux partial-I/O and restart semantics.
+ */
 #include <file.h>
 #include <ktime.h>
 #include <linux_uapi.h>
@@ -12,6 +19,7 @@
 
 extern int exec_linux(char *path, char **argv, char **envp);
 
+/* Copy a NULL-terminated user vector into one page per string. */
 static int copy_user_vector(uint64 user_vector, char **vector)
 {
 	uint64 user_string;
@@ -37,6 +45,7 @@ static int copy_user_vector(uint64 user_vector, char **vector)
 	return -LINUX_E2BIG;
 }
 
+/* Free the page-backed strings allocated by copy_user_vector(). */
 static void free_user_vector(char **vector)
 {
 	int i;
@@ -45,6 +54,9 @@ static void free_user_vector(char **vector)
 		pfree(vector[i]);
 }
 
+/*
+ * Map the supported Linux open flags to VFS flags, rejecting bad access mode.
+ */
 static int linux_open_flags(int linux_flags, uint32 *vfs_flags)
 {
 	uint32 flags = 0;
@@ -80,6 +92,7 @@ static int linux_open_flags(int linux_flags, uint32 *vfs_flags)
 	return 0;
 }
 
+/* Pack Caffeinix major/minor values into Linux's split device encoding. */
 static uint64 linux_encode_device(uint64 device)
 {
 	uint32 major = VFS_DEVICE_MAJOR(device);
@@ -90,6 +103,7 @@ static uint64 linux_encode_device(uint64 device)
 	       ((uint64)(major & ~0xfff) << 32);
 }
 
+/* Populate Linux stat fields and file-type bits from VFS metadata. */
 static void make_linux_stat(struct linux_stat *linux_stat,
 			    struct vfs_stat *vfs_stat)
 {
@@ -126,6 +140,7 @@ static void make_linux_stat(struct linux_stat *linux_stat,
 		linux_stat->mode |= LINUX_S_IFREG;
 }
 
+/* Copy VFS filesystem statistics into the Linux ABI layout. */
 static void make_linux_statfs(struct linux_statfs *linux_stat,
 			      const struct vfs_statfs *vfs_stat)
 {
@@ -142,6 +157,7 @@ static void make_linux_statfs(struct linux_statfs *linux_stat,
 	linux_stat->flags = vfs_stat->flags;
 }
 
+/* Limit mount operations to processes whose effective UID is root. */
 static int linux_mount_allowed(void)
 {
 	struct process_credentials credentials;
@@ -150,6 +166,17 @@ static int linux_mount_allowed(void)
 	return credentials.euid == 0;
 }
 
+/**
+ * sys_linux_mount() - Handle the Linux RISC-V mount system call
+ *
+ * Arguments are read from the current RISC-V user trapframe registers.
+ * User pointers are validated before VFS access or result copying.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative Linux result or a negative Linux errno.
+ */
 uint64 sys_linux_mount(void)
 {
 	char source[VFS_PATH_MAX];
@@ -197,6 +224,17 @@ uint64 sys_linux_mount(void)
 	return result < 0 ? linux_error(result) : 0;
 }
 
+/**
+ * sys_linux_umount2() - Handle the Linux RISC-V umount2 system call
+ *
+ * Arguments are read from the current RISC-V user trapframe registers.
+ * User pointers are validated before VFS access or result copying.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative Linux result or a negative Linux errno.
+ */
 uint64 sys_linux_umount2(void)
 {
 	char target[VFS_PATH_MAX];
@@ -211,6 +249,17 @@ uint64 sys_linux_umount2(void)
 	return result < 0 ? linux_error(result) : 0;
 }
 
+/**
+ * sys_linux_openat() - Handle the Linux RISC-V openat system call
+ *
+ * Arguments are read from the current RISC-V user trapframe registers.
+ * User pointers are validated before VFS access or result copying.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative Linux result or a negative Linux errno.
+ */
 uint64 sys_linux_openat(void)
 {
 	char path[MAXPATH];
@@ -236,6 +285,17 @@ uint64 sys_linux_openat(void)
 	return fd;
 }
 
+/**
+ * sys_linux_ftruncate() - Handle the Linux RISC-V ftruncate system call
+ *
+ * Arguments are read from the current RISC-V user trapframe registers.
+ * User pointers are validated before VFS access or result copying.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative Linux result or a negative Linux errno.
+ */
 uint64 sys_linux_ftruncate(void)
 {
 	uint64 length;
@@ -251,6 +311,18 @@ uint64 sys_linux_ftruncate(void)
 	return result < 0 ? linux_error(result) : 0;
 }
 
+/* Adjust backend file extent while preserving the VFS metadata contract. */
+/**
+ * sys_linux_truncate() - Handle the Linux RISC-V truncate system call
+ *
+ * Arguments are read from the current RISC-V user trapframe registers.
+ * User pointers are validated before VFS access or result copying.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative Linux result or a negative Linux errno.
+ */
 uint64 sys_linux_truncate(void)
 {
 	char path[MAXPATH];
@@ -268,6 +340,17 @@ uint64 sys_linux_truncate(void)
 	return result < 0 ? linux_error(result) : 0;
 }
 
+/**
+ * sys_linux_fallocate() - Handle the Linux RISC-V fallocate system call
+ *
+ * Arguments are read from the current RISC-V user trapframe registers.
+ * User pointers are validated before VFS access or result copying.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative Linux result or a negative Linux errno.
+ */
 uint64 sys_linux_fallocate(void)
 {
 	uint64 offset, length;
@@ -286,6 +369,17 @@ uint64 sys_linux_fallocate(void)
 	return result < 0 ? linux_error(result) : 0;
 }
 
+/**
+ * sys_linux_close() - Handle the Linux RISC-V close system call
+ *
+ * Arguments are read from the current RISC-V user trapframe registers.
+ * User pointers are validated before VFS access or result copying.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative Linux result or a negative Linux errno.
+ */
 uint64 sys_linux_close(void)
 {
 	int fd, result;
@@ -295,6 +389,17 @@ uint64 sys_linux_close(void)
 	return result < 0 ? linux_error(result) : 0;
 }
 
+/**
+ * sys_linux_pipe2() - Handle the Linux RISC-V pipe2 system call
+ *
+ * Arguments are read from the current RISC-V user trapframe registers.
+ * User pointers are validated before VFS access or result copying.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative Linux result or a negative Linux errno.
+ */
 uint64 sys_linux_pipe2(void)
 {
 	process_t process = cur_proc();
@@ -323,6 +428,18 @@ uint64 sys_linux_pipe2(void)
 	return 0;
 }
 
+/* Implement the backend read operation without changing unrelated state. */
+/**
+ * sys_linux_read() - Handle the Linux RISC-V read system call
+ *
+ * Arguments are read from the current RISC-V user trapframe registers.
+ * User pointers are validated before VFS access or result copying.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative Linux result or a negative Linux errno.
+ */
 uint64 sys_linux_read(void)
 {
 	uint64 address;
@@ -337,6 +454,18 @@ uint64 sys_linux_read(void)
 	return result < 0 ? linux_error(result) : result;
 }
 
+/* Implement the backend write operation and preserve partial-I/O results. */
+/**
+ * sys_linux_write() - Handle the Linux RISC-V write system call
+ *
+ * Arguments are read from the current RISC-V user trapframe registers.
+ * User pointers are validated before VFS access or result copying.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative Linux result or a negative Linux errno.
+ */
 uint64 sys_linux_write(void)
 {
 	uint64 address;
@@ -351,6 +480,17 @@ uint64 sys_linux_write(void)
 	return result < 0 ? linux_error(result) : result;
 }
 
+/**
+ * sys_linux_pread64() - Handle the Linux RISC-V pread64 system call
+ *
+ * Arguments are read from the current RISC-V user trapframe registers.
+ * User pointers are validated before VFS access or result copying.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative Linux result or a negative Linux errno.
+ */
 uint64 sys_linux_pread64(void)
 {
 	struct vfs_file *file;
@@ -371,6 +511,17 @@ uint64 sys_linux_pread64(void)
 	return result < 0 ? linux_error(result) : result;
 }
 
+/**
+ * sys_linux_pwrite64() - Handle the Linux RISC-V pwrite64 system call
+ *
+ * Arguments are read from the current RISC-V user trapframe registers.
+ * User pointers are validated before VFS access or result copying.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative Linux result or a negative Linux errno.
+ */
 uint64 sys_linux_pwrite64(void)
 {
 	struct vfs_file *file;
@@ -391,6 +542,17 @@ uint64 sys_linux_pwrite64(void)
 	return result < 0 ? linux_error(result) : result;
 }
 
+/**
+ * sys_linux_lseek() - Handle the Linux RISC-V lseek system call
+ *
+ * Arguments are read from the current RISC-V user trapframe registers.
+ * User pointers are validated before VFS access or result copying.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative Linux result or a negative Linux errno.
+ */
 uint64 sys_linux_lseek(void)
 {
 	uint64 result;
@@ -404,6 +566,17 @@ uint64 sys_linux_lseek(void)
 	return status < 0 ? linux_error(status) : result;
 }
 
+/**
+ * sys_linux_fstat() - Handle the Linux RISC-V fstat system call
+ *
+ * Arguments are read from the current RISC-V user trapframe registers.
+ * User pointers are validated before VFS access or result copying.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative Linux result or a negative Linux errno.
+ */
 uint64 sys_linux_fstat(void)
 {
 	struct linux_stat linux_stat;
@@ -424,6 +597,17 @@ uint64 sys_linux_fstat(void)
 	return 0;
 }
 
+/**
+ * sys_linux_statfs() - Handle the Linux RISC-V statfs system call
+ *
+ * Arguments are read from the current RISC-V user trapframe registers.
+ * User pointers are validated before VFS access or result copying.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative Linux result or a negative Linux errno.
+ */
 uint64 sys_linux_statfs(void)
 {
 	struct linux_statfs linux_stat;
@@ -446,6 +630,17 @@ uint64 sys_linux_statfs(void)
 	return 0;
 }
 
+/**
+ * sys_linux_fstatfs() - Handle the Linux RISC-V fstatfs system call
+ *
+ * Arguments are read from the current RISC-V user trapframe registers.
+ * User pointers are validated before VFS access or result copying.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative Linux result or a negative Linux errno.
+ */
 uint64 sys_linux_fstatfs(void)
 {
 	struct linux_statfs linux_stat;
@@ -466,6 +661,17 @@ uint64 sys_linux_fstatfs(void)
 	return 0;
 }
 
+/**
+ * sys_linux_newfstatat() - Handle the Linux RISC-V newfstatat system call
+ *
+ * Arguments are read from the current RISC-V user trapframe registers.
+ * User pointers are validated before VFS access or result copying.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative Linux result or a negative Linux errno.
+ */
 uint64 sys_linux_newfstatat(void)
 {
 	struct linux_stat linux_stat;
@@ -503,6 +709,7 @@ struct linux_getdents_context {
 	int used;
 };
 
+/* Emit one aligned linux_dirent64 record into the caller's buffer. */
 static int linux_emit_dirent(const struct vfs_dirent *dirent, void *opaque)
 {
 	struct {
@@ -534,6 +741,17 @@ static int linux_emit_dirent(const struct vfs_dirent *dirent, void *opaque)
 	return VFS_OK;
 }
 
+/**
+ * sys_linux_getdents64() - Handle the Linux RISC-V getdents64 system call
+ *
+ * Arguments are read from the current RISC-V user trapframe registers.
+ * User pointers are validated before VFS access or result copying.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative Linux result or a negative Linux errno.
+ */
 uint64 sys_linux_getdents64(void)
 {
 	struct linux_getdents_context context = {
@@ -567,6 +785,17 @@ uint64 sys_linux_getdents64(void)
 	return response;
 }
 
+/**
+ * sys_linux_fcntl() - Handle the Linux RISC-V fcntl system call
+ *
+ * Arguments are read from the current RISC-V user trapframe registers.
+ * User pointers are validated before VFS access or result copying.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative Linux result or a negative Linux errno.
+ */
 uint64 sys_linux_fcntl(void)
 {
 	uint32 file_flags;
@@ -620,6 +849,17 @@ uint64 sys_linux_fcntl(void)
 	return -LINUX_EINVAL;
 }
 
+/**
+ * sys_linux_mkdirat() - Handle the Linux RISC-V mkdirat system call
+ *
+ * Arguments are read from the current RISC-V user trapframe registers.
+ * User pointers are validated before VFS access or result copying.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative Linux result or a negative Linux errno.
+ */
 uint64 sys_linux_mkdirat(void)
 {
 	char path[MAXPATH];
@@ -637,6 +877,7 @@ uint64 sys_linux_mkdirat(void)
 	return result < 0 ? linux_error(result) : 0;
 }
 
+/* Unpack Linux's split device encoding into Caffeinix major/minor fields. */
 static uint64 linux_decode_device(uint64 device)
 {
 	uint32 major = ((device >> 8) & 0xfff) |
@@ -646,6 +887,7 @@ static uint64 linux_decode_device(uint64 device)
 	return VFS_MAKE_DEVICE(major, minor);
 }
 
+/* Restrict device-node creation to root and the supported device classes. */
 static int linux_mknod_allowed(void)
 {
 	struct process_credentials credentials;
@@ -654,6 +896,17 @@ static int linux_mknod_allowed(void)
 	return credentials.euid == 0;
 }
 
+/**
+ * sys_linux_mknodat() - Handle the Linux RISC-V mknodat system call
+ *
+ * Arguments are read from the current RISC-V user trapframe registers.
+ * User pointers are validated before VFS access or result copying.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative Linux result or a negative Linux errno.
+ */
 uint64 sys_linux_mknodat(void)
 {
 	char path[MAXPATH];
@@ -700,6 +953,17 @@ uint64 sys_linux_mknodat(void)
 	return result < 0 ? linux_error(result) : 0;
 }
 
+/**
+ * sys_linux_fchmodat() - Handle the Linux RISC-V fchmodat system call
+ *
+ * Arguments are read from the current RISC-V user trapframe registers.
+ * User pointers are validated before VFS access or result copying.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative Linux result or a negative Linux errno.
+ */
 uint64 sys_linux_fchmodat(void)
 {
 	struct vfs_iattr attributes = { .mask = VFS_ATTR_MODE };
@@ -718,6 +982,17 @@ uint64 sys_linux_fchmodat(void)
 	return result < 0 ? linux_error(result) : 0;
 }
 
+/**
+ * sys_linux_fchmod() - Handle the Linux RISC-V fchmod system call
+ *
+ * Arguments are read from the current RISC-V user trapframe registers.
+ * User pointers are validated before VFS access or result copying.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative Linux result or a negative Linux errno.
+ */
 uint64 sys_linux_fchmod(void)
 {
 	struct vfs_iattr attributes = { .mask = VFS_ATTR_MODE };
@@ -730,6 +1005,17 @@ uint64 sys_linux_fchmod(void)
 	return result < 0 ? linux_error(result) : 0;
 }
 
+/**
+ * sys_linux_fchownat() - Handle the Linux RISC-V fchownat system call
+ *
+ * Arguments are read from the current RISC-V user trapframe registers.
+ * User pointers are validated before VFS access or result copying.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative Linux result or a negative Linux errno.
+ */
 uint64 sys_linux_fchownat(void)
 {
 	struct vfs_iattr attributes = { 0 };
@@ -774,6 +1060,17 @@ uint64 sys_linux_fchownat(void)
 	return result < 0 ? linux_error(result) : 0;
 }
 
+/**
+ * sys_linux_fchown() - Handle the Linux RISC-V fchown system call
+ *
+ * Arguments are read from the current RISC-V user trapframe registers.
+ * User pointers are validated before VFS access or result copying.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative Linux result or a negative Linux errno.
+ */
 uint64 sys_linux_fchown(void)
 {
 	struct vfs_iattr attributes = { 0 };
@@ -799,6 +1096,17 @@ uint64 sys_linux_fchown(void)
 	return result < 0 ? linux_error(result) : 0;
 }
 
+/**
+ * sys_linux_unlinkat() - Handle the Linux RISC-V unlinkat system call
+ *
+ * Arguments are read from the current RISC-V user trapframe registers.
+ * User pointers are validated before VFS access or result copying.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative Linux result or a negative Linux errno.
+ */
 uint64 sys_linux_unlinkat(void)
 {
 	char path[MAXPATH];
@@ -816,6 +1124,17 @@ uint64 sys_linux_unlinkat(void)
 	return result < 0 ? linux_error(result) : 0;
 }
 
+/**
+ * sys_linux_symlinkat() - Handle the Linux RISC-V symlinkat system call
+ *
+ * Arguments are read from the current RISC-V user trapframe registers.
+ * User pointers are validated before VFS access or result copying.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative Linux result or a negative Linux errno.
+ */
 uint64 sys_linux_symlinkat(void)
 {
 	char target[MAXPATH], path[MAXPATH];
@@ -831,6 +1150,17 @@ uint64 sys_linux_symlinkat(void)
 	return result < 0 ? linux_error(result) : 0;
 }
 
+/**
+ * sys_linux_linkat() - Handle the Linux RISC-V linkat system call
+ *
+ * Arguments are read from the current RISC-V user trapframe registers.
+ * User pointers are validated before VFS access or result copying.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative Linux result or a negative Linux errno.
+ */
 uint64 sys_linux_linkat(void)
 {
 	char old_path[MAXPATH], new_path[MAXPATH];
@@ -852,6 +1182,7 @@ uint64 sys_linux_linkat(void)
 	return result < 0 ? linux_error(result) : 0;
 }
 
+/* Update the backend namespace while preserving VFS rename invariants. */
 static uint64 linux_rename(uint32 flags)
 {
 	char old_path[MAXPATH], new_path[MAXPATH];
@@ -874,6 +1205,17 @@ static uint64 linux_rename(uint32 flags)
 	return result < 0 ? linux_error(result) : 0;
 }
 
+/**
+ * sys_linux_renameat2() - Handle the Linux RISC-V renameat2 system call
+ *
+ * Arguments are read from the current RISC-V user trapframe registers.
+ * User pointers are validated before VFS access or result copying.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative Linux result or a negative Linux errno.
+ */
 uint64 sys_linux_renameat2(void)
 {
 	int flags;
@@ -882,6 +1224,17 @@ uint64 sys_linux_renameat2(void)
 	return linux_rename(flags);
 }
 
+/**
+ * sys_linux_readlinkat() - Handle the Linux RISC-V readlinkat system call
+ *
+ * Arguments are read from the current RISC-V user trapframe registers.
+ * User pointers are validated before VFS access or result copying.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative Linux result or a negative Linux errno.
+ */
 uint64 sys_linux_readlinkat(void)
 {
 	process_t process = cur_proc();
@@ -912,12 +1265,35 @@ uint64 sys_linux_readlinkat(void)
 	return result;
 }
 
+/* Flush adapter-visible state when the backing implementation supports it. */
+/**
+ * sys_linux_sync() - Handle the Linux RISC-V sync system call
+ *
+ * Arguments are read from the current RISC-V user trapframe registers.
+ * User pointers are validated before VFS access or result copying.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative Linux result or a negative Linux errno.
+ */
 uint64 sys_linux_sync(void)
 {
 	(void)vfs_sync();
 	return 0;
 }
 
+/**
+ * sys_linux_fsync() - Handle the Linux RISC-V fsync system call
+ *
+ * Arguments are read from the current RISC-V user trapframe registers.
+ * User pointers are validated before VFS access or result copying.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative Linux result or a negative Linux errno.
+ */
 uint64 sys_linux_fsync(void)
 {
 	int fd, result;
@@ -927,11 +1303,34 @@ uint64 sys_linux_fsync(void)
 	return result < 0 ? linux_error(result) : 0;
 }
 
+/**
+ * sys_linux_fdatasync() - Handle the Linux RISC-V fdatasync system call
+ *
+ * Arguments are read from the current RISC-V user trapframe registers.
+ * User pointers are validated before VFS access or result copying.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative Linux result or a negative Linux errno.
+ */
 uint64 sys_linux_fdatasync(void)
 {
 	return sys_linux_fsync();
 }
 
+/* Check or update access state before the requested VFS operation proceeds. */
+/**
+ * sys_linux_faccessat() - Handle the Linux RISC-V faccessat system call
+ *
+ * Arguments are read from the current RISC-V user trapframe registers.
+ * User pointers are validated before VFS access or result copying.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative Linux result or a negative Linux errno.
+ */
 uint64 sys_linux_faccessat(void)
 {
 	char path[MAXPATH];
@@ -956,6 +1355,18 @@ uint64 sys_linux_faccessat(void)
 	return result < 0 ? linux_error(result) : 0;
 }
 
+/* Maintain timestamps according to the current filesystem policy. */
+/**
+ * sys_linux_utimensat() - Handle the Linux RISC-V utimensat system call
+ *
+ * Arguments are read from the current RISC-V user trapframe registers.
+ * User pointers are validated before VFS access or result copying.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative Linux result or a negative Linux errno.
+ */
 uint64 sys_linux_utimensat(void)
 {
 	struct linux_timespec linux_times[2];
@@ -1030,6 +1441,17 @@ uint64 sys_linux_utimensat(void)
 	return result < 0 ? linux_error(result) : 0;
 }
 
+/**
+ * sys_linux_chdir() - Handle the Linux RISC-V chdir system call
+ *
+ * Arguments are read from the current RISC-V user trapframe registers.
+ * User pointers are validated before VFS access or result copying.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative Linux result or a negative Linux errno.
+ */
 uint64 sys_linux_chdir(void)
 {
 	char path[MAXPATH];
@@ -1041,6 +1463,17 @@ uint64 sys_linux_chdir(void)
 	return result < 0 ? linux_error(result) : 0;
 }
 
+/**
+ * sys_linux_getcwd() - Handle the Linux RISC-V getcwd system call
+ *
+ * Arguments are read from the current RISC-V user trapframe registers.
+ * User pointers are validated before VFS access or result copying.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative Linux result or a negative Linux errno.
+ */
 uint64 sys_linux_getcwd(void)
 {
 	process_t process = cur_proc();
@@ -1064,6 +1497,17 @@ uint64 sys_linux_getcwd(void)
 	return length;
 }
 
+/**
+ * sys_linux_dup() - Handle the Linux RISC-V dup system call
+ *
+ * Arguments are read from the current RISC-V user trapframe registers.
+ * User pointers are validated before VFS access or result copying.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative Linux result or a negative Linux errno.
+ */
 uint64 sys_linux_dup(void)
 {
 	int oldfd, fd, result;
@@ -1073,6 +1517,17 @@ uint64 sys_linux_dup(void)
 	return result < 0 ? linux_error(result) : fd;
 }
 
+/**
+ * sys_linux_dup3() - Handle the Linux RISC-V dup3 system call
+ *
+ * Arguments are read from the current RISC-V user trapframe registers.
+ * User pointers are validated before VFS access or result copying.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative Linux result or a negative Linux errno.
+ */
 uint64 sys_linux_dup3(void)
 {
 	int oldfd, newfd, flags, result;
@@ -1087,6 +1542,18 @@ uint64 sys_linux_dup3(void)
 	return result < 0 ? linux_error(result) : newfd;
 }
 
+/* Translate this control request to the selected backend operation. */
+/**
+ * sys_linux_ioctl() - Handle the Linux RISC-V ioctl system call
+ *
+ * Arguments are read from the current RISC-V user trapframe registers.
+ * User pointers are validated before VFS access or result copying.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative Linux result or a negative Linux errno.
+ */
 uint64 sys_linux_ioctl(void)
 {
 	uint64 address, request;
@@ -1102,6 +1569,7 @@ uint64 sys_linux_ioctl(void)
 	return result < 0 ? linux_error(result) : result;
 }
 
+/* Share preadv/pwritev argument marshalling, including version-two flags. */
 static uint64 linux_positioned_iov(int write_operation, int version_two)
 {
 	struct vfs_iovec *iovecs;
@@ -1157,26 +1625,81 @@ out_iov:
 	return result;
 }
 
+/**
+ * sys_linux_preadv() - Handle the Linux RISC-V preadv system call
+ *
+ * Arguments are read from the current RISC-V user trapframe registers.
+ * User pointers are validated before VFS access or result copying.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative Linux result or a negative Linux errno.
+ */
 uint64 sys_linux_preadv(void)
 {
 	return linux_positioned_iov(0, 0);
 }
 
+/**
+ * sys_linux_pwritev() - Handle the Linux RISC-V pwritev system call
+ *
+ * Arguments are read from the current RISC-V user trapframe registers.
+ * User pointers are validated before VFS access or result copying.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative Linux result or a negative Linux errno.
+ */
 uint64 sys_linux_pwritev(void)
 {
 	return linux_positioned_iov(1, 0);
 }
 
+/**
+ * sys_linux_preadv2() - Handle the Linux RISC-V preadv2 system call
+ *
+ * Arguments are read from the current RISC-V user trapframe registers.
+ * User pointers are validated before VFS access or result copying.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative Linux result or a negative Linux errno.
+ */
 uint64 sys_linux_preadv2(void)
 {
 	return linux_positioned_iov(0, 1);
 }
 
+/**
+ * sys_linux_pwritev2() - Handle the Linux RISC-V pwritev2 system call
+ *
+ * Arguments are read from the current RISC-V user trapframe registers.
+ * User pointers are validated before VFS access or result copying.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative Linux result or a negative Linux errno.
+ */
 uint64 sys_linux_pwritev2(void)
 {
 	return linux_positioned_iov(1, 1);
 }
 
+/**
+ * sys_linux_readv() - Handle the Linux RISC-V readv system call
+ *
+ * Arguments are read from the current RISC-V user trapframe registers.
+ * User pointers are validated before VFS access or result copying.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative Linux result or a negative Linux errno.
+ */
 uint64 sys_linux_readv(void)
 {
 	struct vfs_iovec *iovecs;
@@ -1199,6 +1722,17 @@ uint64 sys_linux_readv(void)
 	return result < 0 ? linux_error(result) : result;
 }
 
+/**
+ * sys_linux_writev() - Handle the Linux RISC-V writev system call
+ *
+ * Arguments are read from the current RISC-V user trapframe registers.
+ * User pointers are validated before VFS access or result copying.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative Linux result or a negative Linux errno.
+ */
 uint64 sys_linux_writev(void)
 {
 	struct vfs_iovec *iovecs;
@@ -1221,6 +1755,17 @@ uint64 sys_linux_writev(void)
 	return result < 0 ? linux_error(result) : result;
 }
 
+/**
+ * sys_linux_sendfile() - Handle the Linux RISC-V sendfile system call
+ *
+ * Arguments are read from the current RISC-V user trapframe registers.
+ * User pointers are validated before VFS access or result copying.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative Linux result or a negative Linux errno.
+ */
 uint64 sys_linux_sendfile(void)
 {
 	process_t process = cur_proc();
@@ -1314,6 +1859,17 @@ out:
 	return read_result;
 }
 
+/**
+ * sys_linux_execve() - Handle the Linux RISC-V execve system call
+ *
+ * Arguments are read from the current RISC-V user trapframe registers.
+ * User pointers are validated before VFS access or result copying.
+ *
+ * Context: Current process context; may sleep in VFS, a filesystem,
+ * or device.
+ *
+ * Return: A nonnegative Linux result or a negative Linux errno.
+ */
 uint64 sys_linux_execve(void)
 {
 	char path[MAXPATH], *argv[MAXARG], *envp[MAXARG];

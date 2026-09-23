@@ -1,12 +1,12 @@
 /*
- * @Author: TroyMitchell
- * @Date: 2024-04-30 06:23
- * @LastEditors: TroyMitchell
- * @LastEditTime: 2024-05-30
- * @FilePath: /caffeinix/kernel/process.c
- * @Description: 
- * Words are cheap so I do.
- * Copyright (c) 2024 by TroyMitchell, All Rights Reserved. 
+ * Process lifetime, process groups, credentials, and init bring-up.
+ *
+ * The global process list is protected by wait_lock. Code which needs both
+ * locks takes wait_lock before a process lock. A zombie remains visible until
+ * wait/reaping releases it, so parent notification and resource destruction
+ * cannot race with process lookup.
+ *
+ * Copyright (c) 2024 by TroyMitchell, All Rights Reserved.
  */
 #include <process.h>
 #include <palloc.h>
@@ -63,6 +63,7 @@ static int process_signal_group_locked(
 static int process_group_orphaned_locked(int pgid, int sid);
 static int process_group_stopped_locked(int pgid, int sid);
 
+/* Take a reference while a parent, child, or completion path retains state. */
 static void process_vfork_state_get(struct process_vfork *state)
 {
 	if (!state || __atomic_fetch_add(&state->references, 1,
@@ -70,6 +71,7 @@ static void process_vfork_state_get(struct process_vfork *state)
 		PANIC("get inactive vfork state");
 }
 
+/* Drop a vfork-state reference and free only after the final release. */
 static void process_vfork_state_put(struct process_vfork *state)
 {
 	uint32 references;
@@ -86,6 +88,7 @@ static void process_vfork_state_put(struct process_vfork *state)
 	}
 }
 
+/* Check SIGCHLD disposition while the global process lock is held. */
 static int process_parent_auto_reaps_locked(process_t child)
 {
 	struct process_signal_action *action;
@@ -108,6 +111,7 @@ static int process_parent_auto_reaps_locked(process_t child)
 _Static_assert(sizeof(struct signal_pending) <= PGSIZE,
 	       "process signal state must fit in one page");
 
+/* Open the init process's console descriptors in POSIX standard order. */
 static int setup_stdio(void)
 {
 	process_t p = cur_proc();
@@ -130,6 +134,7 @@ static int setup_stdio(void)
 	return 0;
 }
 
+/* Select the first block device accepted by the configured root filesystem. */
 static uint32 mount_root_device(void)
 {
 	uint32 id;
@@ -142,6 +147,7 @@ static uint32 mount_root_device(void)
 	return 0;
 }
 
+/* Expose a non-root FAT disk without making boot depend on it. */
 static void mount_fat_device(uint32 root_id)
 {
 	int status;
@@ -159,6 +165,7 @@ static void mount_fat_device(uint32 root_id)
 	}
 }
 
+/* Reparent children during exit and notify a newly orphaned stopped group. */
 static void reparent(process_t p)
 {
 	process_t child;
@@ -207,11 +214,9 @@ pagedir_t process_pagedir(process_t p, thread_t thread)
 	if (!p || !thread || thread->home != p || thread->id_p < 0 ||
 	    thread->id_p >= PROC_MAXTHREAD)
                 return 0;
-        /* Malloc memory for page-talble */
         pgdir = pagedir_alloc();
 	if (!pgdir)
 		return 0;
-        /* Map trampoline */
 	ret = vm_map(pgdir, TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
 	if(ret) {
 		pagedir_free(pgdir);
@@ -224,12 +229,16 @@ pagedir_t process_pagedir(process_t p, thread_t thread)
 		pagedir_free(pgdir);
 		return 0;
 	}
-        /* Map address of under trampoline to trapframe */
+	/*
+	 * Map this thread's trap frame immediately below the shared trampoline.
+	 */
 	ret = vm_map(pgdir, TRAPFRAME(thread->id_p),
 	             (uint64)thread->trapframe,
                      PGSIZE, PTE_W | PTE_R);
 	if(ret){
-                /* We don't need free the address that PTE points because it is a code seg */
+		/*
+		 * The trampoline mapping refers to shared code, not owned pages.
+		 */
 		vm_unmap(pgdir, USER_SIGRETURN, 1, 0);
 		vm_unmap(pgdir, TRAMPOLINE, 1, 0);
 		pagedir_free(pgdir);
@@ -255,7 +264,12 @@ void process_freepagedir(pagedir_t pgdir, uint64 sz)
 	pagedir_free(pgdir);
 }
 
-/* This function is the first when a process first start */
+/*
+ * Run once in the first scheduled thread to establish the system namespace.
+ * The initial thread lock is deliberately released before VFS work, because
+ * filesystem initialization may block. Later process starts enter through
+ * user_thread_start() and never repeat the mount sequence.
+ */
 static void proc_first_start(void)
 {
 	static uint8 fs_started;
@@ -269,7 +283,6 @@ static void proc_first_start(void)
 	};
 	process_t process = cur_proc();
 
-        /* The function scheduler will acquire the lock */
 	spinlock_release(&cur_thread()->lock);
 	if (!fs_started) {
 		int status;
@@ -315,13 +328,14 @@ static void proc_first_start(void)
         user_trap_ret();
 }
 
+/* Return a cloned thread after dropping its scheduler handoff lock. */
 static void user_thread_start(void)
 {
 	spinlock_release(&cur_thread()->lock);
 	user_trap_ret();
 }
 
-/* Alloc a process */
+/* Allocate an EMBRYO process with its process lock held for its creator. */
 static process_t process_alloc(void)
 {
         process_t p;
@@ -366,7 +380,6 @@ static process_t process_alloc(void)
         if(!t)
                 goto r0;
 
-        /* Alloc memory for page-table */
 	p->pagetable = process_pagedir(p, t);
 	if(!p->pagetable) {
 		goto r1;
@@ -377,7 +390,6 @@ static process_t process_alloc(void)
 	p->pgid = p->pid;
 	p->sid = p->pid;
         
-        /* Set the context of return address */
         t->context.ra = (uint64)(proc_first_start);
 
         list_init(&p->all_tag);
@@ -397,6 +409,10 @@ r0:
 	return 0;
 }
 
+/*
+ * Destroy a fully detached process. All waiter queues must be empty, which
+ * makes the final free safe after the object disappears from the process list.
+ */
 static void process_free(process_t p)
 {
         thread_t thread;
@@ -438,16 +454,10 @@ static void process_free(process_t p)
         list_remove(&p->all_tag);
         spinlock_release(&p->lock);
         free(p);
-        // p->pid = 0;
-        // p->sz = 0;
-        // p->state = UNUSED;
-        // p->parent = 0;
-        // p->name[0] = 0;
 }
 
 void process_init(void)
 {
-	/* Init the spinlock */
 	spinlock_init(&wait_lock, "wait_lock");
 	list_init(&proc);
 	retired_process_user_time_ns = 0;
@@ -460,7 +470,6 @@ void userinit(void)
         process_t p;
         thread_t t;
 
-        /* Alloc a process */
 	p = process_alloc();
 	if (!p)
                 PANIC("userinit");
@@ -509,6 +518,7 @@ int either_copyin(void *dst, int user_src, uint64 src, uint64 len)
         }
 }
 
+/* Queue SIGALRM for expired real timers and advance periodic deadlines. */
 void process_expire_timers(uint64 now)
 {
 	struct signal_info information = {
@@ -553,6 +563,7 @@ void process_expire_timers(uint64 now)
 	spinlock_release(&wait_lock);
 }
 
+/* Test whether a live process table contains the requested thread ID. */
 int process_task_exists(int tid)
 {
 	process_t process;
@@ -585,6 +596,7 @@ int process_task_exists(int tid)
 	return found;
 }
 
+/* Count live threads and unreaped process leaders for procfs reporting. */
 uint32 process_task_count(void)
 {
 	process_t process;
@@ -605,6 +617,7 @@ uint32 process_task_count(void)
 	return count > 0xffffffffU ? 0xffffffffU : count;
 }
 
+/* Copy a consistent procfs-style view while the target process is locked. */
 static void process_snapshot_locked(process_t process,
 				    struct process_snapshot *snapshot,
 				    uint64 now)
@@ -691,6 +704,7 @@ static void process_snapshot_locked(process_t process,
 	snapshot->system_time_ns = system_runtime;
 }
 
+/* Produce a locked, point-in-time procfs-style snapshot for one process. */
 int process_snapshot_pid(int pid, struct process_snapshot *snapshot,
 			 char *cmdline, uint32 cmdline_size,
 			 uint32 *cmdline_length)
@@ -734,6 +748,7 @@ int process_snapshot_pid(int pid, struct process_snapshot *snapshot,
 	return found ? 0 : -1;
 }
 
+/* Enumerate visible process IDs up to the caller's fixed capacity. */
 uint32 process_snapshot_pids(int *pids, uint32 capacity)
 {
 	process_t process;
@@ -755,6 +770,7 @@ uint32 process_snapshot_pids(int *pids, uint32 capacity)
 	return count;
 }
 
+/* Aggregate process and scheduler accounting for the system procfs view. */
 void process_snapshot_system(struct process_system_snapshot *snapshot)
 {
 	struct process_snapshot process_snapshot;
@@ -808,6 +824,7 @@ void process_set_cmdline(process_t process, void *cmdline, uint32 length)
 		pfree(old);
 }
 
+/* Copy current credentials while holding the current process lock. */
 void process_credentials_get(struct process_credentials *credentials)
 {
 	process_t process = cur_proc();
@@ -822,6 +839,7 @@ void process_credentials_get(struct process_credentials *credentials)
 	spinlock_release(&process->lock);
 }
 
+/* Return the current process creation mask under its process lock. */
 uint32 process_umask_get(void)
 {
 	process_t process = cur_proc();
@@ -835,6 +853,7 @@ uint32 process_umask_get(void)
 	return mask;
 }
 
+/* Replace the current process creation mask and return the previous value. */
 uint32 process_umask_set(uint32 mask)
 {
 	process_t process = cur_proc();
@@ -849,6 +868,7 @@ uint32 process_umask_set(uint32 mask)
 	return old_mask;
 }
 
+/* Publish a shared VM and block the vfork parent until completion. */
 static int process_vfork_map_child(process_t parent, process_t child,
 				   thread_t parent_thread,
 				   thread_t child_thread)
@@ -890,6 +910,7 @@ out:
 	return result;
 }
 
+/* Drop the parent vfork link before making its blocked thread runnable. */
 static void process_vfork_detach_parent(process_t parent,
 					thread_t parent_thread,
 					process_t child)
@@ -927,6 +948,7 @@ static void process_vfork_detach_parent(process_t parent,
 	spinlock_acquire(&parent->lock);
 }
 
+/* Construct either an independent fork child or a vfork shared-VM child. */
 static int process_fork_common(uint64 child_stack, int vfork)
 {
         int pid, i;
@@ -1000,7 +1022,6 @@ static int process_fork_common(uint64 child_stack, int vfork)
 	spinlock_release(&oldp->files_lock);
 	vfs_path_copy(&newp->root, &oldp->root);
 	vfs_path_copy(&newp->cwd, &oldp->cwd);
-        /* Copy the process name into newp */
 	safe_strncpy(newp->name, oldp->name, MAXNAME);
 	spinlock_acquire(&newp->lock);
 	spinlock_acquire(&oldp->lock);
@@ -1042,7 +1063,6 @@ static int process_fork_common(uint64 child_stack, int vfork)
 		spinlock_release(&oldp->lock);
 	}
 
-        /* Return for parent process */
         return pid;
 }
 
@@ -1069,6 +1089,7 @@ int process_vfork(uint64 child_stack)
 	return result < 0 ? -LINUX_ENOMEM : result;
 }
 
+/* Restore and wake an attached parent with the vfork-state sleeplock held. */
 static void process_vfork_release_normal_locked(
 	process_t process, struct process_vfork *state, int register_mmap)
 {
@@ -1104,6 +1125,7 @@ static void process_vfork_release_normal_locked(
 	spinlock_release(&parent->lock);
 }
 
+/* Resolve ownership of exec's old page directory before the caller frees it. */
 int process_vfork_exec(process_t process)
 {
 	struct process_vfork *state;
@@ -1128,6 +1150,7 @@ int process_vfork_exec(process_t process)
 	return parent_owns_shared;
 }
 
+/* Ensure a user TID store will succeed before exposing a cloned child. */
 static int process_prefault_write(process_t process, uint64 address,
 				  uint64 length)
 {
@@ -1213,6 +1236,7 @@ fail:
 	return error;
 }
 
+/* Start exec serialization before requesting sibling exit. */
 int process_exec_begin(process_t p, thread_t current)
 {
 	int result = -1;
@@ -1227,6 +1251,7 @@ int process_exec_begin(process_t p, thread_t current)
 	return result;
 }
 
+/* Mark a sibling for exec-time exit while its thread lock is held. */
 static void process_request_thread_exit_locked(thread_t thread, int status)
 {
 	if (!thread || !thread->home ||
@@ -1239,6 +1264,7 @@ static void process_request_thread_exit_locked(thread_t thread, int status)
 	scheduler_kick(thread);
 }
 
+/* Read a pending exec-induced exit request from a thread. */
 int process_thread_exit_requested(thread_t thread, int *status)
 {
 	if (!thread ||
@@ -1249,6 +1275,7 @@ int process_thread_exit_requested(thread_t thread, int *status)
 	return 1;
 }
 
+/* Wait until all non-calling threads have stopped for exec. */
 int process_exec_quiesce(process_t p, thread_t current)
 {
 	int index;
@@ -1280,6 +1307,7 @@ int process_exec_quiesce(process_t p, thread_t current)
 	return 0;
 }
 
+/* Finish exec serialization after commit or failure rollback. */
 void process_exec_end(process_t p, int committed)
 {
 	if (committed) {
@@ -1294,6 +1322,7 @@ void process_exec_end(process_t p, int committed)
 	spinlock_release(&p->lock);
 }
 
+/* Inspect a process group's published group-exit status. */
 int process_group_exiting(process_t p, int *status)
 {
 	int exiting;
@@ -1306,6 +1335,7 @@ int process_group_exiting(process_t p, int *status)
 	return exiting;
 }
 
+/* Complete vfork parent release when its child exits before exec. */
 static int process_vfork_exit(process_t process)
 {
 	struct process_vfork *state = process->vfork;
@@ -1335,6 +1365,7 @@ static int process_vfork_exit(process_t process)
 	return shared_with_parent;
 }
 
+/* Close group-owned resources after the final thread published its exit. */
 static void process_release_resources(process_t p)
 {
 	file_t files[NOFILE];
@@ -1467,6 +1498,7 @@ void process_thread_exit(int cause, int group)
 	scheduler_exit_locked();
 }
 
+/* Apply Linux wait PID-selection rules to one parent/child pair. */
 static int process_wait_matches(process_t parent, process_t child,
 				int target)
 {
@@ -1479,6 +1511,7 @@ static int process_wait_matches(process_t parent, process_t child,
 	return (int64)child->pgid == -(int64)target;
 }
 
+/* Sum process and child CPU accounting while the process lock is held. */
 static void process_usage_ns_locked(process_t process, uint64 *user_ns,
 				    uint64 *system_ns)
 {
@@ -1506,6 +1539,7 @@ static void process_usage_ns_locked(process_t process, uint64 *user_ns,
 	}
 }
 
+/* Fill Linux rusage fields from locked process accounting. */
 static void process_rusage_locked(process_t process,
 				  struct linux_rusage *usage)
 {
@@ -1521,6 +1555,7 @@ static void process_rusage_locked(process_t process,
 		(system_ns % 1000000000ULL) / 1000;
 }
 
+/* Copy a locked process rusage result to optional user memory. */
 static int process_copy_rusage_locked(process_t process,
 				      process_t destination, uint64 address)
 {
@@ -1664,6 +1699,7 @@ int process_wait(int target, uint64 status_address, uint64 usage_address,
         }
 }
 
+/* Reap a zombie selected by SIGCHLD ignore or SA_NOCLDWAIT policy. */
 void process_auto_reap(process_t process)
 {
 	if (!process)
@@ -1681,6 +1717,7 @@ void process_auto_reap(process_t process)
 	spinlock_release(&wait_lock);
 }
 
+/* Find any process-table entry; wait_lock serializes list traversal. */
 static process_t process_find_locked(int pid)
 {
 	process_t process;
@@ -1696,6 +1733,7 @@ static process_t process_find_locked(int pid)
 	return 0;
 }
 
+/* Find a non-embryonic process visible to Linux process-management calls. */
 static process_t process_find_existing_locked(int pid)
 {
 	process_t process;
@@ -1711,6 +1749,7 @@ static process_t process_find_existing_locked(int pid)
 	return 0;
 }
 
+/* Test group existence under the global process-list lock. */
 static int process_group_exists_locked(int pgid, int sid)
 {
 	process_t process;
@@ -1727,6 +1766,7 @@ static int process_group_exists_locked(int pgid, int sid)
 	return 0;
 }
 
+/* Apply Linux process-group membership checks and assignment. */
 int process_setpgid(int pid, int pgid)
 {
 	process_t caller = cur_proc();
@@ -1764,6 +1804,7 @@ out:
 	return result;
 }
 
+/* Return the selected live process's group identifier. */
 int process_getpgid(int pid)
 {
 	process_t process;
@@ -1783,6 +1824,7 @@ int process_getpgid(int pid)
 	return result;
 }
 
+/* Return the selected live process's session identifier. */
 int process_getsid(int pid)
 {
 	process_t process;
@@ -1802,6 +1844,7 @@ int process_getsid(int pid)
 	return result;
 }
 
+/* Create a new session when the caller is not a group leader. */
 int process_setsid(void)
 {
 	process_t caller = cur_proc();
@@ -1820,6 +1863,7 @@ int process_setsid(void)
 	return result;
 }
 
+/* Return the caller's controlling terminal while retaining process locking. */
 struct tty *process_controlling_tty(void)
 {
 	struct tty *tty;
@@ -1830,6 +1874,7 @@ struct tty *process_controlling_tty(void)
 	return tty;
 }
 
+/* Attach a controlling TTY according to session-leader opening rules. */
 int process_tty_open(struct tty *tty, int no_ctty)
 {
 	process_t caller = cur_proc();
@@ -1856,6 +1901,7 @@ int process_tty_open(struct tty *tty, int no_ctty)
 	return VFS_OK;
 }
 
+/* Test whether another live session owns a terminal. */
 int process_tty_busy(struct tty *tty)
 {
 	int busy;
@@ -1866,12 +1912,14 @@ int process_tty_busy(struct tty *tty)
 	return busy;
 }
 
+/* Test controlling-terminal identity while the process lock is held. */
 static int process_tty_owned_locked(process_t process, struct tty *tty)
 {
 	return tty && process->controlling_tty == tty && tty->session_id &&
 	       tty->session_id == process->sid;
 }
 
+/* Decide whether a job-control signal is ignored or blocked by this process. */
 static int process_signal_suppressed_locked(process_t process, int signal)
 {
 	thread_t thread = cur_thread();
@@ -1885,6 +1933,7 @@ static int process_signal_suppressed_locked(process_t process, int signal)
 	return suppressed;
 }
 
+/* Determine orphaned-group status while the process list is stable. */
 static int process_group_orphaned_locked(int pgid, int sid)
 {
 	process_t member;
@@ -1904,6 +1953,7 @@ static int process_group_orphaned_locked(int pgid, int sid)
 	return 1;
 }
 
+/* Determine whether a group contains a job-control-stopped process. */
 static int process_group_stopped_locked(int pgid, int sid)
 {
 	process_t member;
@@ -1926,6 +1976,7 @@ static int process_group_stopped_locked(int pgid, int sid)
 	return 0;
 }
 
+/* Apply background TTY signal policy under the calling process lock. */
 static int process_tty_background_signal_locked(struct tty *tty,
 						 int signal, int blocked_error)
 {
@@ -1947,6 +1998,7 @@ static int process_tty_background_signal_locked(struct tty *tty,
 	return VFS_ERR_INTR;
 }
 
+/* Read the foreground process group for an owned controlling terminal. */
 int process_tty_get_foreground(struct tty *tty, int *pgid)
 {
 	process_t caller = cur_proc();
@@ -1961,6 +2013,7 @@ int process_tty_get_foreground(struct tty *tty, int *pgid)
 	return result;
 }
 
+/* Set a terminal foreground group after session and permission checks. */
 int process_tty_set_foreground(struct tty *tty, int pgid)
 {
 	process_t caller = cur_proc();
@@ -1984,6 +2037,7 @@ out:
 	return result;
 }
 
+/* Read the controlling session identifier for an owned terminal. */
 int process_tty_get_session(struct tty *tty, int *sid)
 {
 	process_t caller = cur_proc();
@@ -1998,6 +2052,7 @@ int process_tty_get_session(struct tty *tty, int *sid)
 	return result;
 }
 
+/* Reject or stop a background read according to job-control policy. */
 int process_tty_check_read(struct tty *tty)
 {
 	int result;
@@ -2009,6 +2064,7 @@ int process_tty_check_read(struct tty *tty)
 	return result;
 }
 
+/* Apply TOSTOP background-write policy before terminal output. */
 int process_tty_check_write(struct tty *tty, int force)
 {
 	int result;
@@ -2022,6 +2078,7 @@ int process_tty_check_write(struct tty *tty, int force)
 	return result;
 }
 
+/* Broadcast a terminal-generated signal to its foreground group. */
 int process_tty_signal_foreground(struct tty *tty, int signal)
 {
 	struct signal_info information = {
@@ -2038,6 +2095,7 @@ int process_tty_signal_foreground(struct tty *tty, int signal)
 	return result;
 }
 
+/* Publish a child event and wake waiters after child state changes. */
 static void process_notify_parent_locked(process_t child, int code,
 					 int status)
 {
@@ -2067,6 +2125,7 @@ static void process_notify_parent_locked(process_t child, int code,
 	wait_queue_wake_all(&parent->child_wait);
 }
 
+/* Clear stopped state and publish a continued child event. */
 static void process_continue_event_locked(process_t process, int resumed)
 {
 	if (!resumed)
@@ -2079,6 +2138,7 @@ static void process_continue_event_locked(process_t process, int resumed)
 	                             LINUX_SIGCONT);
 }
 
+/* Check signal sender/target credentials under process-list locking. */
 static int process_signal_permitted_locked(
 	process_t process, int signal, const struct signal_info *information)
 {
@@ -2098,6 +2158,7 @@ static int process_signal_permitted_locked(
 	       information->sender_sid == process->sid;
 }
 
+/* Deliver a permitted process-directed signal to each member of a group. */
 static int process_signal_group_locked(
 	int pgid, int signal, const struct signal_info *information)
 {
@@ -2139,6 +2200,7 @@ static int process_signal_group_locked(
 		denied ? SIGNAL_QUEUE_DENIED : -1;
 }
 
+/* Deliver a process-directed signal selected by a Linux PID target. */
 int signal_send_process(int pid, int signal,
 			const struct signal_info *information)
 {
@@ -2165,6 +2227,7 @@ int signal_send_process(int pid, int signal,
 	return result < 0 ? result : 0;
 }
 
+/* Deliver a signal to every process selected by kill-style semantics. */
 int signal_send_processes(int selector, int signal,
 			  const struct signal_info *information)
 {
@@ -2222,6 +2285,7 @@ int signal_send_processes(int selector, int signal,
 		denied ? SIGNAL_QUEUE_DENIED : -1;
 }
 
+/* Deliver a signal to one thread after validating group membership. */
 int signal_send_thread(int thread_group, int tid, int signal,
 		       const struct signal_info *information)
 {
@@ -2307,6 +2371,7 @@ void process_signal_stop(int signal)
 	spinlock_release(&process->lock);
 }
 
+/* Locate a live thread while the global process-list lock is held. */
 static thread_t process_find_thread_locked(int tid, process_t *owner)
 {
 	process_t process;
@@ -2374,6 +2439,7 @@ int process_set_nice(int tid, int nice)
 	return result;
 }
 
+/* Read a thread nice value while synchronizing with scheduler state. */
 int process_get_nice(int tid, int *nice)
 {
 	process_t process = 0;
@@ -2397,10 +2463,3 @@ int process_get_nice(int tid, int *nice)
 	spinlock_release(&wait_lock);
 	return result;
 }
-
-/**
- * @description: Kill a process
- * @param {int} pid of process
- * @return {*} 0: kill successfully     1:kill failed
- * @note This process will be killed actually by user_trap_entry in trap.c
- */

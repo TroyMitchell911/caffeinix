@@ -1,3 +1,11 @@
+/*
+ * Supported Linux RV64 userspace ABI constants and fixed-width layouts. These
+ * definitions describe bytes crossing the syscall boundary, not internal
+ * kernel objects or an assertion of complete Linux support. Changes must
+ * retain RISC-V LP64 sizes, padding, signedness, and syscall numbers;
+ * tests/linux_uapi.c and linux_network_uapi.c check selected layouts against
+ * Linux headers.
+ */
 #ifndef __CAFFEINIX_KERNEL_LINUX_UAPI_H
 #define __CAFFEINIX_KERNEL_LINUX_UAPI_H
 

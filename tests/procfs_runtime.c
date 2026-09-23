@@ -1,3 +1,6 @@
+/*
+ * Guest procfs regression for task, memory, mount, and network observability.
+ */
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>

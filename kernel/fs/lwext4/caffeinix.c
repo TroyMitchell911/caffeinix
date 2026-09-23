@@ -1,3 +1,10 @@
+/*
+ * Caffeinix adapter around the imported lwext4 library.
+ *
+ * This file maps VFS objects and block-device callbacks to lwext4 paths and
+ * handles.  The imported library remains unmodified.  ext4fs_port.lock
+ * serializes library calls because its mounted-volume state is global here.
+ */
 #include <block_device.h>
 #include <debug.h>
 #include <device.h>
@@ -74,6 +81,7 @@ void ext4fs_debug_dump(void)
 			 sleep_owner ? sleep_owner->tid : -1);
 }
 
+/* Hide private orphan directory from mounted root namespace. */
 static int ext4fs_is_orphan_directory(const char *directory,
 				      const char *name)
 {
@@ -81,6 +89,7 @@ static int ext4fs_is_orphan_directory(const char *directory,
 	       !strcmp(name, EXT4FS_ORPHAN_NAME);
 }
 
+/* Build the hidden orphan pathname from its inode number. */
 static void ext4fs_orphan_path(char *path, uint32 inode)
 {
 	static const char digits[] = "0123456789abcdef";
@@ -97,6 +106,7 @@ static void ext4fs_orphan_path(char *path, uint32 inode)
 	path[position] = 0;
 }
 
+/* Find adapter state for an inode; the mount lock keeps the table stable. */
 static struct ext4fs_open_inode *ext4fs_find_open_inode(uint32 inode)
 {
 	struct ext4fs_open_inode *entry;
@@ -110,6 +120,7 @@ static struct ext4fs_open_inode *ext4fs_find_open_inode(uint32 inode)
 	return 0;
 }
 
+/* Increment an existing open-inode record or claim a free slot. */
 static int ext4fs_get_open_inode(uint32 inode)
 {
 	struct ext4fs_open_inode *entry;
@@ -132,6 +143,7 @@ static int ext4fs_get_open_inode(uint32 inode)
 	return VFS_OK;
 }
 
+/* Convert the backend result to the VFS error domain. */
 static int ext4fs_result(int result)
 {
 	if (result == EOK)
@@ -173,12 +185,14 @@ static int ext4fs_result(int result)
 	}
 }
 
+/* Provide lwext4 a no-op open callback for an already registered device. */
 static int ext4fs_block_open(struct ext4_blockdev *blockdev)
 {
 	(void)blockdev;
 	return EOK;
 }
 
+/* Forward lwext4 block reads to the registered block device. */
 static int ext4fs_block_read(struct ext4_blockdev *blockdev, void *buffer,
 			     uint64_t block, uint32_t count)
 {
@@ -187,6 +201,7 @@ static int ext4fs_block_read(struct ext4_blockdev *blockdev, void *buffer,
 	return block_device_read(device, block, buffer, count) ? EIO : EOK;
 }
 
+/* Forward lwext4 block writes to the registered block device. */
 static int ext4fs_block_write(struct ext4_blockdev *blockdev,
 			      const void *buffer, uint64_t block,
 			      uint32_t count)
@@ -196,6 +211,7 @@ static int ext4fs_block_write(struct ext4_blockdev *blockdev,
 	return block_device_write(device, block, buffer, count) ? EIO : EOK;
 }
 
+/* Flush registered block device when lwext4 closes it. */
 static int ext4fs_block_close(struct ext4_blockdev *blockdev)
 {
 	struct block_device *device = blockdev->bdif->p_user;
@@ -203,6 +219,7 @@ static int ext4fs_block_close(struct ext4_blockdev *blockdev)
 	return block_device_flush(device) ? EIO : EOK;
 }
 
+/* Acquire the recursive lock that serializes lwext4 calls. */
 static void ext4fs_lock_mount(void)
 {
 	thread_t current = cur_thread();
@@ -216,6 +233,7 @@ static void ext4fs_lock_mount(void)
 	ext4fs_lock_depth = 1;
 }
 
+/* Release one recursive lock level and unlock at depth zero. */
 static void ext4fs_unlock_mount(void)
 {
 	if (ext4fs_lock_owner != cur_thread() ||
@@ -232,6 +250,7 @@ static const struct ext4_lock ext4fs_mount_locks = {
 	.unlock = ext4fs_unlock_mount,
 };
 
+/* Map ext4 inode mode bits to a VFS inode type. */
 static enum vfs_inode_type ext4fs_inode_type(uint32 mode)
 {
 	switch (mode & EXT4_INODE_MODE_TYPE_MASK) {
@@ -254,6 +273,7 @@ static enum vfs_inode_type ext4fs_inode_type(uint32 mode)
 	}
 }
 
+/* Decode ext4 packed major/minor device numbers into VFS format. */
 static uint64 ext4fs_device_number(uint32 raw)
 {
 	uint32 major = (raw >> 8) & 0xfff;
@@ -262,6 +282,7 @@ static uint64 ext4fs_device_number(uint32 raw)
 	return VFS_MAKE_DEVICE(major, minor);
 }
 
+/* Select VFS operation table matching refreshed inode type. */
 static void ext4fs_set_file_operations(struct vfs_inode *inode)
 {
 	if (inode->type == VFS_INODE_REGULAR)
@@ -276,6 +297,7 @@ static void ext4fs_set_file_operations(struct vfs_inode *inode)
 		inode->file_operations = 0;
 }
 
+/* Copy an ext4 timestamp into VFS seconds and nanoseconds. */
 static void ext4fs_copy_time(struct vfs_timespec *destination,
 			     const struct ext4_timespec *source)
 {
@@ -283,6 +305,7 @@ static void ext4fs_copy_time(struct vfs_timespec *destination,
 	destination->nanoseconds = source->nanoseconds;
 }
 
+/* Convert VFS wall clock to lwext4 timestamp representation. */
 static int ext4fs_now(struct ext4_timespec *time)
 {
 	struct vfs_timespec now;
@@ -295,6 +318,7 @@ static int ext4fs_now(struct ext4_timespec *time)
 	return VFS_OK;
 }
 
+/* Maintain timestamps according to the current filesystem policy. */
 static int ext4fs_touch(const char *path, uint32 mask)
 {
 	struct ext4_timespec times[3];
@@ -311,6 +335,7 @@ static int ext4fs_touch(const char *path, uint32 mask)
 	return result == ERANGE ? VFS_ERR_OVERFLOW : ext4fs_result(result);
 }
 
+/* Maintain timestamps according to the current filesystem policy. */
 static int ext4fs_touch_inode(struct vfs_inode *inode, uint32 mask)
 {
 	struct ext4_timespec times[3];
@@ -328,6 +353,7 @@ static int ext4fs_touch_inode(struct vfs_inode *inode, uint32 mask)
 	return result == ERANGE ? VFS_ERR_OVERFLOW : ext4fs_result(result);
 }
 
+/* Refill VFS metadata and operations from on-disk ext4 inode. */
 static int ext4fs_refresh(struct vfs_inode *inode)
 {
 	struct ext4fs_inode *private = inode->private;
@@ -372,6 +398,7 @@ static int ext4fs_refresh(struct vfs_inode *inode)
 	return VFS_OK;
 }
 
+/* Build a VFS wrapper around filesystem-private state. */
 static int ext4fs_wrap(struct vfs_super_block *superblock,
 		       const char *path, struct vfs_inode **result)
 {
@@ -402,6 +429,7 @@ static int ext4fs_wrap(struct vfs_super_block *superblock,
 	return VFS_OK;
 }
 
+/* Form one bounded backend path from validated path components. */
 static int ext4fs_join(char *path, const char *directory, const char *name)
 {
 	uint32 directory_length = strlen(directory);
@@ -428,6 +456,7 @@ struct ext4fs_path_rebase {
 	int apply;
 };
 
+/* Validate or update cached inode paths after a rename. */
 static int ext4fs_rebase_inode_path(struct vfs_inode *inode, void *argument)
 {
 	struct ext4fs_path_rebase *rebase = argument;
@@ -450,6 +479,7 @@ static int ext4fs_rebase_inode_path(struct vfs_inode *inode, void *argument)
 	return VFS_OK;
 }
 
+/* Visit cached inodes to preflight or apply a pathname rebase. */
 static int ext4fs_rebase_paths(struct vfs_super_block *superblock,
 			       const char *old_path, const char *new_path,
 			       int apply)
@@ -464,6 +494,7 @@ static int ext4fs_rebase_paths(struct vfs_super_block *superblock,
 				&rebase);
 }
 
+/* Caller holds the subsystem lock while this helper updates private state. */
 static int ext4fs_remove_locked(const char *path, uint32 inode,
 				struct ext4_inode *raw)
 {
@@ -491,6 +522,7 @@ static int ext4fs_remove_locked(const char *path, uint32 inode,
 	return ext4fs_result(result);
 }
 
+/* Drop private state once its enclosing VFS reference is no longer needed. */
 static void ext4fs_put_open_inode(uint32 inode)
 {
 	struct ext4fs_open_inode *entry = ext4fs_find_open_inode(inode);
@@ -514,6 +546,7 @@ static void ext4fs_put_open_inode(uint32 inode)
 	pfree(path);
 }
 
+/* Create private orphan directory and remove leftovers from prior mount. */
 static int ext4fs_clean_orphan_directory(void)
 {
 	const ext4_direntry *entry;
@@ -566,11 +599,13 @@ out:
 	return ext4fs_result(result);
 }
 
+/* Release filesystem-private inode state on the final VFS inode put. */
 static void ext4fs_put_inode(struct vfs_inode *inode)
 {
 	free(inode->private);
 }
 
+/* Flush lwext4 cache, superblock, and backing block device. */
 static int ext4fs_sync(struct vfs_super_block *superblock)
 {
 	int result = ext4_cache_flush(EXT4FS_MOUNT_POINT);
@@ -585,6 +620,7 @@ static int ext4fs_sync(struct vfs_super_block *superblock)
 		VFS_ERR_IO : VFS_OK;
 }
 
+/* Report ext4 mount geometry and free-space counters. */
 static int ext4fs_statfs(struct vfs_super_block *superblock,
 			 struct vfs_statfs *stat)
 {
@@ -608,6 +644,7 @@ static int ext4fs_statfs(struct vfs_super_block *superblock,
 	return VFS_OK;
 }
 
+/* Stop journal and unregister the active lwext4 device. */
 static void ext4fs_unmount(struct vfs_super_block *superblock)
 {
 	(void)superblock;
@@ -628,6 +665,7 @@ static const struct vfs_super_operations ext4fs_super_operations = {
 	.unmount = ext4fs_unmount,
 };
 
+/* Refresh metadata from ext4 before producing VFS stat data. */
 static int ext4fs_getattr(struct vfs_inode *inode, struct vfs_stat *stat)
 {
 	int result = ext4fs_refresh(inode);
@@ -637,6 +675,9 @@ static int ext4fs_getattr(struct vfs_inode *inode, struct vfs_stat *stat)
 	return vfs_inode_stat_default(inode, stat);
 }
 
+/*
+ * Join the child path and allocate a wrapper after excluding private orphans.
+ */
 static int ext4fs_lookup(struct vfs_inode *directory, const char *name,
 				  struct vfs_inode **result)
 {
@@ -656,6 +697,7 @@ static int ext4fs_lookup(struct vfs_inode *directory, const char *name,
 	return status;
 }
 
+/* Create a regular ext4 file and roll it back on metadata failure. */
 static int ext4fs_create(struct vfs_inode *directory, const char *name,
 			 uint32 mode, uint32 uid, uint32 gid,
 			 struct vfs_inode **result)
@@ -707,6 +749,7 @@ out:
 	return status;
 }
 
+/* Create an ext4 directory and roll it back on metadata failure. */
 static int ext4fs_mkdir(struct vfs_inode *directory, const char *name,
 			uint32 mode, uint32 uid, uint32 gid,
 			struct vfs_inode **result)
@@ -756,6 +799,7 @@ out:
 	return status;
 }
 
+/* Remove a non-directory entry, preserving open unlinked files as orphans. */
 static int ext4fs_unlink(struct vfs_inode *directory, const char *name)
 {
 	struct ext4fs_inode *private = directory->private;
@@ -785,6 +829,7 @@ static int ext4fs_unlink(struct vfs_inode *directory, const char *name)
 	return status;
 }
 
+/* Inspect entries other than dot names before removing ext4 directory. */
 static int ext4fs_directory_empty(const char *path)
 {
 	const ext4_direntry *entry;
@@ -806,6 +851,7 @@ static int ext4fs_directory_empty(const char *path)
 	return VFS_OK;
 }
 
+/* Reject nonempty directories before removing the ext4 directory. */
 static int ext4fs_rmdir(struct vfs_inode *directory, const char *name)
 {
 	struct ext4fs_inode *private = directory->private;
@@ -826,6 +872,7 @@ static int ext4fs_rmdir(struct vfs_inode *directory, const char *name)
 	return status;
 }
 
+/* Create hard link and update parent directory timestamps. */
 static int ext4fs_link(struct vfs_inode *inode,
 		       struct vfs_inode *directory, const char *name)
 {
@@ -850,6 +897,7 @@ static int ext4fs_link(struct vfs_inode *inode,
 	return status;
 }
 
+/* Create symbolic link, assign metadata, and return VFS wrapper. */
 static int ext4fs_symlink(struct vfs_inode *directory, const char *name,
 			  const char *target, uint32 uid, uint32 gid,
 			  struct vfs_inode **result)
@@ -893,6 +941,7 @@ out:
 	return status;
 }
 
+/* Encode VFS major/minor device number in ext4 inode format. */
 static uint32 ext4fs_encode_device(uint64 device)
 {
 	uint32 major = VFS_DEVICE_MAJOR(device);
@@ -902,6 +951,7 @@ static uint32 ext4fs_encode_device(uint64 device)
 	       ((minor & ~0xff) << 12);
 }
 
+/* Create special inode then assign its mode, owner, and timestamps. */
 static int ext4fs_mknod(struct vfs_inode *directory, const char *name,
 			enum vfs_inode_type type, uint32 mode, uint32 uid,
 			uint32 gid, uint64 device, struct vfs_inode **result)
@@ -963,6 +1013,7 @@ out:
 	return status;
 }
 
+/* Validate replacement, rename, and update cached paths under mount lock. */
 static int ext4fs_rename(struct vfs_inode *old_directory,
 			 const char *old_name,
 			 struct vfs_inode *new_directory,
@@ -1061,6 +1112,7 @@ out:
 	return status;
 }
 
+/* Copy the backend symbolic-link target without following it. */
 static int ext4fs_readlink(struct vfs_inode *inode, char *buffer,
 			   uint32 size)
 {
@@ -1071,6 +1123,7 @@ static int ext4fs_readlink(struct vfs_inode *inode, char *buffer,
 	return result == EOK ? (int)count : ext4fs_result(result);
 }
 
+/* Extend with zeros or truncate ext4 file, then refresh inode metadata. */
 static int ext4fs_truncate(struct vfs_inode *inode, uint64 size)
 {
 	ext4_file file;
@@ -1112,6 +1165,7 @@ static int ext4fs_truncate(struct vfs_inode *inode, uint64 size)
 	return ext4fs_result(result);
 }
 
+/* Maintain timestamps according to the current filesystem policy. */
 static int ext4fs_set_times(struct vfs_inode *inode,
 			    const struct vfs_timespec times[2], uint32 mask)
 {
@@ -1141,6 +1195,7 @@ static int ext4fs_set_times(struct vfs_inode *inode,
 	return ext4fs_refresh(inode);
 }
 
+/* Set ext4 atime to the VFS-supplied access timestamp. */
 static int ext4fs_accessed(struct vfs_inode *inode,
 			   const struct vfs_timespec *time)
 {
@@ -1158,6 +1213,7 @@ static int ext4fs_accessed(struct vfs_inode *inode,
 	return ext4fs_refresh(inode);
 }
 
+/* Apply mode and ownership changes by inode number, then refresh metadata. */
 static int ext4fs_setattr(struct vfs_inode *inode,
 			  const struct vfs_iattr *attributes)
 {
@@ -1201,6 +1257,7 @@ static const struct vfs_inode_operations ext4fs_inode_operations = {
 	.getattr = ext4fs_getattr,
 };
 
+/* Allocate per-open buffer, open ext4 file, and retain open-inode record. */
 static int ext4fs_file_open(struct vfs_inode *inode, struct vfs_file *file)
 {
 	struct ext4fs_inode *private = inode->private;
@@ -1240,6 +1297,7 @@ static int ext4fs_file_open(struct vfs_inode *inode, struct vfs_file *file)
 	return VFS_OK;
 }
 
+/* Close ext4 handle and release its open-inode record and buffer. */
 static void ext4fs_file_release(struct vfs_file *file)
 {
 	struct ext4fs_file *handle = file->private;
@@ -1256,6 +1314,7 @@ static void ext4fs_file_release(struct vfs_file *file)
 	free(handle);
 }
 
+/* Seek and read under recursive lwext4 lock, copying user chunks out. */
 static int64 ext4fs_read(struct vfs_file *file, int user_destination,
 			 uint64 destination, uint64 count, uint64 *position)
 {
@@ -1302,6 +1361,7 @@ out:
 	return status;
 }
 
+/* Copy user chunks in and write under recursive lwext4 lock. */
 static int64 ext4fs_write(struct vfs_file *file, int user_source,
 			  uint64 source, uint64 count, uint64 *position)
 {
@@ -1350,6 +1410,7 @@ out:
 	return status;
 }
 
+/* Write existing bytes or zeros across range to allocate ext4 blocks. */
 static int ext4fs_fallocate(struct vfs_file *file, uint64 offset,
 			    uint64 length)
 {
@@ -1420,11 +1481,13 @@ out:
 	return result == EOK ? VFS_OK : ext4fs_result(result);
 }
 
+/* Synchronize the ext4 mount containing this open file. */
 static int ext4fs_file_sync(struct vfs_file *file)
 {
 	return ext4fs_sync(file->path.dentry->inode->superblock);
 }
 
+/* Open the ext4 directory and remember whether it is mount root. */
 static int ext4fs_directory_open(struct vfs_inode *inode,
 				 struct vfs_file *file)
 {
@@ -1444,6 +1507,7 @@ static int ext4fs_directory_open(struct vfs_inode *inode,
 	return VFS_OK;
 }
 
+/* Close and free the per-open ext4 directory handle. */
 static void ext4fs_directory_release(struct vfs_file *file)
 {
 	struct ext4fs_directory *handle = file->private;
@@ -1454,6 +1518,7 @@ static void ext4fs_directory_release(struct vfs_file *file)
 	free(handle);
 }
 
+/* Convert lwext4 directory-entry types to VFS directory-entry types. */
 static uint8 ext4fs_dirent_type(uint8 type)
 {
 	switch (type) {
@@ -1476,6 +1541,7 @@ static uint8 ext4fs_dirent_type(uint8 type)
 	}
 }
 
+/* Convert the backend directory cursor into one VFS directory entry. */
 static int ext4fs_readdir(struct vfs_file *file,
 			  struct vfs_dirent *result)
 {
@@ -1503,6 +1569,7 @@ static int ext4fs_readdir(struct vfs_file *file,
 	return 1;
 }
 
+/* Set lwext4 directory offset consumed by next readdir call. */
 static int ext4fs_seekdir(struct vfs_file *file, uint64 position)
 {
 	struct ext4fs_directory *handle = file->private;
@@ -1532,6 +1599,7 @@ static const struct vfs_file_operations ext4fs_directory_operations = {
 	.fsync = ext4fs_file_sync,
 };
 
+/* Register, recover, and journal-start ext4 mount before publishing it. */
 static int ext4fs_mount(struct vfs_filesystem_type *type,
 			struct block_device *device, const void *data,
 			struct vfs_super_block **result)

@@ -1,3 +1,10 @@
+/*
+ * Fixed-point 1, 5, and 15 minute load averages.
+ *
+ * A kernel worker samples runnable/running and uninterruptibly blocked work
+ * every five seconds. The exported values are scaled by LOADAVG_FIXED; they
+ * are load estimates, not CPU utilization percentages.
+ */
 #include <debug.h>
 #include <loadavg.h>
 #include <mystring.h>
@@ -16,6 +23,10 @@ static struct {
 
 static const uint32 loadavg_exponent[] = { 1884, 2014, 2037 };
 
+/*
+ * Exponentiate the scaled decay factor by squaring; every product is rounded
+ * back to LOADAVG_FIXED units, avoiding floating-point kernel state.
+ */
 static uint32 loadavg_fixed_power(uint32 base, uint64 exponent)
 {
 	uint64 result = LOADAVG_FIXED;
@@ -32,6 +43,10 @@ static uint32 loadavg_fixed_power(uint32 base, uint64 exponent)
 	return result;
 }
 
+/*
+ * Blend the old scaled average with the active-task target using the elapsed
+ * number of five-second decay periods.
+ */
 static uint32 loadavg_update(uint32 old, uint32 active,
 			     uint32 exponent, uint64 periods)
 {
@@ -43,6 +58,10 @@ static uint32 loadavg_update(uint32 old, uint32 active,
 	       LOADAVG_FIXED;
 }
 
+/*
+ * Obtain the process snapshot without the average lock, then update all three
+ * averages together so readers never observe a mixed sample.
+ */
 static void loadavg_sample(void)
 {
 	struct process_system_snapshot snapshot;
@@ -59,6 +78,11 @@ static void loadavg_sample(void)
 	spinlock_release(&load_average.lock);
 }
 
+/*
+ * Sleep on the worker-private timed queue between samples. The worker runs
+ * indefinitely and must drop its condition lock before collecting process
+ * statistics.
+ */
 static void loadavg_thread(void *argument)
 {
 	(void)argument;
@@ -72,6 +96,16 @@ static void loadavg_thread(void *argument)
 	}
 }
 
+/**
+ * loadavg_get() - Copy the three scaled load estimates
+ * @average: Kernel array of three uint32 values; NULL is ignored.
+ *
+ * Elements are ordered as 1, 5, and 15 minute averages; divide by
+ * LOADAVG_FIXED to obtain the load.
+ *
+ * Context: After initialization; takes the load-average spinlock, does not
+ *          sleep.
+ */
 void loadavg_get(uint32 average[3])
 {
 	int index;
@@ -84,6 +118,14 @@ void loadavg_get(uint32 average[3])
 	spinlock_release(&load_average.lock);
 }
 
+/**
+ * loadavg_init() - Start periodic load sampling
+ *
+ * Initializes the averages to zero and creates one persistent worker. Worker
+ * creation failure is fatal.
+ *
+ * Context: Boot thread after wait queues and kernel threads are initialized.
+ */
 void loadavg_init(void)
 {
 	spinlock_init(&load_average.lock, "load average");

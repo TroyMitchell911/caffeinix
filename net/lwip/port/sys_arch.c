@@ -1,3 +1,9 @@
+/*
+ * lwIP sys_arch port for Caffeinix synchronization, time, and threads.
+ *
+ * Dynamic objects use kernel wait queues and locks; lightweight protection
+ * tracks nesting per CPU while preemption is disabled around the transition.
+ */
 #include <cpu.h>
 #include <debug.h>
 #include <kernel_config.h>
@@ -60,6 +66,11 @@ sys_sem_t *lwip_thread_sem(void)
 	return &thread_semaphores[current - thread];
 }
 
+/**
+ * sys_init() - Initialize this port before lwIP creates its tcpip thread
+ *
+ * Context: Early process context, once; allocates per-CPU protection state.
+ */
 void sys_init(void)
 {
 	uint32 index;
@@ -83,6 +94,14 @@ void sys_init(void)
 	random_state = (uint32)ktime_get_ticks() ^ 0x9e3779b9U;
 }
 
+/**
+ * sys_mutex_new() - Allocate a sleepable mutex
+ * @mutex: Non-NULL output handle.
+ *
+ * Context: Process context; may allocate.
+ *
+ * Return: ERR_OK, ERR_ARG, or ERR_MEM.
+ */
 err_t sys_mutex_new(sys_mutex_t *mutex)
 {
 	if (!mutex)
@@ -94,6 +113,12 @@ err_t sys_mutex_new(sys_mutex_t *mutex)
 	return ERR_OK;
 }
 
+/**
+ * sys_mutex_lock() - Acquire a valid lwIP mutex
+ * @mutex: Valid mutex handle.
+ *
+ * Context: Thread context; may sleep.
+ */
 void sys_mutex_lock(sys_mutex_t *mutex)
 {
 	if (!sys_mutex_valid(mutex))
@@ -101,6 +126,12 @@ void sys_mutex_lock(sys_mutex_t *mutex)
 	sleeplock_acquire(&(*mutex)->lock);
 }
 
+/**
+ * sys_mutex_unlock() - Release a mutex acquired by the current thread
+ * @mutex: Valid mutex handle.
+ *
+ * Context: Thread context; does not sleep.
+ */
 void sys_mutex_unlock(sys_mutex_t *mutex)
 {
 	if (!sys_mutex_valid(mutex))
@@ -108,6 +139,12 @@ void sys_mutex_unlock(sys_mutex_t *mutex)
 	sleeplock_release(&(*mutex)->lock);
 }
 
+/**
+ * sys_mutex_free() - Free an idle mutex and clear its handle
+ * @mutex: Valid or NULL mutex handle.
+ *
+ * Context: Process context; no holder or waiters may remain.
+ */
 void sys_mutex_free(sys_mutex_t *mutex)
 {
 	if (!sys_mutex_valid(mutex))
@@ -119,17 +156,40 @@ void sys_mutex_free(sys_mutex_t *mutex)
 	*mutex = 0;
 }
 
+/**
+ * sys_mutex_valid() - Test whether a mutex handle names an allocated object
+ * @mutex: Candidate handle.
+ *
+ * Context: Any context.
+ *
+ * Return: Nonzero for a valid handle.
+ */
 int sys_mutex_valid(sys_mutex_t *mutex)
 {
 	return mutex && *mutex;
 }
 
+/**
+ * sys_mutex_set_invalid() - Clear a mutex handle without freeing it
+ * @mutex: Optional handle storage.
+ *
+ * Context: Any context.
+ */
 void sys_mutex_set_invalid(sys_mutex_t *mutex)
 {
 	if (mutex)
 		*mutex = 0;
 }
 
+/**
+ * sys_sem_new() - Allocate a counting semaphore
+ * @sem: Non-NULL output handle.
+ * @count: Initial token count.
+ *
+ * Context: Process context; may allocate.
+ *
+ * Return: ERR_OK, ERR_ARG, or ERR_MEM.
+ */
 err_t sys_sem_new(sys_sem_t *sem, u8_t count)
 {
 	if (!sem)
@@ -143,6 +203,12 @@ err_t sys_sem_new(sys_sem_t *sem, u8_t count)
 	return ERR_OK;
 }
 
+/**
+ * sys_sem_signal() - Increment a valid semaphore and wake one waiter
+ * @sem: Valid semaphore handle.
+ *
+ * Context: Sleepable process or deferred-work context; does not sleep.
+ */
 void sys_sem_signal(sys_sem_t *sem)
 {
 	if (!sys_sem_valid(sem))
@@ -153,6 +219,15 @@ void sys_sem_signal(sys_sem_t *sem)
 	spinlock_release(&(*sem)->lock);
 }
 
+/**
+ * sys_arch_sem_wait() - Consume a semaphore token or return timeout
+ * @sem: Valid semaphore handle.
+ * @timeout: Milliseconds, or zero for an unbounded wait.
+ *
+ * Context: Thread context; may sleep.
+ *
+ * Return: Elapsed milliseconds or timeout.
+ */
 u32_t sys_arch_sem_wait(sys_sem_t *sem, u32_t timeout)
 {
 	uint32 elapsed, start;
@@ -184,6 +259,12 @@ u32_t sys_arch_sem_wait(sys_sem_t *sem, u32_t timeout)
 	return sys_now() - start;
 }
 
+/**
+ * sys_sem_free() - Free an idle semaphore and invalidate its handle
+ * @sem: Valid or NULL handle.
+ *
+ * Context: Process context; no waiters may remain.
+ */
 void sys_sem_free(sys_sem_t *sem)
 {
 	if (!sys_sem_valid(sem))
@@ -194,17 +275,40 @@ void sys_sem_free(sys_sem_t *sem)
 	*sem = 0;
 }
 
+/**
+ * sys_sem_valid() - Test whether a semaphore handle is valid
+ * @sem: Candidate handle.
+ *
+ * Context: Any context.
+ *
+ * Return: Nonzero for a valid handle.
+ */
 int sys_sem_valid(sys_sem_t *sem)
 {
 	return sem && *sem;
 }
 
+/**
+ * sys_sem_set_invalid() - Clear a semaphore handle without freeing storage
+ * @sem: Optional handle storage.
+ *
+ * Context: Any context.
+ */
 void sys_sem_set_invalid(sys_sem_t *sem)
 {
 	if (sem)
 		*sem = 0;
 }
 
+/**
+ * sys_mbox_new() - Allocate a bounded FIFO mailbox
+ * @mbox: Non-NULL output handle.
+ * @size: Requested entries, normalized to the supported bound.
+ *
+ * Context: Process context; may allocate.
+ *
+ * Return: ERR_OK, ERR_ARG, or ERR_MEM.
+ */
 err_t sys_mbox_new(sys_mbox_t *mbox, int size)
 {
 	uint64 allocation;
@@ -226,6 +330,13 @@ err_t sys_mbox_new(sys_mbox_t *mbox, int size)
 	return ERR_OK;
 }
 
+/**
+ * sys_mbox_post() - Enqueue a message, sleeping until room exists
+ * @mbox: Valid mailbox handle.
+ * @message: Opaque pointer retained until a receiver dequeues it.
+ *
+ * Context: Thread context; may sleep.
+ */
 void sys_mbox_post(sys_mbox_t *mbox, void *message)
 {
 	if (!sys_mbox_valid(mbox))
@@ -239,6 +350,15 @@ void sys_mbox_post(sys_mbox_t *mbox, void *message)
 	spinlock_release(&(*mbox)->lock);
 }
 
+/**
+ * sys_mbox_trypost() - Enqueue a message without sleeping
+ * @mbox: Valid mailbox handle.
+ * @message: Opaque pointer to enqueue.
+ *
+ * Context: Any non-hard-IRQ context.
+ *
+ * Return: ERR_OK, ERR_ARG, or ERR_MEM.
+ */
 err_t sys_mbox_trypost(sys_mbox_t *mbox, void *message)
 {
 	if (!sys_mbox_valid(mbox))
@@ -255,11 +375,30 @@ err_t sys_mbox_trypost(sys_mbox_t *mbox, void *message)
 	return ERR_OK;
 }
 
+/**
+ * sys_mbox_trypost_fromisr() - Nonblocking lwIP ISR-style mailbox post
+ * @mbox: Valid mailbox handle.
+ * @message: Opaque pointer to enqueue.
+ *
+ * Context: Deferred context;
+ *
+ * Return: ERR_OK, ERR_ARG, or ERR_MEM.
+ */
 err_t sys_mbox_trypost_fromisr(sys_mbox_t *mbox, void *message)
 {
 	return sys_mbox_trypost(mbox, message);
 }
 
+/**
+ * sys_arch_mbox_fetch() - Dequeue a message, blocking up to a timeout
+ * @mbox: Valid mailbox handle.
+ * @message: Optional output pointer.
+ * @timeout: Milliseconds, or zero for an unbounded wait.
+ *
+ * Context: Thread context; may sleep.
+ *
+ * Return: Elapsed milliseconds or timeout.
+ */
 u32_t sys_arch_mbox_fetch(sys_mbox_t *mbox, void **message,
 			  u32_t timeout)
 {
@@ -298,6 +437,15 @@ u32_t sys_arch_mbox_fetch(sys_mbox_t *mbox, void **message,
 	return sys_now() - start;
 }
 
+/**
+ * sys_arch_mbox_tryfetch() - Dequeue immediately or report an empty mailbox
+ * @mbox: Valid mailbox handle.
+ * @message: Optional output pointer.
+ *
+ * Context: Any non-hard-IRQ context.
+ *
+ * Return: 0 or SYS_MBOX_EMPTY.
+ */
 u32_t sys_arch_mbox_tryfetch(sys_mbox_t *mbox, void **message)
 {
 	void *value;
@@ -318,6 +466,12 @@ u32_t sys_arch_mbox_tryfetch(sys_mbox_t *mbox, void **message)
 	return 0;
 }
 
+/**
+ * sys_mbox_free() - Free an empty mailbox with no blocked users
+ * @mbox: Valid or NULL mailbox handle.
+ *
+ * Context: Process context; mailbox ownership transfers back to allocator.
+ */
 void sys_mbox_free(sys_mbox_t *mbox)
 {
 	if (!sys_mbox_valid(mbox))
@@ -329,17 +483,43 @@ void sys_mbox_free(sys_mbox_t *mbox)
 	*mbox = 0;
 }
 
+/**
+ * sys_mbox_valid() - Test whether a mailbox handle names an allocated FIFO
+ * @mbox: Candidate handle.
+ *
+ * Context: Any context.
+ *
+ * Return: Nonzero for a valid handle.
+ */
 int sys_mbox_valid(sys_mbox_t *mbox)
 {
 	return mbox && *mbox;
 }
 
+/**
+ * sys_mbox_set_invalid() - Clear a mailbox handle without freeing storage
+ * @mbox: Optional handle storage.
+ *
+ * Context: Any context.
+ */
 void sys_mbox_set_invalid(sys_mbox_t *mbox)
 {
 	if (mbox)
 		*mbox = 0;
 }
 
+/**
+ * sys_thread_new() - Start a named Caffeinix thread for lwIP work
+ * @name: Thread name.
+ * @function: lwIP entry function.
+ * @argument: Opaque function argument.
+ * @stack_size: Ignored; kernel thread policy supplies the stack.
+ * @priority: Ignored; scheduler policy supplies priority.
+ *
+ * Context: Process context; may allocate.
+ *
+ * Return: Created thread handle.
+ */
 sys_thread_t sys_thread_new(const char *name, lwip_thread_fn function,
 			    void *argument, int stack_size, int priority)
 {
@@ -353,16 +533,37 @@ sys_thread_t sys_thread_new(const char *name, lwip_thread_fn function,
 	return created;
 }
 
+/**
+ * sys_jiffies() - Return monotonic kernel timer ticks
+ *
+ * Context: Any context.
+ *
+ * Return: Current tick count truncated to lwIP width.
+ */
 u32_t sys_jiffies(void)
 {
 	return (u32_t)ktime_get_ticks();
 }
 
+/**
+ * sys_now() - Return monotonic milliseconds used by lwIP timeouts
+ *
+ * Context: Any context.
+ *
+ * Return: Current millisecond count truncated to u32_t.
+ */
 u32_t sys_now(void)
 {
 	return (u32_t)ktime_get_ms();
 }
 
+/**
+ * sys_arch_protect() - Enter recursive lightweight protection on this CPU
+ *
+ * Context: Any non-hard-IRQ context.
+ *
+ * Return: Previous nesting depth token.
+ */
 sys_prot_t sys_arch_protect(void)
 {
 	uint32 previous;
@@ -380,6 +581,12 @@ sys_prot_t sys_arch_protect(void)
 	return previous;
 }
 
+/**
+ * sys_arch_unprotect() - Restore lightweight-protection nesting
+ * @previous: Token returned by the matching sys_arch_protect().
+ *
+ * Context: Same CPU and context as the matching acquire.
+ */
 void sys_arch_unprotect(sys_prot_t previous)
 {
 	int cpu;

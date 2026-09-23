@@ -1,3 +1,12 @@
+/*
+ * Boot-seeded kernel random output with per-block rekeying.
+ *
+ * Device entropy and boot-time diversification feed a global locked state.
+ * Only hardware input receives entropy credit. Output is available after boot
+ * finalization even without a trusted seed; random_is_strong() distinguishes
+ * that warned fallback. See Documentation/random.md for the security
+ * boundary.
+ */
 #include <debug.h>
 #include <ktime.h>
 #include <mystring.h>
@@ -23,6 +32,10 @@ static struct {
 	uint8 finalized;
 } random_state;
 
+/*
+ * Rotate a 32-bit word by a nonzero count below 32; ChaCha and mixing callers
+ * supply fixed in-range shifts.
+ */
 static uint32 rotate_left(uint32 value, uint32 shift)
 {
 	return (value << shift) | (value >> (32 - shift));
@@ -35,6 +48,11 @@ static uint32 rotate_left(uint32 value, uint32 shift)
 	(c) += (d); (b) ^= (c); (b) = rotate_left((b), 7); \
 } while (0)
 
+/*
+ * Generate one block from the exclusively held generator state and advance
+ * its 64-bit counter. The caller decides which words become the next key and
+ * which may be exported.
+ */
 static void chacha20_block(uint32 output[RANDOM_BLOCK_WORDS])
 {
 	static const uint32 constants[4] = {
@@ -67,6 +85,11 @@ static void chacha20_block(uint32 output[RANDOM_BLOCK_WORDS])
 
 #undef QUARTER_ROUND
 
+/*
+ * Fold input into the key and diffuse it through a block before replacing
+ * key, nonce, and counter. Callers own generator serialization; only
+ * random_add_hardware() assigns entropy credit.
+ */
 static void random_mix_locked(const void *buffer, uint32 length)
 {
 	const uint8 *bytes = buffer;
@@ -91,6 +114,15 @@ static void random_mix_locked(const void *buffer, uint32 length)
 	memset(block, 0, sizeof(block));
 }
 
+/**
+ * random_init() - Initialize boot-time random state
+ *
+ * Mixes diversification values without crediting them as trusted entropy.
+ * This routine does not yet enable random output.
+ *
+ * Context: Serialized boot after timer and allocator setup; no concurrent
+ *          readers.
+ */
 void random_init(void)
 {
 	uint64 seed[] = {
@@ -118,6 +150,17 @@ void random_init(void)
 	memset(seed, 0, sizeof(seed));
 }
 
+/**
+ * random_add_hardware() - Mix trusted device entropy into the generator
+ * @buffer: Borrowed readable kernel buffer; NULL is ignored.
+ * @length: Input bytes; zero is ignored, credit saturates at 256 bits.
+ *
+ * Only callers receiving entropy from a trusted device should use this path.
+ * Successful copying alone does not establish that the source is trustworthy.
+ *
+ * Context: After random_init(); takes the generator spinlock and does not
+ *          sleep.
+ */
 void random_add_hardware(const void *buffer, uint32 length)
 {
 	uint32 bits;
@@ -135,6 +178,14 @@ void random_add_hardware(const void *buffer, uint32 length)
 	spinlock_release(&random_state.lock);
 }
 
+/**
+ * random_finalize_boot() - Enable random consumers after device probing
+ *
+ * Logs whether enough hardware entropy was credited. The weak fallback still
+ * allows output and must not be represented as a trusted seed.
+ *
+ * Context: Serialized boot once; panics if initialization was skipped.
+ */
 void random_finalize_boot(void)
 {
 	int strong;
@@ -151,6 +202,21 @@ void random_finalize_boot(void)
 		pr_warn("random: using untrusted boot-time seed");
 }
 
+/**
+ * get_random_bytes() - Fill a kernel buffer from finalized random state
+ * @buffer: Writable kernel destination; may be NULL only when @length is
+ *          zero.
+ * @length: Number of bytes to fill; destination remains caller-owned.
+ *
+ * Rekeys after each block and exports a disjoint part of that block. Success
+ * does not imply strong seeding; use random_is_strong() when entropy quality
+ * matters.
+ *
+ * Context: After boot finalization; holds the generator spinlock for the
+ *          complete request and does not sleep.
+ * Return: %0 on complete success; %-1 for invalid arguments or unavailable
+ *         state.
+ */
 int get_random_bytes(void *buffer, uint64 length)
 {
 	uint8 *destination = buffer;
@@ -178,11 +244,30 @@ int get_random_bytes(void *buffer, uint64 length)
 	return 0;
 }
 
+/**
+ * get_random_u64() - Fill one random 64-bit value
+ * @value: Non-NULL writable kernel destination.
+ *
+ * Context: Same locking and initialization requirements as
+ *          get_random_bytes().
+ * Return: %0 on success, %-1 if output is unavailable or @value is NULL.
+ */
 int get_random_u64(uint64 *value)
 {
 	return get_random_bytes(value, sizeof(*value));
 }
 
+/**
+ * random_is_strong() - Check credited hardware entropy
+ *
+ * This reports credited seed quality, not whether boot finalization has
+ * enabled output.
+ *
+ * Context: After random_init(); takes the generator spinlock without
+ *          sleeping.
+ * Return: Nonzero after at least 256 bits of device input were credited,
+ *         otherwise zero.
+ */
 int random_is_strong(void)
 {
 	int strong;

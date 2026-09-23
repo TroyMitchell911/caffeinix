@@ -1,3 +1,9 @@
+/*
+ * Fixed-size network packet pool.
+ *
+ * Packets carry explicit references and one page-backed buffer.  The pool is
+ * bounded intentionally, so callers must handle allocation failure.
+ */
 #include <debug.h>
 #include <mystring.h>
 #include <netdevice.h>
@@ -10,6 +16,15 @@ static struct {
 	uint32 available;
 } packet_pool;
 
+/**
+ * net_packet_pool_init() - Allocate packet backing and seed the pool
+ *
+ * Allocates NET_PACKET_POOL_SIZE buffers through palloc(), which panics on
+ * exhaustion. The NULL check cannot provide a partial-capacity fallback with
+ * this allocator. Later net_packet_alloc() calls can fail when the pool is busy.
+ *
+ * Context: Boot once, before networking is published; may allocate.
+ */
 void net_packet_pool_init(void)
 {
 	uint32 index;

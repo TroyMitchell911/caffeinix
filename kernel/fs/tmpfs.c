@@ -1,3 +1,10 @@
+/*
+ * In-memory temporary filesystem.
+ *
+ * tmpfs stores namespace entries, inode metadata, and lazily allocated pages
+ * in kernel memory.  The tmpfs_super lock serializes every tmpfs object;
+ * page and link lifetime follows inode references and directory entries.
+ */
 #include <block_device.h>
 #include <char_device.h>
 #include <debug.h>
@@ -59,6 +66,9 @@ static const struct vfs_file_operations tmpfs_directory_operations;
 
 #define TMPFS_TIME_CTIME (1U << 2)
 
+/*
+ * Caller holds tmpfs_super.lock while applying the requested timestamp updates.
+ */
 static void tmpfs_touch_locked(struct tmpfs_inode *inode, uint32 mask)
 {
 	struct vfs_timespec now;
@@ -73,6 +83,7 @@ static void tmpfs_touch_locked(struct tmpfs_inode *inode, uint32 mask)
 		inode->ctime = now;
 }
 
+/* Caller holds tmpfs_super.lock while allocating an unlinked private inode. */
 static struct tmpfs_inode *tmpfs_inode_alloc_locked(
 	struct tmpfs_super *super, enum vfs_inode_type type, uint32 mode,
 	uint32 uid, uint32 gid)
@@ -92,6 +103,7 @@ static struct tmpfs_inode *tmpfs_inode_alloc_locked(
 	return inode;
 }
 
+/* Caller holds the subsystem lock while this helper updates private state. */
 static void tmpfs_inode_destroy_locked(struct tmpfs_inode *inode)
 {
 	struct tmpfs_page *page, *next;
@@ -108,12 +120,14 @@ static void tmpfs_inode_destroy_locked(struct tmpfs_inode *inode)
 	free(inode);
 }
 
+/* Caller holds the subsystem lock while this helper updates private state. */
 static void tmpfs_inode_maybe_destroy_locked(struct tmpfs_inode *inode)
 {
 	if (!inode->nlink && !inode->references)
 		tmpfs_inode_destroy_locked(inode);
 }
 
+/* Caller holds the subsystem lock while this helper updates private state. */
 static void tmpfs_refresh_locked(struct vfs_inode *inode)
 {
 	struct tmpfs_inode *node = inode->private;
@@ -141,6 +155,9 @@ static void tmpfs_refresh_locked(struct vfs_inode *inode)
 		inode->file_operations = &vfs_block_device_operations;
 }
 
+/*
+ * Caller holds tmpfs_super.lock while reflecting private inode metadata in VFS.
+ */
 static struct vfs_inode *tmpfs_wrap_locked(
 	struct vfs_super_block *superblock, struct tmpfs_inode *node)
 {
@@ -154,6 +171,7 @@ static struct vfs_inode *tmpfs_wrap_locked(
 	return inode;
 }
 
+/* Caller holds tmpfs_super.lock while scanning a directory's entry list. */
 static struct tmpfs_entry *tmpfs_find_entry_locked(
 	struct tmpfs_inode *directory, const char *name,
 	struct tmpfs_entry **previous)
@@ -173,6 +191,7 @@ static struct tmpfs_entry *tmpfs_find_entry_locked(
 	return 0;
 }
 
+/* Caller holds the subsystem lock while this helper updates private state. */
 static int tmpfs_add_entry_locked(struct tmpfs_inode *directory,
 				  const char *name,
 				  struct tmpfs_inode *inode)
@@ -197,6 +216,7 @@ static int tmpfs_add_entry_locked(struct tmpfs_inode *directory,
 	return VFS_OK;
 }
 
+/* Caller holds the subsystem lock while this helper updates private state. */
 static void tmpfs_detach_entry_locked(struct tmpfs_inode *directory,
 				      struct tmpfs_entry *entry,
 				      struct tmpfs_entry *previous)
@@ -207,6 +227,7 @@ static void tmpfs_detach_entry_locked(struct tmpfs_inode *directory,
 		directory->entries = entry->next;
 }
 
+/* Caller holds the subsystem lock while this helper updates private state. */
 static void tmpfs_remove_entry_locked(struct tmpfs_inode *directory,
 				      struct tmpfs_entry *entry,
 				      struct tmpfs_entry *previous)
@@ -225,6 +246,7 @@ static void tmpfs_remove_entry_locked(struct tmpfs_inode *directory,
 	tmpfs_inode_maybe_destroy_locked(inode);
 }
 
+/* Release filesystem-private inode state on the final VFS inode put. */
 static void tmpfs_put_inode(struct vfs_inode *inode)
 {
 	struct tmpfs_super *super = inode->superblock->private;
@@ -238,12 +260,14 @@ static void tmpfs_put_inode(struct vfs_inode *inode)
 	sleeplock_release(&super->lock);
 }
 
+/* tmpfs has no backing store, so all changes are memory-resident. */
 static int tmpfs_sync(struct vfs_super_block *superblock)
 {
 	(void)superblock;
 	return VFS_OK;
 }
 
+/* Report tmpfs page-sized memory accounting. */
 static int tmpfs_statfs(struct vfs_super_block *superblock,
 			struct vfs_statfs *stat)
 {
@@ -263,6 +287,7 @@ static int tmpfs_statfs(struct vfs_super_block *superblock,
 	return VFS_OK;
 }
 
+/* Caller holds the subsystem lock while this helper updates private state. */
 static void tmpfs_destroy_tree_locked(struct tmpfs_inode *inode)
 {
 	struct tmpfs_entry *entry, *next;
@@ -288,6 +313,7 @@ static void tmpfs_destroy_tree_locked(struct tmpfs_inode *inode)
 	tmpfs_inode_maybe_destroy_locked(inode);
 }
 
+/* Destroy the tmpfs tree after VFS detaches the mount. */
 static void tmpfs_unmount(struct vfs_super_block *superblock)
 {
 	struct tmpfs_super *super = superblock->private;
@@ -309,6 +335,7 @@ static const struct vfs_super_operations tmpfs_super_operations = {
 	.unmount = tmpfs_unmount,
 };
 
+/* Serialize metadata stat with concurrent tmpfs changes. */
 static int tmpfs_getattr(struct vfs_inode *inode, struct vfs_stat *stat)
 {
 	struct tmpfs_super *super = inode->superblock->private;
@@ -319,6 +346,9 @@ static int tmpfs_getattr(struct vfs_inode *inode, struct vfs_stat *stat)
 	return vfs_inode_stat_default(inode, stat);
 }
 
+/*
+ * Lock tmpfs, find a child entry, and return a new VFS wrapper for its inode.
+ */
 static int tmpfs_lookup(struct vfs_inode *directory, const char *name,
 			struct vfs_inode **result)
 {
@@ -339,6 +369,7 @@ static int tmpfs_lookup(struct vfs_inode *directory, const char *name,
 	return *result ? VFS_OK : VFS_ERR_NOMEM;
 }
 
+/* Allocate, link, and wrap a new regular tmpfs inode. */
 static int tmpfs_create(struct vfs_inode *directory, const char *name,
 			uint32 mode, uint32 uid, uint32 gid,
 			struct vfs_inode **result)
@@ -384,6 +415,7 @@ out:
 	return status;
 }
 
+/* Allocate, link, and wrap a new tmpfs directory inode. */
 static int tmpfs_mkdir(struct vfs_inode *directory, const char *name,
 		       uint32 mode, uint32 uid, uint32 gid,
 		       struct vfs_inode **result)
@@ -432,6 +464,7 @@ out:
 	return status;
 }
 
+/* Reject directories, then remove a named tmpfs link. */
 static int tmpfs_unlink(struct vfs_inode *directory, const char *name)
 {
 	struct tmpfs_super *super = directory->superblock->private;
@@ -454,6 +487,7 @@ static int tmpfs_unlink(struct vfs_inode *directory, const char *name)
 	return status;
 }
 
+/* Remove an empty tmpfs directory and drop its parent link. */
 static int tmpfs_rmdir(struct vfs_inode *directory, const char *name)
 {
 	struct tmpfs_super *super = directory->superblock->private;
@@ -478,6 +512,7 @@ static int tmpfs_rmdir(struct vfs_inode *directory, const char *name)
 	return status;
 }
 
+/* Add a second directory entry and increment target inode link count. */
 static int tmpfs_link(struct vfs_inode *inode,
 		      struct vfs_inode *directory, const char *name)
 {
@@ -499,6 +534,7 @@ static int tmpfs_link(struct vfs_inode *inode,
 	return status;
 }
 
+/* Copy target string into new symlink inode before linking it. */
 static int tmpfs_symlink(struct vfs_inode *directory, const char *name,
 			 const char *target, uint32 uid, uint32 gid,
 			 struct vfs_inode **result)
@@ -553,6 +589,7 @@ out:
 	return status;
 }
 
+/* Allocate and link a tmpfs special inode with supplied device number. */
 static int tmpfs_mknod(struct vfs_inode *directory, const char *name,
 		       enum vfs_inode_type type, uint32 mode, uint32 uid,
 		       uint32 gid, uint64 device, struct vfs_inode **result)
@@ -602,6 +639,7 @@ out:
 	return status;
 }
 
+/* Copy the backend symbolic-link target without following it. */
 static int tmpfs_readlink(struct vfs_inode *inode, char *buffer,
 			  uint32 size)
 {
@@ -616,6 +654,7 @@ static int tmpfs_readlink(struct vfs_inode *inode, char *buffer,
 	return length;
 }
 
+/* Caller holds tmpfs_super.lock while scanning the sparse page list. */
 static struct tmpfs_page *tmpfs_find_page_locked(struct tmpfs_inode *inode,
 						 uint64 index)
 {
@@ -628,6 +667,7 @@ static struct tmpfs_page *tmpfs_find_page_locked(struct tmpfs_inode *inode,
 	return 0;
 }
 
+/* Caller holds tmpfs_super.lock while allocating or finding a sparse page. */
 static struct tmpfs_page *tmpfs_get_page_locked(struct tmpfs_inode *inode,
 						uint64 index)
 {
@@ -650,6 +690,7 @@ static struct tmpfs_page *tmpfs_get_page_locked(struct tmpfs_inode *inode,
 	return page;
 }
 
+/* Drop pages beyond new size and update tmpfs metadata. */
 static int tmpfs_truncate(struct vfs_inode *inode, uint64 size)
 {
 	struct tmpfs_super *super = inode->superblock->private;
@@ -688,6 +729,7 @@ static int tmpfs_truncate(struct vfs_inode *inode, uint64 size)
 	return VFS_OK;
 }
 
+/* Move or replace directory entry while holding tmpfs mount lock. */
 static int tmpfs_rename(struct vfs_inode *old_directory,
 			const char *old_name,
 			struct vfs_inode *new_directory,
@@ -769,6 +811,7 @@ out:
 	return status;
 }
 
+/* Maintain timestamps according to the current filesystem policy. */
 static int tmpfs_set_times(struct vfs_inode *inode,
 			   const struct vfs_timespec times[2], uint32 mask)
 {
@@ -786,6 +829,7 @@ static int tmpfs_set_times(struct vfs_inode *inode,
 	return VFS_OK;
 }
 
+/* Apply supported ownership and mode changes, then update ctime. */
 static int tmpfs_setattr(struct vfs_inode *inode,
 			 const struct vfs_iattr *attributes)
 {
@@ -805,6 +849,7 @@ static int tmpfs_setattr(struct vfs_inode *inode,
 	return VFS_OK;
 }
 
+/* Record supplied atime only when newer than stored atime. */
 static int tmpfs_accessed(struct vfs_inode *inode,
 			  const struct vfs_timespec *time)
 {
@@ -836,6 +881,7 @@ static const struct vfs_inode_operations tmpfs_inode_operations = {
 	.getattr = tmpfs_getattr,
 };
 
+/* Read sparse pages under mount lock, supplying zeros for holes. */
 static int64 tmpfs_read(struct vfs_file *file, int user_destination,
 			uint64 destination, uint64 count, uint64 *position)
 {
@@ -874,6 +920,7 @@ out:
 	return total;
 }
 
+/* Allocate pages under mount lock and retain partial write progress. */
 static int64 tmpfs_write(struct vfs_file *file, int user_source,
 			 uint64 source, uint64 count, uint64 *position)
 {
@@ -913,6 +960,7 @@ static int64 tmpfs_write(struct vfs_file *file, int user_source,
 	return total ? total : count ? error : 0;
 }
 
+/* Materialize requested range as zero-filled sparse pages. */
 static int tmpfs_fallocate(struct vfs_file *file, uint64 offset,
 			   uint64 length)
 {
@@ -943,6 +991,7 @@ static int tmpfs_fallocate(struct vfs_file *file, uint64 offset,
 	return result;
 }
 
+/* tmpfs file data needs no external flush. */
 static int tmpfs_file_sync(struct vfs_file *file)
 {
 	(void)file;
@@ -957,6 +1006,7 @@ static const struct vfs_file_operations tmpfs_file_operations = {
 	.fallocate = tmpfs_fallocate,
 };
 
+/* Map tmpfs inode kinds to VFS directory-entry types. */
 static uint8 tmpfs_dirent_type(enum vfs_inode_type type)
 {
 	switch (type) {
@@ -979,6 +1029,7 @@ static uint8 tmpfs_dirent_type(enum vfs_inode_type type)
 	}
 }
 
+/* Convert the backend directory cursor into one VFS directory entry. */
 static int tmpfs_readdir(struct vfs_file *file,
 			 struct vfs_dirent *result)
 {
@@ -1018,6 +1069,7 @@ static const struct vfs_file_operations tmpfs_directory_operations = {
 	.fsync = tmpfs_file_sync,
 };
 
+/* Allocate tmpfs private state and root inode for this mount. */
 static int tmpfs_mount(struct vfs_filesystem_type *type,
 		       struct block_device *device, const void *data,
 		       struct vfs_super_block **result)

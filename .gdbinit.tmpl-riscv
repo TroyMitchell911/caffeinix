@@ -1,3 +1,5 @@
+# QEMU remote-debug template. make substitutes its per-user port and the
+# symbol file belongs to the kernel built in this working tree.
 set confirm off
 set architecture riscv:rv64
 target remote 127.0.0.1:1234

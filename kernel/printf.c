@@ -1,3 +1,10 @@
+/*
+ * Freestanding formatting and serialized polling console output.
+ *
+ * The formatter supports the subset needed by the kernel, not the complete
+ * libc printf ABI. Callback emission separates text formatting from storage
+ * or UART output; panic output deliberately bypasses normal locking.
+ */
 #include <printf.h>
 #include <stdarg.h>
 #include <spinlock.h>
@@ -9,12 +16,20 @@ static struct {
 	uint8 locking;
 }pf;
 
+/*
+ * Formatter callback for the polling console; context is unused because
+ * console selection is global.
+ */
 static void console_emit(int character, void *context)
 {
 	(void)context;
 	console_putc(character);
 }
 
+/*
+ * Generate digits in reverse in a fixed local buffer, then emit sign and
+ * padding in the requested order. Callers constrain base to 10 or 16.
+ */
 static void emit_number(printf_emit_t emit, void *context, uint64 number,
 			uint8 base, int negative, int width, int zero_pad)
 {
@@ -36,6 +51,10 @@ static void emit_number(printf_emit_t emit, void *context, uint64 number,
 		emit(buffer[length], context);
 }
 
+/*
+ * Print the full RV64 address as a fixed-width hexadecimal value so leading
+ * zeroes are retained in diagnostics.
+ */
 static void emit_pointer(printf_emit_t emit, void *context, uint64 pointer)
 {
         int i;
@@ -46,6 +65,20 @@ static void emit_pointer(printf_emit_t emit, void *context, uint64 pointer)
 		emit(digits[pointer >> (sizeof(uint64) * 8 - 4)], context);
 }
 
+/**
+ * vprintf_emit() - Format text through a caller-provided sink
+ * @emit: Non-NULL callback consuming one character synchronously.
+ * @context: Borrowed opaque pointer passed unchanged to @emit.
+ * @fmt: Non-NULL format string; must remain readable throughout the call.
+ * @arguments: Variadic argument list matching the supported conversions.
+ *
+ * Supports d, u, x, p, s, c and percent, with decimal width, zero padding and
+ * a single l integer modifier. It does not implement the full libc format
+ * language. The callback may not retain borrowed stack state.
+ *
+ * Context: Determined by @emit; formatter itself takes no locks and does not
+ *          sleep.
+ */
 void vprintf_emit(printf_emit_t emit, void *context, const char *fmt,
 		  va_list arguments)
 {
@@ -124,6 +157,14 @@ void vprintf_emit(printf_emit_t emit, void *context, const char *fmt,
         }
 }
 
+/**
+ * printf() - Print serialized kernel text without a timestamp
+ * @fmt: Format string accepted by vprintf_emit().
+ * @...: Arguments matching @fmt.
+ *
+ * Context: Non-sleeping console context; holds the printf spinlock unless
+ *          panic mode disabled locking. Must not recursively call printf().
+ */
 void printf(char* fmt, ...)
 {
 	va_list arguments;
@@ -139,6 +180,16 @@ void printf(char* fmt, ...)
 		spinlock_release(&pf.lock);
 }
 
+/**
+ * printf_emergency() - Print diagnostics without the normal output lock
+ * @fmt: Format string accepted by vprintf_emit().
+ * @...: Arguments matching @fmt.
+ *
+ * Bypassing serialization avoids depending on a lock held by a faulting
+ * context; this is not a general replacement for printf().
+ *
+ * Context: Non-sleeping diagnostic context; may interleave with other output.
+ */
 void printf_emergency(char *fmt, ...)
 {
 	va_list arguments;
@@ -148,11 +199,21 @@ void printf_emergency(char *fmt, ...)
 	va_end(arguments);
 }
 
+/**
+ * printf_enter_panic() - Disable ordinary output locking permanently
+ *
+ * Context: Fatal-error path only; no return to normal concurrent operation.
+ */
 void printf_enter_panic(void)
 {
 	pf.locking = 0;
 }
 
+/**
+ * printf_init() - Enable serialized console formatting
+ *
+ * Context: Boot once before concurrent printf() callers.
+ */
 void printf_init(void)
 {
         spinlock_init(&pf.lock, "printf");

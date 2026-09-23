@@ -1,3 +1,4 @@
+/* Split virtqueue ownership, descriptor allocation, and completion handling. */
 #include <debug.h>
 #include <dma.h>
 #include <mystring.h>
@@ -5,12 +6,16 @@
 #include <virtio.h>
 #include <virtio_ring.h>
 
+/*
+ * Return the bytes occupied by one available ring, including used-event slot.
+ */
 static uint64 vring_available_size(uint16 size)
 {
 	return sizeof(struct vring_avail) +
 	       sizeof(uint16) * size + sizeof(uint16);
 }
 
+/* Return the bytes occupied by one used ring, including avail-event slot. */
 static uint64 vring_used_size(uint16 size)
 {
 	return sizeof(struct vring_used) +
@@ -97,6 +102,7 @@ void virtqueue_destroy(struct virtqueue *queue)
 	free(queue);
 }
 
+/* Pop one descriptor while @queue->lock protects the free list. */
 static uint16 virtqueue_alloc_desc(struct virtqueue *queue)
 {
 	uint16 descriptor = queue->free_head;
@@ -108,6 +114,7 @@ static uint16 virtqueue_alloc_desc(struct virtqueue *queue)
 	return descriptor;
 }
 
+/* Return one descriptor to the free list while @queue->lock is held. */
 static void virtqueue_free_desc(struct virtqueue *queue,
 				uint16 descriptor)
 {
@@ -194,6 +201,7 @@ void virtqueue_kick(struct virtqueue *queue)
 	queue->notify(queue);
 }
 
+/* Validate, unmap, and return every descriptor in a completed chain. */
 static void virtqueue_release_chain(struct virtqueue *queue, uint16 head)
 {
 	uint16 descriptor = head;
@@ -229,6 +237,7 @@ static void virtqueue_release_chain(struct virtqueue *queue, uint16 head)
 	}
 }
 
+/* Count unconsumed used entries while @queue->lock protects shadow state. */
 static uint16 virtqueue_used_pending_locked(struct virtqueue *queue)
 {
 	uint16 used_index;

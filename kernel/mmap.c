@@ -1,3 +1,9 @@
+/*
+ * Linux mmap-family syscalls, demand faults, and process VMA lifecycle.
+ *
+ * process->mmap_lock serializes its VMA set and page tables.  Faults translate
+ * VMA policy into page-cache, anonymous-backing, or COW page ownership.
+ */
 #include <debug.h>
 #include <anon_mapping.h>
 #include <cpu.h>
@@ -22,6 +28,7 @@ static struct {
 #define MMAP_RECLAIM_BATCH  64
 #define MMAP_RECLAIM_TARGET 32
 
+/* Remove PTEs for a VMA range, then reclaim cache entries made unmapped. */
 static void mmap_unmap_pages(process_t process, uint64 start, uint64 length)
 {
 	vm_unmap_range(process->pagetable, start, length);
@@ -82,6 +89,17 @@ out:
 	return result;
 }
 
+/**
+ * mmap_process_vfork() - Register a vfork child that temporarily shares its
+ * parent mapping.
+ * @parent: Registered parent process retaining its VMA metadata.
+ * @child: New child that borrows the parent page directory.
+ *
+ * Context: Thread context; acquires registry and both process mmap
+ * sleeplocks and
+ * may sleep.
+ * Return: Zero on success, or -1 when the vfork relationship is invalid.
+ */
 int mmap_process_vfork(process_t parent, process_t child)
 {
 	pagedir_t private_pagetable = 0;
@@ -108,6 +126,19 @@ out:
 	return result;
 }
 
+/**
+ * mmap_process_vfork_detach() - Move or duplicate a shared vfork mapping
+ * registration.
+ * @parent: Registered vfork parent currently owning @shared.
+ * @child: Vfork child that will be registered.
+ * @shared: Shared page-directory pointer used to validate the relationship.
+ *
+ * Context: Thread context; acquires registry and both process mmap
+ * sleeplocks and
+ * may sleep. Invalid state panics.
+ * Return: 1 if @child owns @shared and registration transfers, otherwise 0 when
+ * both processes retain separate ownership.
+ */
 int mmap_process_vfork_detach(process_t parent, process_t child,
 			      uint64 *shared)
 {
@@ -135,6 +166,7 @@ int mmap_process_vfork_detach(process_t parent, process_t child,
 	return child_owns_shared;
 }
 
+/* Identify file-backed areas belonging to an inode during truncation. */
 static int mmap_area_matches_inode(const struct vm_area *area,
 				   const struct vfs_inode *inode)
 {
@@ -148,6 +180,7 @@ static int mmap_area_matches_inode(const struct vm_area *area,
 	       mapped->number == inode->number;
 }
 
+/* Unmap pages beyond a resized file from one registered process. */
 static void mmap_truncate_process(process_t process,
 				  struct vfs_inode *inode, uint64 size)
 {
@@ -201,6 +234,7 @@ int mmap_file_truncate(struct vfs_inode *inode, uint64 old_size,
 	return result;
 }
 
+/* Translate a cached file-page offset into an address within an area. */
 static int mmap_file_page_address(const struct vm_area *area,
 				  const struct vfs_inode *inode,
 				  uint64 offset, uint64 *address)
@@ -216,6 +250,7 @@ static int mmap_file_page_address(const struct vm_area *area,
 	return 1;
 }
 
+/* Scan one process for clean mappings of a cache page eligible for reclaim. */
 static int mmap_reclaim_file_scan(struct vfs_inode *inode, uint64 offset,
 				  void *page, int invalidate,
 				  int *changed)
@@ -260,6 +295,18 @@ static int mmap_reclaim_file_scan(struct vfs_inode *inode, uint64 offset,
 	return 0;
 }
 
+/**
+ * mmap_reclaim_file_page() - Drop clean PTE mappings before evicting a cache
+ * page.
+ * @file: Non-NULL file identifying the cached page.
+ * @offset: Byte offset of the page within @file.
+ * @page: Non-NULL physical page to unmap.
+ *
+ * Context: Thread context; takes the mmap registry and process mmap sleeplocks,
+ * and may sleep. It flushes TLBs after changing PTEs.
+ * Return: Zero when eviction may proceed, or 1 when a mapping or input
+ * blocks it.
+ */
 int mmap_reclaim_file_page(struct vfs_file *file, uint64 offset, void *page)
 {
 	struct vfs_inode *inode;
@@ -279,6 +326,9 @@ int mmap_reclaim_file_page(struct vfs_file *file, uint64 offset, void *page)
 	return blocked;
 }
 
+/*
+ * Reclaim private anonymous pages with no external ownership from one process.
+ */
 static uint64 mmap_reclaim_anonymous(process_t process, uint64 target)
 {
 	struct vm_area *area;
@@ -352,6 +402,16 @@ uint64 mmap_reclaim_clean_pages(uint64 target)
 	return reclaimed;
 }
 
+/**
+ * mmap_process_usage() - Snapshot virtual and resident memory for a process.
+ * @pid: Positive process ID to query.
+ * @virtual_size: Non-NULL output for summed VMA byte length.
+ * @resident_pages: Non-NULL output for resident user-page count.
+ *
+ * Context: Thread context; takes registry and target mmap sleeplocks and may
+ * sleep. Outputs are changed only on success.
+ * Return: Zero on success, or -1 for invalid arguments or an unregistered PID.
+ */
 int mmap_process_usage(int pid, uint64 *virtual_size,
 		       uint64 *resident_pages)
 {
@@ -391,18 +451,21 @@ int mmap_process_usage(int pid, uint64 *virtual_size,
 	return 0;
 }
 
+/* Linux protection bits are restricted to readable, writable, executable. */
 static int mmap_protection_valid(int protection)
 {
 	return !(protection & ~(LINUX_PROT_READ | LINUX_PROT_WRITE |
 			       LINUX_PROT_EXEC));
 }
 
+/* W^X rejects mappings simultaneously writable and executable. */
 static int mmap_protection_wx(int protection)
 {
 	return (protection & LINUX_PROT_WRITE) &&
 	       (protection & LINUX_PROT_EXEC);
 }
 
+/* Convert Linux PROT bits into user-accessible RISC-V PTE bits. */
 static int mmap_pte_permissions(int protection)
 {
 	int permissions = 0;
@@ -419,6 +482,7 @@ static int mmap_pte_permissions(int protection)
 	return permissions;
 }
 
+/* Round a nonzero user length up to pages while rejecting overflow. */
 static int mmap_round_length(uint64 length, uint64 *rounded)
 {
 	if (!length || length > (uint64)-1 - (PGSIZE - 1))
@@ -427,6 +491,7 @@ static int mmap_round_length(uint64 length, uint64 *rounded)
 	return *rounded ? 0 : -1;
 }
 
+/* Check file mapping offset, protection, and range against the opened file. */
 static int mmap_file_validate(struct vfs_file *file, uint64 offset,
 			      uint64 length, int protection, int flags,
 			      struct vfs_stat *stat)
@@ -449,6 +514,7 @@ static int mmap_file_validate(struct vfs_file *file, uint64 offset,
 	return 0;
 }
 
+/* Fault one file-backed page and install its PTE with VMA permissions. */
 static enum mmap_fault_result mmap_file_fault(struct vm_area *area,
 					      uint64 page_address,
 					      void **page,
@@ -517,6 +583,7 @@ static enum mmap_fault_result mmap_file_fault(struct vm_area *area,
 	return MMAP_FAULT_OK;
 }
 
+/* Check requested fault access against VMA policy before page acquisition. */
 static int mmap_access_allowed(const struct vm_area *area,
 			       enum mmap_fault_access access)
 {
@@ -657,6 +724,7 @@ out:
 	return result;
 }
 
+/* Resolve each page eagerly for MAP_POPULATE after metadata is installed. */
 static void mmap_populate(process_t process, uint64 start, uint64 length,
 			  int protection)
 {
@@ -671,6 +739,15 @@ static void mmap_populate(process_t process, uint64 start, uint64 length,
 	}
 }
 
+/**
+ * sys_linux_brk() - Implement the Linux brk system call for the current
+ * process.
+ *
+ * Context: Syscall thread context; takes the current process mmap sleeplock and
+ * may allocate VMA metadata.
+ * Return: Current break for a zero request; otherwise the requested break on
+ * success, or the unchanged previous break on failure.
+ */
 uint64 sys_linux_brk(void)
 {
 	process_t process = cur_proc();
@@ -709,6 +786,15 @@ out:
 	return result;
 }
 
+/**
+ * sys_linux_mmap() - Implement the Linux mmap system call for the current
+ * process.
+ *
+ * Context: Syscall thread context; takes the process mmap sleeplock, may
+ * allocate
+ * VMA/backing state, resolve MAP_POPULATE faults, and sleep.
+ * Return: Mapped user address on success, otherwise a negated Linux errno.
+ */
 uint64 sys_linux_mmap(void)
 {
 	process_t process = cur_proc();
@@ -821,6 +907,7 @@ out_file:
 	return result;
 }
 
+/* Shared writable mappings require a backing file opened for write. */
 static int mmap_shared_write_allowed(const struct vma_set *set,
 				     uint64 start, uint64 end)
 {
@@ -842,6 +929,14 @@ static int mmap_shared_write_allowed(const struct vma_set *set,
 	return 1;
 }
 
+/**
+ * sys_linux_mprotect() - Implement the Linux mprotect system call for the
+ * current process.
+ *
+ * Context: Syscall thread context; takes the process mmap sleeplock and may
+ * allocate VMA split metadata.
+ * Return: Zero on success, otherwise a negated Linux errno.
+ */
 uint64 sys_linux_mprotect(void)
 {
 	process_t process = cur_proc();
@@ -883,6 +978,14 @@ uint64 sys_linux_mprotect(void)
 	return 0;
 }
 
+/**
+ * sys_linux_msync() - Implement the Linux msync system call for the current
+ * process.
+ *
+ * Context: Syscall thread context; takes the process mmap sleeplock and may
+ * perform page-cache writeback and sleep.
+ * Return: Zero on success, otherwise a negated Linux errno.
+ */
 uint64 sys_linux_msync(void)
 {
 	process_t process = cur_proc();
@@ -925,6 +1028,14 @@ out:
 	return result;
 }
 
+/**
+ * sys_linux_munmap() - Implement the Linux munmap system call for the
+ * current process.
+ *
+ * Context: Syscall thread context; takes the process mmap sleeplock and may
+ * allocate VMA split metadata.
+ * Return: Zero on success, otherwise a negated Linux errno.
+ */
 uint64 sys_linux_munmap(void)
 {
 	process_t process = cur_proc();

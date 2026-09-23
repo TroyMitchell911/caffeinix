@@ -1,4 +1,5 @@
-# Shared by the QEMU runtime suite and focused terminal regression runs.
+# Shared terminal flood/Ctrl-C protocol for QEMU runtime and focused
+# regressions.
 proc test_output_interrupt {mode} {
 	global spawn_id timeout env
 

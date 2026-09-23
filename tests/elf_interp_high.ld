@@ -1,3 +1,4 @@
+/* Main PT_INTERP image linked at a high base to test biased image placement. */
 ENTRY(_start)
 
 PHDRS

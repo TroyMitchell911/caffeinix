@@ -1,3 +1,4 @@
+/* Build-time lwIP feature and bounded-memory policy for Caffeinix. */
 #ifndef __CAFFEINIX_LWIPOPTS_H
 #define __CAFFEINIX_LWIPOPTS_H
 
@@ -78,6 +79,11 @@
 #define LWIP_DEBUG 0
 #define LWIP_CHECKSUM_CTRL_PER_NETIF 0
 
+/**
+ * lwip_socket_event_notify() - Notify VFS poll waiters after a socket event
+ *
+ * Context: lwIP callback context; does not sleep.
+ */
 void lwip_socket_event_notify(void);
 #define LWIP_SOCKET_EVENT_NOTIFY() lwip_socket_event_notify()
 

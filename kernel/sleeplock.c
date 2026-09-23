@@ -1,3 +1,10 @@
+/*
+ * Sleep lock implementation.
+ *
+ * The embedded spin lock protects ownership and the wait queue. Acquisition
+ * releases it only through wait_queue_sleep(), so unlock-and-sleep cannot
+ * lose a release wakeup.
+ */
 #include <sleeplock.h>
 #include <scheduler.h>
 #include <debug.h>

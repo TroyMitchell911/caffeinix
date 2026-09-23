@@ -1,3 +1,4 @@
+/* Guest pipe regression for capacity, atomicity, poll, EOF, and SIGPIPE. */
 #define _GNU_SOURCE
 
 #include <errno.h>

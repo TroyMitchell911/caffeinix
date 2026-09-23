@@ -1,3 +1,4 @@
+# Build the RISC-V architecture layer with shared kernel interfaces.
 EXTRA_CFLAGS := -I ../../include -I ./include -I ../../kernel/include
 CFLAGS_file.o := 
 

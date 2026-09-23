@@ -1,3 +1,4 @@
+/* Guest timer, sleep, signal-interruption, and monotonic-clock regression. */
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>

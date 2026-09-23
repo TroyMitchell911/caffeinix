@@ -1,3 +1,7 @@
+/*
+ * Execute code on an explicitly executable stack, then fault on a
+ * permissionless PT_LOAD guard. exec_runtime checks the marker and signal.
+ */
 	.section .rodata
 stack_message:
 	.ascii "ELF_EXEC_STACK_OK\n"

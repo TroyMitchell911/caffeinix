@@ -1,3 +1,4 @@
+/* ELF fixture whose missing interpreter must prevent user entry. */
 	.section .rodata
 unexpected_message:
 	.ascii "ELF_MISSING_INTERP_STARTED\n"

@@ -1,15 +1,36 @@
+/*
+ * Intrusive red-black tree balancing and ordered traversal. Callers choose
+ * keys, perform the search/insertion link, and serialize all mutations. The
+ * tree never allocates or owns its containing objects.
+ */
 #include <rbtree.h>
 
+/*
+ * NULL leaves are black; only a present node may carry the red bit.
+ */
 static int rb_is_red(const struct rb_node *node)
 {
 	return node && node->red;
 }
 
+/*
+ * Treat absent leaves as black when checking deletion invariants.
+ */
 static int rb_is_black(const struct rb_node *node)
 {
 	return !node || !node->red;
 }
 
+/**
+ * rb_rotate_left() - Rotate a subtree through its right child
+ * @node: Subtree root with a non-NULL right child.
+ * @root: Containing tree whose root may change.
+ *
+ * Preserves in-order key order and repairs parent links; colors are
+ * unchanged.
+ *
+ * Context: Caller serializes tree mutation; does not sleep.
+ */
 static void rb_rotate_left(struct rb_node *node, struct rb_root *root)
 {
 	struct rb_node *right = node->right;
@@ -28,6 +49,16 @@ static void rb_rotate_left(struct rb_node *node, struct rb_root *root)
 	node->parent = right;
 }
 
+/**
+ * rb_rotate_right() - Rotate a subtree through its left child
+ * @node: Subtree root with a non-NULL left child.
+ * @root: Containing tree whose root may change.
+ *
+ * Preserves in-order key order and repairs parent links; colors are
+ * unchanged.
+ *
+ * Context: Caller serializes tree mutation; does not sleep.
+ */
 static void rb_rotate_right(struct rb_node *node, struct rb_root *root)
 {
 	struct rb_node *left = node->left;
@@ -46,6 +77,16 @@ static void rb_rotate_right(struct rb_node *node, struct rb_root *root)
 	node->parent = left;
 }
 
+/**
+ * rb_insert_color() - Restore balance after linking a red leaf
+ * @node: New node installed with rb_link_node().
+ * @root: Containing tree.
+ *
+ * The search and duplicate-key policy belong to the caller. Recolors and
+ * rotates without allocating; the resulting root is black.
+ *
+ * Context: Caller serializes insertion and balancing as one mutation.
+ */
 void rb_insert_color(struct rb_node *node, struct rb_root *root)
 {
 	while (node->parent && node->parent->red) {
@@ -95,6 +136,17 @@ void rb_insert_color(struct rb_node *node, struct rb_root *root)
 	root->node->red = 0;
 }
 
+/**
+ * rb_replace_node() - Replace one structural link
+ * @root: Containing tree.
+ * @old: Linked node whose parent/root link is replaced.
+ * @new: Replacement node, or NULL to remove the link.
+ *
+ * Only repairs the parent/root link and replacement parent; child links and
+ * colors remain the caller's responsibility.
+ *
+ * Context: Caller holds the tree mutation lock.
+ */
 static void rb_replace_node(struct rb_root *root, struct rb_node *old,
 			    struct rb_node *new)
 {
@@ -108,6 +160,10 @@ static void rb_replace_node(struct rb_root *root, struct rb_node *old,
 		new->parent = old->parent;
 }
 
+/*
+ * Follow left children to the minimum node in a nonempty subtree; the caller
+ * excludes concurrent mutation.
+ */
 static struct rb_node *rb_subtree_first(struct rb_node *node)
 {
 	while (node->left)
@@ -115,6 +171,17 @@ static struct rb_node *rb_subtree_first(struct rb_node *node)
 	return node;
 }
 
+/**
+ * rb_erase_fixup() - Repair the missing black height after deletion
+ * @root: Tree after removal or successor substitution.
+ * @node: Replacement child, possibly NULL.
+ * @parent: Parent of @node, supplied separately for NULL leaves.
+ *
+ * Moves the black-height deficit toward the root or resolves it with sibling
+ * recoloring and rotations; allocates no storage.
+ *
+ * Context: Caller serializes the entire erase operation.
+ */
 static void rb_erase_fixup(struct rb_root *root, struct rb_node *node,
 			   struct rb_node *parent)
 {
@@ -197,6 +264,16 @@ static void rb_erase_fixup(struct rb_root *root, struct rb_node *node,
 		node->red = 0;
 }
 
+/**
+ * rb_erase() - Unlink and rebalance an intrusive node
+ * @node: Node currently linked into @root.
+ * @root: Containing tree.
+ *
+ * Resets the removed node for reuse but does not free its containing object.
+ * Existing pointers to other nodes remain valid.
+ *
+ * Context: Caller excludes concurrent traversal and mutation.
+ */
 void rb_erase(struct rb_node *node, struct rb_root *root)
 {
 	struct rb_node *child;
@@ -236,6 +313,13 @@ void rb_erase(struct rb_node *node, struct rb_root *root)
 	rb_node_init(node);
 }
 
+/**
+ * rb_first() - Find the minimum linked node
+ * @root: Initialized tree, possibly empty.
+ *
+ * Context: Caller prevents concurrent tree mutation.
+ * Return: Borrowed first node, or NULL for an empty tree.
+ */
 struct rb_node *rb_first(const struct rb_root *root)
 {
 	struct rb_node *node = root->node;
@@ -243,6 +327,13 @@ struct rb_node *rb_first(const struct rb_root *root)
 	return node ? rb_subtree_first(node) : 0;
 }
 
+/**
+ * rb_next() - Find the in-order successor
+ * @node: Node currently linked in a stable tree.
+ *
+ * Context: Caller prevents concurrent tree mutation.
+ * Return: Borrowed successor, or NULL after the maximum node.
+ */
 struct rb_node *rb_next(const struct rb_node *node)
 {
 	struct rb_node *parent;

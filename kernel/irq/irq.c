@@ -1,3 +1,4 @@
+/* Exclusive external-IRQ handler registry between PLIC and device drivers. */
 #include <irq.h>
 #include <plic.h>
 #include <spinlock.h>
@@ -13,11 +14,29 @@ static struct {
 	struct irq_descriptor descriptors[IRQ_MAX];
 } irq_table;
 
+/*
+ * irq_init() - Initialize the exclusive handler table.
+ *
+ * Context:
+ * Early boot before PLIC source registration; does not sleep.
+ */
 void irq_init(void)
 {
 	spinlock_init(&irq_table.lock, "irq table");
 }
 
+/*
+ * request_irq() - Publish a handler before enabling its PLIC source.
+ * @irq: Non-zero exclusive source.
+ * @handler: Interrupt-context callback.
+ * @data: Callback ownership token.
+ * @name: Stable diagnostic name.
+ *
+ * Context:
+ * Process context; internal lock only, no sleep.
+ * Return:
+ * Zero or negative invalid/busy error.
+ */
 int request_irq(uint32 irq, irq_handler_t handler, void *data,
 		const char *name)
 {
@@ -39,6 +58,16 @@ int request_irq(uint32 irq, irq_handler_t handler, void *data,
 	return 0;
 }
 
+/*
+ * free_irq() - Unpublish a matching handler then disable its PLIC source.
+ * @irq: Exclusive source registered by caller.
+ * @data: Exact callback token.
+ *
+ * Context:
+ * Process context; caller synchronizes active handler lifetime.
+ * Return:
+ * Zero or negative invalid/mismatch error.
+ */
 int free_irq(uint32 irq, void *data)
 {
 	struct irq_descriptor *descriptor;
@@ -59,6 +88,15 @@ int free_irq(uint32 irq, void *data)
 	return 0;
 }
 
+/*
+ * irq_dispatch() - Call the snapshotted handler for a claimed source.
+ * @irq: PLIC claimed source.
+ *
+ * Context:
+ * Interrupt context; handler execution occurs outside table lock.
+ * Return:
+ * Handler status or %IRQ_NONE.
+ */
 int irq_dispatch(uint32 irq)
 {
 	irq_handler_t handler;

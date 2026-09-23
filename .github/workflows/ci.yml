@@ -1,4 +1,6 @@
 ---
+# Validate the kernel independently, then boot the same source with generated
+# userspace fixtures. No kernel workflow dispatches or updates a web repository.
 name: Caffeinix CI
 
 on:

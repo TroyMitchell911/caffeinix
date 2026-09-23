@@ -1,3 +1,6 @@
+/*
+ * Guest process-group and session regression used by shell job-control tests.
+ */
 #include <errno.h>
 #include <poll.h>
 #include <signal.h>

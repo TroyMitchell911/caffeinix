@@ -1,3 +1,10 @@
+/*
+ * Anonymous pipe implementation.
+ *
+ * A pipe owns one page-sized circular buffer and separate reader/writer wait
+ * queues.  The spinlock protects buffer state and endpoint counts; sleeps
+ * release and reacquire it through wait-queue helpers to avoid lost wakeups.
+ */
 #include <debug.h>
 #include <file.h>
 #include <linux_uapi.h>
@@ -32,6 +39,7 @@ struct vfs_pipe {
 	uint8 read_busy;
 };
 
+/* Validate the entire user destination before removing bytes from the pipe. */
 static int pipe_prefault_output(int user_destination,
 				const struct vfs_iovec *iovecs,
 				uint32 count, uint32 limit)
@@ -56,6 +64,7 @@ static int pipe_prefault_output(int user_destination,
 	return VFS_OK;
 }
 
+/* Copy one contiguous ring-buffer segment and advance its read cursor. */
 static uint32 pipe_copy_out(struct vfs_pipe *pipe, int user_destination,
 			    uint64 destination, uint32 count, int *error)
 {
@@ -92,6 +101,7 @@ static uint32 pipe_copy_out(struct vfs_pipe *pipe, int user_destination,
 	return copied;
 }
 
+/* Serve vectored reads while preserving pipe atomicity and wakeup ordering. */
 static int64 pipe_readv(struct vfs_file *file, int user_destination,
 			const struct vfs_iovec *iovecs, uint32 count)
 {
@@ -159,6 +169,7 @@ out:
 	return total ? (int64)total : error;
 }
 
+/* Adapt scalar reads to the vectored pipe reader. */
 static int64 pipe_read(struct vfs_file *file, int user_destination,
 		       uint64 destination, uint64 count, uint64 *position)
 {
@@ -171,6 +182,7 @@ static int64 pipe_read(struct vfs_file *file, int user_destination,
 	return pipe_readv(file, user_destination, &iovec, 1);
 }
 
+/* Copy bytes into the ring buffer, wrapping at its end. */
 static void pipe_copy_in(struct vfs_pipe *pipe, const char *source,
 			 uint32 count)
 {
@@ -186,6 +198,9 @@ static void pipe_copy_in(struct vfs_pipe *pipe, const char *source,
 	pipe->used += count;
 }
 
+/*
+ * Commit a kernel-resident staged write after all user copying has succeeded.
+ */
 static int64 pipe_write_staged(struct vfs_file *file, const char *source,
 			       uint32 count, int atomic)
 {
@@ -232,6 +247,9 @@ static int64 pipe_write_staged(struct vfs_file *file, const char *source,
 	return result;
 }
 
+/*
+ * Stage user data before taking the pipe lock so faults do not consume space.
+ */
 static int64 pipe_write_user(struct vfs_file *file, int user_source,
 			     uint64 source, uint64 count, int atomic)
 {
@@ -272,6 +290,7 @@ out:
 	return result;
 }
 
+/* Stage user bytes before reserving pipe capacity. */
 static int64 pipe_write(struct vfs_file *file, int user_source,
 			uint64 source, uint64 count, uint64 *position)
 {
@@ -280,6 +299,7 @@ static int64 pipe_write(struct vfs_file *file, int user_source,
 			       count <= PIPE_BUF);
 }
 
+/* Stage all iovecs before committing concatenated bytes to pipe. */
 static int64 pipe_writev(struct vfs_file *file, int user_source,
 			 const struct vfs_iovec *iovecs, uint32 count)
 {
@@ -328,6 +348,10 @@ static int64 pipe_writev(struct vfs_file *file, int user_source,
 	return total;
 }
 
+/*
+ * Report readiness from protected pipe state without sleeping or consuming
+ * data.
+ */
 static uint32 pipe_poll(struct vfs_file *file, uint32 events)
 {
 	struct vfs_pipe *pipe = file ? file->private : 0;
@@ -352,6 +376,7 @@ static uint32 pipe_poll(struct vfs_file *file, uint32 events)
 	return ready;
 }
 
+/* Report FIFO metadata using the live pipe inode number. */
 static int pipe_getattr(struct vfs_file *file, struct vfs_stat *stat)
 {
 	struct vfs_pipe *pipe = file ? file->private : 0;
@@ -369,6 +394,7 @@ static int pipe_getattr(struct vfs_file *file, struct vfs_stat *stat)
 	return VFS_OK;
 }
 
+/* Drop reader/writer count and free pipe after final endpoint closes. */
 static void pipe_release(struct vfs_file *file)
 {
 	struct vfs_pipe *pipe = file ? file->private : 0;
@@ -411,6 +437,15 @@ static const struct vfs_file_operations pipe_operations = {
 	.poll = pipe_poll,
 };
 
+/**
+ * vfs_pipe() - Create connected read and write descriptor endpoints
+ * @file_flags: VFS_OPEN_* flags applied to both open-file descriptions.
+ * @fd_flags: VFS descriptor flags, such as VFS_FD_CLOEXEC.
+ * @descriptors: Receives read endpoint at index zero and write endpoint at one.
+ *
+ * Context: Current process context; may allocate memory and descriptors.
+ * Return: VFS_OK or an error.  On success the current process owns both fds.
+ */
 int vfs_pipe(uint32 file_flags, uint8 fd_flags, int descriptors[2])
 {
 	struct process_credentials credentials;

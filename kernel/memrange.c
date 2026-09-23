@@ -1,5 +1,10 @@
+/*
+ * Fixed-capacity normalized interval-set operations used by memory discovery.
+ * Stored ranges are sorted, non-empty, and non-overlapping half-open spans.
+ */
 #include <memrange.h>
 
+/* Compact a set after deleting one interval; callers validated @index. */
 static void memrange_delete(struct memrange_set *set, int index)
 {
 	int i;

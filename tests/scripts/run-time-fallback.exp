@@ -1,4 +1,6 @@
 #!/usr/bin/expect -f
+# Boot with the RTC disabled in the DTB and verify the explicit zero-epoch
+# realtime fallback. The RISC-V monotonic timebase remains available.
 
 proc abort_test {message} {
 	puts stderr "RTC fallback test failed: $message"

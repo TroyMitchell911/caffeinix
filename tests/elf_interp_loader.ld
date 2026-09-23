@@ -1,3 +1,4 @@
+/* Linker layout for the normal low-address interpreter fixture. */
 ENTRY(_start)
 
 PHDRS

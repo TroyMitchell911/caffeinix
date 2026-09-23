@@ -1,3 +1,9 @@
+/*
+ * Linux RISC-V socket syscall argument marshaling.
+ *
+ * This file copies UAPI objects to temporary kernel memory and delegates all
+ * protocol behavior to ksocket.  User pointers are never retained past a call.
+ */
 #include <file.h>
 #include <ksocket.h>
 #include <linux_uapi.h>
@@ -12,6 +18,7 @@
 
 #define SOCKET_OPTION_MAX 32
 
+/* Validate and copy one IPv4 sockaddr from the current process. */
 static int socket_address_in(uint64 user_address, uint32 length,
 			     struct linux_sockaddr_in *address)
 {
@@ -25,6 +32,9 @@ static int socket_address_in(uint64 user_address, uint32 length,
 	return 0;
 }
 
+/*
+ * Honor Linux's in/out sockaddr length convention while copying to userspace.
+ */
 static int socket_address_out(uint64 user_address,
 			      uint64 user_length_address,
 			      const struct linux_sockaddr_in *address)
@@ -49,6 +59,14 @@ static int socket_address_out(uint64 user_address,
 	return 0;
 }
 
+/**
+ * sys_linux_socket() - Install a socket described by syscall arguments
+ *
+ * Decodes family, type/creation flags, and protocol from the current frame.
+ *
+ * Context: User syscall context; may sleep while creating the backend.
+ * Return: New descriptor or a negative Linux errno.
+ */
 uint64 sys_linux_socket(void)
 {
 	int family, type, protocol, fd, result;
@@ -60,6 +78,12 @@ uint64 sys_linux_socket(void)
 	return result < 0 ? result : fd;
 }
 
+/**
+ * sys_linux_socketpair() - Reject the unsupported paired-socket operation
+ *
+ * Context: User syscall context; reads only the family argument.
+ * Return: -EOPNOTSUPP for AF_INET, otherwise -EAFNOSUPPORT.
+ */
 uint64 sys_linux_socketpair(void)
 {
 	int family;
@@ -69,6 +93,14 @@ uint64 sys_linux_socketpair(void)
 		-LINUX_EOPNOTSUPP : -LINUX_EAFNOSUPPORT;
 }
 
+/**
+ * sys_linux_bind() - Copy a user IPv4 sockaddr and bind its socket
+ *
+ * Decodes descriptor, address, and address length; never retains user memory.
+ *
+ * Context: User syscall context; user copies and stack calls may sleep.
+ * Return: Zero or a negative Linux errno.
+ */
 uint64 sys_linux_bind(void)
 {
 	struct linux_sockaddr_in address;
@@ -82,6 +114,12 @@ uint64 sys_linux_bind(void)
 	return result < 0 ? result : ksocket_bind(fd, &address);
 }
 
+/**
+ * sys_linux_listen() - Listen on the descriptor from the syscall frame
+ *
+ * Context: User syscall context; backend operations may sleep.
+ * Return: Zero or a negative Linux errno.
+ */
 uint64 sys_linux_listen(void)
 {
 	int fd, backlog;
@@ -91,6 +129,7 @@ uint64 sys_linux_listen(void)
 	return ksocket_listen(fd, backlog);
 }
 
+/* Shared accept and accept4 marshaling, including close-on-copyout failure. */
 static uint64 socket_accept(int flags)
 {
 	struct linux_sockaddr_in address;
@@ -115,11 +154,30 @@ static uint64 socket_accept(int flags)
 	return newfd;
 }
 
+/**
+ * sys_linux_accept() - Accept a connection without creation flags
+ *
+ * A failed peer-address copy closes the newly installed child descriptor.
+ *
+ * Context: User syscall context; may sleep unless the listener is
+ *          nonblocking.
+ * Return: Child descriptor or a negative Linux errno.
+ */
 uint64 sys_linux_accept(void)
 {
 	return socket_accept(0);
 }
 
+/**
+ * sys_linux_accept4() - Accept a connection with child-descriptor flags
+ *
+ * The fourth register argument supplies flags; these affect the new socket,
+ * not whether waiting on the listening socket blocks.
+ *
+ * Context: User syscall context; may sleep while waiting or copying
+ *          addresses.
+ * Return: Child descriptor or a negative Linux errno.
+ */
 uint64 sys_linux_accept4(void)
 {
 	int flags;
@@ -128,6 +186,12 @@ uint64 sys_linux_accept4(void)
 	return socket_accept(flags);
 }
 
+/**
+ * sys_linux_connect() - Stage an IPv4 connection request from user memory
+ *
+ * Context: User syscall context; copying or a blocking connect may sleep.
+ * Return: Zero or a negative Linux errno, including nonblocking progress.
+ */
 uint64 sys_linux_connect(void)
 {
 	struct linux_sockaddr_in address;
@@ -141,6 +205,7 @@ uint64 sys_linux_connect(void)
 	return result < 0 ? result : ksocket_connect(fd, &address);
 }
 
+/* Shared getsockname and getpeername marshaling. */
 static uint64 socket_get_name(int peer)
 {
 	struct linux_sockaddr_in address;
@@ -159,16 +224,29 @@ static uint64 socket_get_name(int peer)
 				  &address);
 }
 
+/**
+ * sys_linux_getsockname() - Export the local address and its actual length
+ *
+ * Context: User syscall context; stack queries and user copies may sleep.
+ * Return: Zero or a negative Linux errno; a failed copy may modify a prefix.
+ */
 uint64 sys_linux_getsockname(void)
 {
 	return socket_get_name(0);
 }
 
+/**
+ * sys_linux_getpeername() - Export the peer address and its actual length
+ *
+ * Context: User syscall context; stack queries and user copies may sleep.
+ * Return: Zero or a negative Linux errno; a failed copy may modify a prefix.
+ */
 uint64 sys_linux_getpeername(void)
 {
 	return socket_get_name(1);
 }
 
+/* Bound one syscall copy to a page; reject oversized datagrams. */
 static int socket_send_length(int fd, uint64 requested, uint64 *length)
 {
 	int type, result;
@@ -186,11 +264,21 @@ static int socket_send_length(int fd, uint64 requested, uint64 *length)
 	return 0;
 }
 
+/* Bound receive staging memory to a page. */
 static uint64 socket_receive_length(uint64 requested)
 {
 	return requested > PGSIZE ? PGSIZE : requested;
 }
 
+/**
+ * sys_linux_sendto() - Transmit one page-bounded copy of a user payload
+ *
+ * Streams may return a short count; oversized datagrams are rejected rather
+ * than split. An optional destination is copied before the send operation.
+ *
+ * Context: User syscall context; may allocate, fault, or wait in the stack.
+ * Return: Bytes accepted or a negative Linux errno.
+ */
 uint64 sys_linux_sendto(void)
 {
 	struct linux_sockaddr_in address;
@@ -231,6 +319,15 @@ uint64 sys_linux_sendto(void)
 	return sent;
 }
 
+/**
+ * sys_linux_recvfrom() - Receive through a page-sized kernel staging buffer
+ *
+ * Copies no more than the staging capacity even when MSG_TRUNC reports a
+ * larger datagram. A later copy fault cannot undo data consumed by the stack.
+ *
+ * Context: User syscall context; may allocate, fault, or wait for data.
+ * Return: Backend receive count or a negative Linux errno.
+ */
 uint64 sys_linux_recvfrom(void)
 {
 	struct linux_sockaddr_in address;
@@ -273,6 +370,7 @@ uint64 sys_linux_recvfrom(void)
 	return received;
 }
 
+/* Return the exact Linux ABI storage size for a supported socket option. */
 static uint32 socket_option_size(int level, int option)
 {
 	if (level == LINUX_SOL_SOCKET) {
@@ -298,6 +396,16 @@ static uint32 socket_option_size(int level, int option)
 	return 0;
 }
 
+/**
+ * sys_linux_setsockopt() - Stage a bounded user socket-option value
+ *
+ * Rejects values larger than SOCKET_OPTION_MAX before copying;
+ * option-specific validation belongs to the socket backend.
+ *
+ * Context: User syscall context; user copies and backend operations may
+ *          sleep.
+ * Return: Zero or a negative Linux errno.
+ */
 uint64 sys_linux_setsockopt(void)
 {
 	uint8 value[SOCKET_OPTION_MAX];
@@ -318,6 +426,15 @@ uint64 sys_linux_setsockopt(void)
 	return ksocket_set_option(fd, level, option, value, length);
 }
 
+/**
+ * sys_linux_getsockopt() - Export a socket option and its copied length
+ *
+ * Caps the staging buffer and supported option layout before copying out. A
+ * copy fault may occur after the backend query or a partial user write.
+ *
+ * Context: User syscall context; user copies and backend queries may sleep.
+ * Return: Zero or a negative Linux errno.
+ */
 uint64 sys_linux_getsockopt(void)
 {
 	uint8 value[SOCKET_OPTION_MAX];
@@ -352,6 +469,12 @@ uint64 sys_linux_getsockopt(void)
 	return 0;
 }
 
+/**
+ * sys_linux_shutdown() - Apply the syscall frame's directional shutdown
+ *
+ * Context: User syscall context; backend operations may sleep.
+ * Return: Zero or a negative Linux errno.
+ */
 uint64 sys_linux_shutdown(void)
 {
 	int fd, how;
@@ -361,6 +484,7 @@ uint64 sys_linux_shutdown(void)
 	return ksocket_shutdown(fd, how);
 }
 
+/* Copy msghdr/iovec metadata and reject unsupported ancillary send data. */
 static int socket_copy_message(struct linux_msghdr *message,
 			       struct vfs_iovec **iovecs,
 			       unsigned int *iov_order,
@@ -389,6 +513,7 @@ static int socket_copy_message(struct linux_msghdr *message,
 	return result;
 }
 
+/* Release the page allocation returned by copy_user_iov(). */
 static void socket_free_iovecs(struct vfs_iovec *iovecs,
 			       unsigned int order)
 {
@@ -396,6 +521,16 @@ static void socket_free_iovecs(struct vfs_iovec *iovecs,
 		free_pages(iovecs, order);
 }
 
+/**
+ * sys_linux_sendmsg() - Gather one page-bounded message from user iovecs
+ *
+ * Rejects ancillary send data and oversized datagrams. Stream iovecs may be
+ * consumed only through the page-sized prefix; no user pointer is retained.
+ *
+ * Context: User syscall context; allocation, copies, and stack calls may
+ *          sleep.
+ * Return: Bytes accepted or a negative Linux errno.
+ */
 uint64 sys_linux_sendmsg(void)
 {
 	struct linux_sockaddr_in address;
@@ -458,6 +593,18 @@ out_iov:
 	return result;
 }
 
+/**
+ * sys_linux_recvmsg() - Scatter a received message into bounded user iovecs
+ *
+ * Exports address length and message flags, but no ancillary data. Copyout
+ * errors can occur after data is consumed and after earlier iovecs were
+ * filled.
+ *
+ * Context: User syscall context; allocation, copies, and stack calls may
+ *          sleep.
+ * Return: Backend receive count, possibly MSG_TRUNC length, or negative
+ *         errno.
+ */
 uint64 sys_linux_recvmsg(void)
 {
 	struct linux_sockaddr_in address;
@@ -537,6 +684,17 @@ out_iov:
 	return result;
 }
 
+/**
+ * sys_linux_ppoll() - Poll descriptors with a temporary signal mask
+ *
+ * Limits the array to NOFILE entries and rounds timeout nanoseconds upward to
+ * milliseconds. On interruption the user-return signal path restores the
+ * saved mask; otherwise this call restores it before copying readiness back.
+ *
+ * Context: User syscall context; may fault and sleep on the global poll
+ *          queue.
+ * Return: Ready entry count, zero on timeout, or a negative Linux errno.
+ */
 uint64 sys_linux_ppoll(void)
 {
 	struct linux_timespec time;

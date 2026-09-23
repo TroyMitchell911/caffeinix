@@ -1,3 +1,8 @@
+/*
+ * Timer conversion and clock-domain interfaces; units are explicit in each
+ * API. Implementations in ktime.c and timeconv.c document boot publication
+ * and overflow behavior.
+ */
 #ifndef __CAFFEINIX_KERNEL_KTIME_H
 #define __CAFFEINIX_KERNEL_KTIME_H
 

@@ -1,3 +1,6 @@
+/*
+ * Guest namespace, metadata, and copy-fault tests across ext4/tmpfs/FAT/devfs.
+ */
 #define _GNU_SOURCE
 
 #include <errno.h>

@@ -1,3 +1,4 @@
+/* Firmware boot-stack definitions and captured OpenSBI handoff values. */
 #ifndef __CAFFEINIX_ARCH_RISCV_BOOT_H
 #define __CAFFEINIX_ARCH_RISCV_BOOT_H
 
